@@ -31,7 +31,19 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+- **Code Quality Gate**: Architecture boundaries, maintainability constraints, and
+  static quality checks are defined and enforceable.
+- **Testing Gate**: Required automated test levels are identified (unit,
+  integration, conformance, e2e, regression as applicable).
+- **UX Consistency Gate**: User-facing behavior, terminology, and error-state
+  expectations are aligned with existing product patterns.
+- **Performance Gate**: Measurable targets and constraints are defined (latency,
+  throughput, memory, token budgets, convergence, or equivalent domain metrics).
+- **Simplicity Gate**: Proposed design is the minimal viable approach; any added
+  complexity includes explicit justification.
+
+If any gate cannot be satisfied, document the violation in **Complexity Tracking**
+with rationale, alternatives considered, and approval owner.
 
 ## Project Structure
 

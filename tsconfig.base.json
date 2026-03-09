@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ledgermind/domain": ["packages/domain/src/index.ts"],
+      "@ledgermind/application": ["packages/application/src/index.ts"],
+      "@ledgermind/adapters": ["packages/adapters/src/index.ts"],
+      "@ledgermind/infrastructure": ["packages/infrastructure/src/index.ts"],
+      "@ledgermind/sdk": ["packages/sdk/src/index.ts"]
+    }
+  }
+}

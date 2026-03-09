@@ -1,0 +1,34 @@
+{
+  "name": "@ledgermind/infrastructure",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@ledgermind/adapters": "workspace:*",
+    "@ledgermind/application": "workspace:*",
+    "@ledgermind/domain": "workspace:*",
+    "node-pg-migrate": "^8.0.3",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.6"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run --passWithNoTests",
+    "migrate:up": "node-pg-migrate up --migrations-dir src/sql/postgres/migrations",
+    "migrate:down": "node-pg-migrate down --migrations-dir src/sql/postgres/migrations --timestamp",
+    "migrate:status": "node-pg-migrate up --migrations-dir src/sql/postgres/migrations --dry-run",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+  }
+}

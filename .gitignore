@@ -1,0 +1,28 @@
+node_modules/
+.turbo/
+
+# Build artifacts
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.tmp
+*.swp
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db

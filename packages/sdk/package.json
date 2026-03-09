@@ -1,0 +1,30 @@
+{
+  "name": "@ledgermind/sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@ledgermind/domain": "workspace:*",
+    "@ledgermind/application": "workspace:*",
+    "@ledgermind/adapters": "workspace:*",
+    "@ledgermind/infrastructure": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+  }
+}

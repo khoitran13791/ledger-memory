@@ -27,8 +27,10 @@
 ### Decision
 
 All content-addressed IDs use **SHA-256 over a canonical byte string** derived
-from a deterministic subset of fields. Timestamps and sequence numbers are
-**excluded** from hashing to guarantee "same content → same ID across runs."
+from a deterministic subset of fields. Timestamps are **excluded** from
+hashing to guarantee "same content → same ID across runs." For `LedgerEvent`,
+`sequence` is included to prevent collisions when identical content appears
+multiple times in the same conversation.
 
 ### Canonical Serialization
 
@@ -51,13 +53,14 @@ with these rules:
 
 | Entity | Prefix | Hashed Fields | Excluded |
 |--------|--------|---------------|----------|
-| **LedgerEvent** | `evt` | `{ content, conversationId, role }` | `sequence`, `occurredAt`, `metadata` |
+| **LedgerEvent** | `evt` | `{ content, conversationId, role, sequence }` | `occurredAt`, `metadata` |
 | **SummaryNode** | `sum` | `{ content, conversationId, kind }` | `createdAt`, `tokenCount`, `artifactIds` |
 | **Artifact** | `file` | `{ contentHash }` where `contentHash = hex(SHA-256(rawBytes))` | `originalPath`, `mimeType`, `tokenCount` |
 
 **Note on LedgerEvent:** Including `conversationId` and `role` prevents
 cross-conversation ID collisions for identical content (e.g., the same user
-message in two conversations gets different IDs).
+message in two conversations gets different IDs). Including `sequence`
+distinguishes repeated same-content messages within a single conversation.
 
 ### Collision / Duplicate Handling
 
@@ -73,13 +76,16 @@ message in two conversations gets different IDs).
 ### HashPort Interface
 
 ```typescript
-// application/ports/driven/crypto/hash.port.ts
+// domain/services/id.service.ts (canonical definition)
+// Re-exported via application/ports/driven/crypto/hash.port.ts
 interface HashPort {
   sha256(input: Uint8Array): string;  // returns hex string
 }
 ```
 
-Domain's `IdService` uses `HashPort` — never imports `crypto` directly.
+`HashPort` is defined in the domain layer alongside `IdService` (which depends on it).
+The application layer re-exports it from `application/ports/driven/crypto/hash.port.ts`
+for convenience. Domain never imports `crypto` directly.
 
 ---
 
@@ -411,7 +417,7 @@ class SimpleTokenizer implements TokenizerPort {
 1. All golden tests use `DeterministicSummarizer` + `SimpleTokenizer`.
 2. Golden tests are **snapshot-stable** — same input always produces same
    IDs, same DAG structure, same materialized output.
-3. Golden test fixtures are checked into `packages/core/test/fixtures/`.
+3. Golden test fixtures are checked into `tests/golden/fixtures/`.
 4. The same golden test vectors run against both in-memory and PostgreSQL
    adapters (contract test pattern).
 

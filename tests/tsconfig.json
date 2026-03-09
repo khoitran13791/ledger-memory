@@ -1,0 +1,17 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "tsBuildInfoFile": "tsconfig.tsbuildinfo",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["**/*.ts"],
+  "references": [
+    { "path": "../packages/domain" },
+    { "path": "../packages/application" },
+    { "path": "../packages/adapters" },
+    { "path": "../packages/infrastructure" },
+    { "path": "../packages/sdk" }
+  ]
+}

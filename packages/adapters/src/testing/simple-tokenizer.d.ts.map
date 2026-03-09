@@ -1,0 +1,1 @@
+{"version":3,"file":"simple-tokenizer.d.ts","sourceRoot":"","sources":["simple-tokenizer.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,aAAa,EAAE,MAAM,yBAAyB,CAAC;AAC7D,OAAO,EAAoB,KAAK,UAAU,EAAE,MAAM,oBAAoB,CAAC;AAEvE;;;GAGG;AACH,qBAAa,eAAgB,YAAW,aAAa;IACnD,WAAW,CAAC,IAAI,EAAE,MAAM,GAAG,UAAU;IAIrC,iBAAiB,CAAC,UAAU,EAAE,MAAM,GAAG,UAAU;CAGlD"}

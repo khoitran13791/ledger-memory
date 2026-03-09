@@ -1,0 +1,29 @@
+{
+  "name": "@ledgermind/tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint . --ext .ts",
+    "test": "vitest run",
+    "test:conformance": "vitest run conformance/__tests__/conformance.cross-adapter.test.ts",
+    "test:quality:deterministic": "vitest run quality/__tests__/compaction-quality-deterministic.test.ts",
+    "test:probes": "vitest run probes/__tests__/probe-evaluation.cross-adapter.test.ts",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+  },
+  "dependencies": {
+    "@ledgermind/adapters": "workspace:*",
+    "@ledgermind/application": "workspace:*",
+    "@ledgermind/domain": "workspace:*",
+    "@ledgermind/infrastructure": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "fast-check": "^4.6.0",
+    "pg": "^8.16.3",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

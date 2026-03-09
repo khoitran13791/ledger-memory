@@ -153,7 +153,8 @@ Examples of foundational tasks (adjust based on your project):
 - [ ] TXXX [P] Documentation updates in docs/
 - [ ] TXXX Code cleanup and refactoring
 - [ ] TXXX Performance optimization across all stories
-- [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
+- [ ] TXXX [P] Add/complete automated tests required by constitution-level quality gates
+- [ ] TXXX Validate UX consistency for shared flows, terminology, and error states
 - [ ] TXXX Security hardening
 - [ ] TXXX Run quickstart.md validation
 
@@ -178,10 +179,12 @@ Examples of foundational tasks (adjust based on your project):
 
 ### Within Each User Story
 
-- Tests (if included) MUST be written and FAIL before implementation
+- Required tests MUST be written and fail before implementation when test-first is selected
 - Models before services
 - Services before endpoints
 - Core implementation before integration
+- Include UX consistency validation for user-facing behavior in the story scope
+- Include performance verification when the story defines measurable targets
 - Story complete before moving to next priority
 
 ### Parallel Opportunities

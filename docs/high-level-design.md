@@ -291,7 +291,7 @@ interface LedgerEvent {
 type SummaryKind = "leaf" | "condensed";
 
 interface SummaryNode {
-  readonly id: SummaryNodeId;              // content-addressed: "sum_" + SHA-256(content + timestamp)
+  readonly id: SummaryNodeId;              // content-addressed: "sum_" + SHA-256(canonical content fields)
   readonly conversationId: ConversationId;
   readonly kind: SummaryKind;
   readonly content: string;
@@ -302,7 +302,7 @@ interface SummaryNode {
 ```
 
 **Invariants:**
-- `id` is deterministic given content + timestamp
+- `id` is deterministic given canonical content fields (`content`, `conversationId`, `kind`)
 - A `leaf` node covers ≥ 1 raw messages
 - A `condensed` node covers ≥ 1 parent summaries
 - DAG is **acyclic** (no cycles in parent relationships)
@@ -371,6 +371,7 @@ type EventId = string & { readonly __brand: "EventId" };
 type SummaryNodeId = string & { readonly __brand: "SummaryNodeId" };
 type ArtifactId = string & { readonly __brand: "ArtifactId" };
 type SequenceNumber = number & { readonly __brand: "SequenceNumber" };
+type ContextVersion = number & { readonly __brand: "ContextVersion" };
 
 // Token accounting
 interface TokenCount {
@@ -439,6 +440,15 @@ interface SummaryNodeCreated {
   readonly coveredItemCount: number;
 }
 
+interface CompactionCompleted {
+  readonly type: "CompactionCompleted";
+  readonly conversationId: ConversationId;
+  readonly rounds: number;
+  readonly nodesCreated: SummaryNodeId[];
+  readonly tokensFreed: TokenCount;
+  readonly converged: boolean;
+}
+
 interface ArtifactStored {
   readonly type: "ArtifactStored";
   readonly conversationId: ConversationId;
@@ -459,6 +469,7 @@ type DomainEvent =
   | LedgerEventAppended
   | CompactionTriggered
   | SummaryNodeCreated
+  | CompactionCompleted
   | ArtifactStored
   | ContextMaterialized;
 ```
@@ -485,9 +496,9 @@ interface CompactionPolicyService {
 
 // domain/services/id.service.ts
 interface IdService {
-  generateSummaryId(content: string, timestamp: Timestamp): SummaryNodeId;
+  generateSummaryId(content: string, conversationId: ConversationId, kind: SummaryKind): SummaryNodeId;
   generateArtifactId(input: ArtifactIdInput): ArtifactId;
-  generateEventId(content: string, conversationId: ConversationId, sequence: SequenceNumber): EventId;
+  generateEventId(content: string, conversationId: ConversationId, role: MessageRole, sequence: SequenceNumber): EventId;
 }
 ```
 
@@ -675,13 +686,24 @@ interface ExpandOutput {
 
 **Authorization gate:** Expand is restricted to sub-agent callers via `AuthorizationPort`. This prevents uncontrolled context expansion in the main agent loop — a safety pattern from Volt.
 
+#### CheckIntegrityUseCase
+
+```typescript
+interface CheckIntegrityInput {
+  conversationId: ConversationId;
+}
+interface CheckIntegrityOutput {
+  report: IntegrityReport;
+}
+```
+
 ### 7.5 StoreArtifact & ExploreArtifact
 
 ```typescript
 // Store
 interface StoreArtifactInput {
   conversationId: ConversationId;
-  source: { kind: "path"; path: string } | { kind: "text"; content: string } | { kind: "binary"; data: Buffer };
+  source: { kind: "path"; path: string } | { kind: "text"; content: string } | { kind: "binary"; data: Uint8Array };
   mimeType?: MimeType;
 }
 interface StoreArtifactOutput {
@@ -746,6 +768,7 @@ interface MemoryEngine {
   append(input: AppendLedgerEventsInput): Promise<AppendLedgerEventsOutput>;
   materializeContext(input: MaterializeContextInput): Promise<MaterializeContextOutput>;
   runCompaction(input: RunCompactionInput): Promise<RunCompactionOutput>;
+  checkIntegrity(input: CheckIntegrityInput): Promise<CheckIntegrityOutput>;
   grep(input: GrepInput): Promise<GrepOutput>;
   describe(input: DescribeInput): Promise<DescribeOutput>;
   expand(input: ExpandInput): Promise<ExpandOutput>;
@@ -774,8 +797,13 @@ Split by **Interface Segregation Principle** — no God interfaces:
 // application/ports/driven/persistence/
 
 interface LedgerAppendPort {
+  /**
+   * Appends events atomically. The persistence boundary owns sequence
+   * allocation — no standalone next-sequence operation is exposed.
+   * This ensures sequence numbers are assigned atomically with persistence,
+   * preventing gaps and race conditions.
+   */
   appendEvents(conversationId: ConversationId, events: LedgerEvent[]): Promise<void>;
-  getNextSequence(conversationId: ConversationId): Promise<SequenceNumber>;
 }
 
 interface LedgerReadPort {
@@ -785,14 +813,18 @@ interface LedgerReadPort {
 }
 
 interface ContextProjectionPort {
-  getCurrentContext(conversationId: ConversationId): Promise<ContextItem[]>;
+  getCurrentContext(conversationId: ConversationId): Promise<{
+    items: ContextItem[];
+    version: ContextVersion;
+  }>;
   getContextTokenCount(conversationId: ConversationId): Promise<TokenCount>;
-  appendContextItems(conversationId: ConversationId, items: ContextItem[]): Promise<void>;
+  appendContextItems(conversationId: ConversationId, items: ContextItem[]): Promise<ContextVersion>;
   replaceContextItems(
     conversationId: ConversationId,
+    expectedVersion: ContextVersion,
     positionsToRemove: number[],
     replacement: ContextItem,
-  ): Promise<void>;
+  ): Promise<ContextVersion>;
 }
 
 interface SummaryDagPort {
@@ -806,9 +838,9 @@ interface SummaryDagPort {
 }
 
 interface ArtifactStorePort {
-  store(artifact: Artifact, content?: Buffer | string): Promise<void>;
+  store(artifact: Artifact, content?: Uint8Array | string): Promise<void>;
   getMetadata(id: ArtifactId): Promise<Artifact | null>;
-  getContent(id: ArtifactId): Promise<Buffer | string | null>;
+  getContent(id: ArtifactId): Promise<Uint8Array | string | null>;
   updateExploration(id: ArtifactId, summary: string, explorerUsed: string): Promise<void>;
 }
 
@@ -877,7 +909,7 @@ interface ExplorerPort {
 }
 
 interface ExplorerInput {
-  content: string | Buffer;
+  content: string | Uint8Array;
   path: string;
   mimeType: MimeType;
   maxTokens?: number;
@@ -919,7 +951,7 @@ interface Job<T> {
 
 interface AuthorizationPort {
   canExpand(caller: CallerContext): boolean;
-  canReadArtifact(caller: CallerContext, artifactId: ArtifactId): boolean;
+  // canReadArtifact — Phase 2: artifact access control gating
 }
 
 interface CallerContext {
@@ -951,7 +983,7 @@ interface ClockPort {
 |------|---------------------|
 | `LedgerAppendPort` | `INSERT INTO ledger_events` with `ON CONFLICT DO NOTHING` for idempotency |
 | `LedgerReadPort` | FTS via `plainto_tsquery`, regex via `~` operator, recursive CTE for ancestor chains |
-| `ContextProjectionPort` | `context_items` table with ordered positions |
+| `ContextProjectionPort` | `context_items` + `context_versions` for ordered positions and optimistic concurrency |
 | `SummaryDagPort` | `summary_nodes` + `summary_edges` tables; recursive CTE for `expandToMessages()` |
 | `ArtifactStorePort` | `artifacts` table with `path`, `inline_text`, `inline_binary` variants |
 | `UnitOfWorkPort` | PostgreSQL transaction with `BEGIN`/`COMMIT`/`ROLLBACK` |
@@ -1001,7 +1033,7 @@ Built-in explorers register with `ExplorerRegistryPort`:
 | Explorer | File Types | Strategy |
 |----------|-----------|----------|
 | `PythonExplorer` | `.py` | AST-based: classes, functions, imports |
-| `TypeScriptExplorer` | `.ts`, `.tsx`, `.js`, `.jsx` | Parser-driven structural analysis |
+| `TypeScriptExplorer` | `.ts`, `.tsx` | Deterministic structural analysis of imports, exports, and top-level declarations |
 | `GoExplorer` | `.go` | Package, type, function signatures |
 | `RustExplorer` | `.rs` | `struct`, `impl`, `fn` extraction |
 | `JsonExplorer` | `.json` | Schema shape, key structure, array lengths |
@@ -1012,7 +1044,7 @@ Built-in explorers register with `ExplorerRegistryPort`:
 | `PdfExplorer` | `.pdf` | Page count, text extraction, structure |
 | `ImageExplorer` | `.png`, `.jpg`, etc. | Dimensions, format, basic metadata |
 | `LogExplorer` | `.log` | Pattern detection, error frequency |
-| `FallbackExplorer` | `*` | LLM-generated summary (200KB sample for large files) |
+| `FallbackExplorer` | `*` | Deterministic fallback summarization/classification with metadata-rich previews and guidance |
 
 **Third-party extension:** New explorers are added by implementing `ExplorerPort` and registering with the registry — zero modifications to existing code (OCP).
 
@@ -1216,6 +1248,7 @@ CREATE TABLE ledger_events (
   content         TEXT NOT NULL,
   token_count     INTEGER NOT NULL CHECK (token_count >= 0),
   occurred_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  metadata        JSONB NOT NULL DEFAULT '{}',
   idempotency_key TEXT,
   content_tsv     TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
   UNIQUE (conversation_id, seq),
@@ -1266,7 +1299,13 @@ CREATE TABLE context_items (
   )
 );
 
--- 7. Artifacts (large files & tool outputs)
+-- 7. Context projection versioning (optimistic locking)
+CREATE TABLE context_versions (
+  conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+  version         BIGINT NOT NULL DEFAULT 0
+);
+
+-- 8. Artifacts (large files & tool outputs)
 CREATE TABLE artifacts (
   id                  TEXT PRIMARY KEY,
   conversation_id     TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -1320,7 +1359,8 @@ function runCompaction(conversationId, trigger):
   created ← []
 
   while current > target AND round < MAX_ROUNDS:
-    candidates ← selectCandidates(getContext(conversationId), pinRules)
+    contextSnapshot ← getContext(conversationId)     // returns { items, version }
+    candidates ← selectCandidates(contextSnapshot.items, pinRules)
     if candidates.empty: break
 
     block ← candidates.oldest
@@ -1334,7 +1374,7 @@ function runCompaction(conversationId, trigger):
 
     node ← createSummaryNode(summary, block)
     saveNode(node) + saveEdges(node, block.items)
-    replaceContextItems(conversationId, block.positions, node)
+    replaceContextItems(conversationId, contextSnapshot.version, block.positions, node)
     created.push(node.id)
     current ← getContextTokenCount(conversationId)
     round++
@@ -1349,8 +1389,8 @@ function runCompaction(conversationId, trigger):
 
 1. Exclude pinned items (system prompt, explicit pins)
 2. Sort remaining by position (oldest first)
-3. Group into blocks of adjacent items (configurable block size, default: all contiguous non-pinned oldest items)
-4. Return oldest block as primary candidate
+3. Build a contiguous oldest block up to `blockTokenTargetFraction × availableBudget`
+4. Enforce `minBlockSize` (default: 2); if fewer candidates remain, skip compaction this round
 
 ### 12.4 Condensation (Multi-Summary Compaction)
 
@@ -1403,7 +1443,7 @@ interface ExplorerPort {
 1. Extension match → scored by specificity (e.g., ".tsx" > ".ts" > "*")
 2. MIME type match → if no extension match
 3. Magic bytes (8KB header read) → if no MIME match
-4. Fallback explorer → LLM-generated summary (always available)
+4. Fallback explorer → deterministic fallback summarization/classification (always available)
 ```
 
 Highest score wins. Ties broken deterministically by explorer registration order.
@@ -1488,6 +1528,7 @@ interface ExplorerConformanceTest {
 | Error | Trigger |
 |-------|---------|
 | `CompactionFailedToConvergeError` | Hard compaction exceeded MAX_ROUNDS without reaching budget |
+| `StaleContextError` | `ContextProjectionPort.replaceContextItems()` expected version mismatch during concurrent mutation |
 | `UnauthorizedExpandError` | Non-sub-agent attempted `expand` |
 | `IdempotencyConflictError` | Duplicate idempotency key with different content |
 | `ConversationNotFoundError` | Referenced conversation doesn't exist |
@@ -1689,13 +1730,12 @@ Every compaction creates traceable domain events:
 
 ```typescript
 import { createMemoryEngine } from "@ledgermind/sdk";
-import { createVercelTools } from "@ledgermind/adapters/tools/vercel";
+import { createVercelMemoryTools } from "@ledgermind/adapters";
 import { streamText } from "ai";
 
-const engine = await createMemoryEngine({
-  storage: "postgres",
-  connectionUrl: "postgres://...",
-  summarizer: { provider: "openai", model: "gpt-4o-mini" },
+const engine = createMemoryEngine({
+  storage: { type: "postgres", connectionString: "postgres://..." },
+  summarizer: { type: "deterministic" },
 });
 
 // Per-request
@@ -1712,7 +1752,7 @@ const result = await streamText({
     ...ctx.modelMessages,
     ...incomingMessages,
   ],
-  tools: { ...appTools, ...createVercelTools(engine) },
+  tools: { ...appTools, ...createVercelMemoryTools(engine) },
 });
 
 await engine.append({

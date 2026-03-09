@@ -157,8 +157,8 @@ it("full lifecycle: append → compact → materialize → grep → expand", asy
   expect(expanded.messages.length).toBeGreaterThan(0);
 
   // Integrity holds
-  const integrity = await engine.checkIntegrity(conversationId);
-  expect(integrity.passed).toBe(true);
+  const integrity = await engine.checkIntegrity({ conversationId });
+  expect(integrity.report.passed).toBe(true);
 });
 ```
 
@@ -249,6 +249,93 @@ expect(node.id).toEqual(new AnyId("sum_"));
 expect(node.createdAt).toEqual(new AnyTimestamp());
 ```
 
+### Phase 1 Golden Suite Implementation Plan (Core Engine)
+
+#### Goal
+
+Ship a deterministic, replay-stable golden suite that runs real Phase 1 use cases end-to-end:
+`append` → `runCompaction` → `materializeContext` → `checkIntegrity`.
+
+#### Scope for Phase 1
+
+- **Required PR gate:** in-memory golden scenarios
+- **Parity subset:** same fixtures against PostgreSQL
+- **Out of scope for now:** SQLite parity, LLM-judge scoring, probe evaluation
+
+#### Harness Design
+
+Create a shared scenario runner (`tests/golden/shared/run-golden-scenario.ts`) that:
+
+1. Builds deterministic dependencies (`FixedClock`, `SimpleTokenizer`, deterministic `HashPort`, deterministic/scripted summarizer)
+2. Replays fixture steps in order using real use cases
+3. Captures canonical outputs per step
+4. Captures final canonical state signature
+5. Re-runs fixture in a fresh harness and asserts exact equality (replay stability)
+
+#### Fixture Format (v2)
+
+Use step-based fixtures (not pre-constructed DAG state):
+
+- `conversation`: fixed IDs + config
+- `deps`: deterministic mode options
+- `steps`: `append`, `runCompaction`, `materialize`, `checkIntegrity`
+- `expected`:
+  - per-step canonical outputs
+  - final canonical signature (ledger, summaries, edges, context refs, integrity)
+
+#### Phase 1 Scenario Matrix
+
+**P0 (must-have):**
+1. append-materialize-baseline
+2. hard-compaction-leaf
+3. deterministic-fallback-escalation
+4. artifact-propagation-through-compaction
+5. idempotent-replay-conflict
+
+**P1 (next):**
+6. multi-round-condensation-lineage
+7. postgres-restart-rehydration-parity
+
+#### Canonical Assertions
+
+For each fixture, assert:
+
+- Stable IDs and deterministic ordering
+- Contiguous ledger sequence + contiguous context positions
+- Expected summary kinds and DAG lineage edges
+- `integrity.report.passed === true` (except explicit failure fixtures)
+- Materialized budget usage never exceeds `budgetTokens - overheadTokens`
+- Expand recovery returns original message sequence for covered summaries
+- Artifact IDs survive compaction/condensation lineage
+
+#### Determinism Controls
+
+- No wall clock, random UUID, or non-deterministic tokenizer in golden tests
+- Default deterministic summarizer for snapshot stability
+- Scripted summarizer allowed for escalation-path fixtures (force L1/L2 non-shrinking)
+- Canonicalization must sort all order-sensitive collections before snapshot/assert
+
+#### CI Rollout
+
+Add scripts:
+
+- `pnpm test:golden:verify` (required on PR)
+- `pnpm test:golden:postgres` (required when PG service available)
+- `pnpm test:golden:update` (manual, review required)
+
+Golden snapshot diffs are treated as behavior/API diffs and require explicit reviewer approval.
+
+#### Why This Improves LLM Agent Quality
+
+This prevents silent memory regressions by enforcing:
+
+- **Replay stability:** same transcript always yields same memory state
+- **Recall fidelity:** summary lineage and expand recovery remain correct
+- **Budget safety:** materialized context remains bounded and predictable
+- **Backend consistency:** in-memory vs Postgres behavior stays aligned
+
+Result: agents receive stable, trustworthy context across compaction rounds, reducing drift, hallucinated continuity, and retrieval failures in long-running sessions.
+
 ---
 
 ## 4. Property-Based Testing
@@ -276,8 +363,8 @@ it("DAG remains acyclic after arbitrary compaction sequences", () => {
           await engine.runCompaction({ conversationId: convId, trigger: "hard" });
         }
 
-        const integrity = await engine.checkIntegrity(convId);
-        expect(integrity.checks.find(c => c.name === "acyclic_dag")!.passed).toBe(true);
+        const integrity = await engine.checkIntegrity({ conversationId: convId });
+        expect(integrity.report.checks.find(c => c.name === "acyclic_dag")!.passed).toBe(true);
       },
     ),
     { numRuns: 200 },

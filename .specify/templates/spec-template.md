@@ -74,6 +74,8 @@
 
 - What happens when [boundary condition]?
 - How does system handle [error scenario]?
+- How is UX consistency preserved for [empty/loading/error] states?
+- What performance degradation behavior is acceptable when [load/resource limit] is reached?
 
 ## Requirements *(mandatory)*
 
@@ -109,7 +111,7 @@
 
 ### Measurable Outcomes
 
-- **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
-- **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
-- **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
-- **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
+- **SC-001**: [Code quality outcome, e.g., "All changed modules pass lint/type checks with zero violations"]
+- **SC-002**: [Testing outcome, e.g., "New/changed behavior covered by automated tests, including regression tests for fixes"]
+- **SC-003**: [UX consistency outcome, e.g., "Primary user flow and error states follow existing interaction patterns"]
+- **SC-004**: [Performance outcome, e.g., "System meets defined latency/throughput/memory/token-budget targets under expected load"]
