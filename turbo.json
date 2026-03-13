@@ -17,6 +17,10 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
+    "benchmark": {
+      "dependsOn": ["^build"],
+      "outputs": ["runs/**"]
+    },
     "clean": {
       "cache": false
     }

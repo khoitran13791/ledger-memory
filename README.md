@@ -66,6 +66,22 @@ pnpm --filter @ledgermind/infrastructure migrate:down
 - `docs/testing-strategy.md` — test strategy and quality gates
 - `docs/implementation-roadmap.md` — delivery roadmap and sprint sequencing
 - `docs/claude-code-integration.md` — Claude Code integration notes
+- `docs/locomo-benchmark-plan.md` — LOCOMO benchmark rollout plan
+
+## LOCOMO benchmark harness
+
+Run LOCOMO benchmark harness (offline artifacts):
+
+```bash
+pnpm benchmark:locomo
+pnpm benchmark:locomo:smoke
+```
+
+Outputs are written under `benchmarks/locomo/runs/<run-id>/`:
+
+- `per_example.jsonl`
+- `summary.md`
+- `config_snapshot.json`
 
 ## Issue tracking
 

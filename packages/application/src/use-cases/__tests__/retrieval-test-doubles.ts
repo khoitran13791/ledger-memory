@@ -166,9 +166,11 @@ export class FakeLedgerReadPort implements LedgerReadPort {
   async searchEvents(
     conversationId: ConversationId,
     query: string,
+    scope?: SummaryNodeId,
   ): Promise<readonly LedgerEvent[]> {
     void conversationId;
     void query;
+    void scope;
     return [];
   }
 
@@ -249,9 +251,11 @@ export class FakeSummaryDagPort implements SummaryDagPort {
   async searchSummaries(
     conversationId: ConversationId,
     query: string,
+    scope?: SummaryNodeId,
   ): Promise<readonly SummaryNode[]> {
     void conversationId;
     void query;
+    void scope;
     return [];
   }
 

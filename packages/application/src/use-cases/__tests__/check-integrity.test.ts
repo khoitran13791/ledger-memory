@@ -81,7 +81,14 @@ class TestSummaryDag implements SummaryDagPort {
     return [];
   }
 
-  async searchSummaries(): Promise<readonly SummaryNode[]> {
+  async searchSummaries(
+    conversationIdInput?: ConversationId,
+    queryInput?: string,
+    scopeInput?: SummaryNodeId,
+  ): Promise<readonly SummaryNode[]> {
+    void conversationIdInput;
+    void queryInput;
+    void scopeInput;
     return [];
   }
 

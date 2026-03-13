@@ -13,6 +13,7 @@ import type {
   LedgerEvent,
   SequenceNumber,
   SummaryNode,
+  SummaryNodeId,
 } from '@ledgermind/domain';
 import {
   createContextItem,
@@ -169,7 +170,14 @@ class TestLedgerRead implements LedgerReadPort {
     });
   }
 
-  async searchEvents(): Promise<readonly LedgerEvent[]> {
+  async searchEvents(
+    conversationIdInput?: ConversationId,
+    queryInput?: string,
+    scopeInput?: SummaryNodeId,
+  ): Promise<readonly LedgerEvent[]> {
+    void conversationIdInput;
+    void queryInput;
+    void scopeInput;
     return [];
   }
 
@@ -290,7 +298,14 @@ class NoopSummaryDagStore implements SummaryDagPort {
     return [];
   }
 
-  async searchSummaries(): Promise<readonly SummaryNode[]> {
+  async searchSummaries(
+    conversationIdInput?: ConversationId,
+    queryInput?: string,
+    scopeInput?: SummaryNodeId,
+  ): Promise<readonly SummaryNode[]> {
+    void conversationIdInput;
+    void queryInput;
+    void scopeInput;
     return [];
   }
 

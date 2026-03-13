@@ -110,6 +110,9 @@ describe('InMemoryLedgerStore', () => {
     });
     state.summaryNodeIdsByConversation.set(conversationId, [summaryId]);
 
+    const scopedSearchMatches = await store.searchEvents(conversationId, 'alpha', summaryId);
+    expect(scopedSearchMatches.map((event) => event.id)).toEqual([evt3.id]);
+
     const regexMatches = await store.regexSearchEvents(conversationId, 'alpha', summaryId);
     expect(regexMatches).toHaveLength(1);
 

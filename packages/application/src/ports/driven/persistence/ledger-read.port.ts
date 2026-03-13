@@ -33,7 +33,11 @@ export interface LedgerReadPort {
    * Performs keyword/full-text search within a single conversation.
    * Returned events are ordered by ascending sequence.
    */
-  searchEvents(conversationId: ConversationId, query: string): Promise<readonly LedgerEvent[]>;
+  searchEvents(
+    conversationId: ConversationId,
+    query: string,
+    scope?: SummaryNodeId,
+  ): Promise<readonly LedgerEvent[]>;
 
   /**
    * Performs regex search within a single conversation (optionally scoped to a

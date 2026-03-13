@@ -11,6 +11,9 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "benchmark:locomo": "pnpm --filter @ledgermind/benchmark-locomo benchmark",
+    "benchmark:locomo:smoke": "pnpm --filter @ledgermind/benchmark-locomo benchmark:smoke",
+    "benchmark:locomo:canary": "pnpm --filter @ledgermind/benchmark-locomo benchmark:canary",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "clean": "turbo run clean"

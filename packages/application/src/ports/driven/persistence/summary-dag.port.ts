@@ -41,6 +41,7 @@ export interface SummaryDagPort {
   searchSummaries(
     conversationId: ConversationId,
     query: string,
+    scope?: SummaryNodeId,
   ): Promise<readonly SummaryNode[]>;
 
   checkIntegrity(conversationId: ConversationId): Promise<IntegrityReport>;

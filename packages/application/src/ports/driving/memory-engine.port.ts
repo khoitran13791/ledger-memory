@@ -57,6 +57,35 @@ export interface RetrievalHint {
   readonly limit?: number;
 }
 
+export type RetrievalStageLabel = 'primary' | 'keywords' | 'anchors';
+
+export interface RetrievalStageQueryDiagnostics {
+  readonly stage: RetrievalStageLabel;
+  readonly query: string;
+  readonly matchCount: number;
+}
+
+export type RetrievalCandidateDecisionReason = 'selected' | 'already_in_context' | 'over_budget' | 'limit_reached';
+
+export interface RetrievalCandidateDecisionDiagnostics {
+  readonly summaryId: SummaryNodeId;
+  readonly score: number;
+  readonly stageHits: number;
+  readonly overlapCount: number;
+  readonly tokenCount: number;
+  readonly selected: boolean;
+  readonly reason: RetrievalCandidateDecisionReason;
+}
+
+export interface RetrievalHintDiagnostics {
+  readonly hintQuery: string;
+  readonly scopeSummaryId?: SummaryNodeId;
+  readonly limit: number;
+  readonly stageQueries: readonly RetrievalStageQueryDiagnostics[];
+  readonly candidateDecisions: readonly RetrievalCandidateDecisionDiagnostics[];
+  readonly selectedSummaryIds: readonly SummaryNodeId[];
+}
+
 export interface MaterializeContextInput {
   readonly conversationId: ConversationId;
   readonly budgetTokens: number;
@@ -88,6 +117,13 @@ export interface MaterializeContextOutput {
   readonly summaryReferences: readonly SummaryReference[];
   readonly artifactReferences: readonly ArtifactReference[];
   readonly budgetUsed: TokenCount;
+  readonly retrievalMatchCount?: number;
+  readonly retrievalAddedCount?: number;
+  readonly retrievalDiagnostics?: readonly RetrievalHintDiagnostics[];
+  readonly compactionTriggered?: boolean;
+  readonly trimmedToFit?: boolean;
+  readonly droppedMessageCount?: number;
+  readonly droppedSummaryCount?: number;
 }
 
 export interface RunCompactionInput {
@@ -124,12 +160,30 @@ export interface DescribeInput {
   readonly id: SummaryNodeId | ArtifactId;
 }
 
+export interface DescribeSummaryPlanningSignals {
+  readonly entities: readonly string[];
+  readonly dates: readonly string[];
+  readonly commitments: readonly string[];
+  readonly outcomes: readonly string[];
+  readonly lexicalAnchors: readonly string[];
+  readonly evidenceIds: readonly string[];
+}
+
+export interface DescribeArtifactPlanningSignals {
+  readonly originalPath?: string;
+  readonly explorerUsed?: string;
+  readonly hasExplorationSummary: boolean;
+  readonly lexicalAnchors: readonly string[];
+  readonly evidenceIds: readonly string[];
+}
+
 export interface DescribeOutput {
   readonly kind: 'summary' | 'artifact';
   readonly metadata: Metadata;
   readonly tokenCount: TokenCount;
   readonly parentIds?: readonly SummaryNodeId[];
   readonly explorationSummary?: string;
+  readonly planningSignals?: DescribeSummaryPlanningSignals | DescribeArtifactPlanningSignals;
 }
 
 export interface ExpandInput {

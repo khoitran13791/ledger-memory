@@ -92,7 +92,7 @@ describe('InMemorySummaryDag', () => {
     await expect(dag.addCondensedEdges(b.id, [a.id])).rejects.toBeInstanceOf(InvalidDagEdgeError);
   });
 
-  it('searches summaries by substring within a conversation', async () => {
+  it('searches summaries by token overlap within a conversation and honors optional scope', async () => {
     const state = createInMemoryPersistenceState();
     const dag = new InMemorySummaryDag(state);
     const conversationId = createConversationId('conv_dag_3');
@@ -101,24 +101,59 @@ describe('InMemorySummaryDag', () => {
       id: createSummaryNodeId('sum_alpha'),
       conversationId,
       kind: 'leaf',
-      content: 'Auth system summary',
-      tokenCount: createTokenCount(4),
+      content: 'Auth system summary with token rotation notes',
+      tokenCount: createTokenCount(8),
       createdAt: createTimestamp(new Date('2026-01-01T00:10:00.000Z')),
     });
     const beta = createSummaryNode({
       id: createSummaryNodeId('sum_beta'),
       conversationId,
       kind: 'leaf',
-      content: 'Payments summary',
+      content: 'Payments summary with retry notes',
+      tokenCount: createTokenCount(6),
+      createdAt: createTimestamp(new Date('2026-01-01T00:11:00.000Z')),
+    });
+    const gamma = createSummaryNode({
+      id: createSummaryNodeId('sum_gamma'),
+      conversationId,
+      kind: 'leaf',
+      content: 'Auth system summary',
       tokenCount: createTokenCount(4),
-      createdAt: createTimestamp(new Date('2026-01-01T00:10:00.000Z')),
+      createdAt: createTimestamp(new Date('2026-01-01T00:12:00.000Z')),
+    });
+    const root = createSummaryNode({
+      id: createSummaryNodeId('sum_scope_root'),
+      conversationId,
+      kind: 'condensed',
+      content: 'Root summary',
+      tokenCount: createTokenCount(3),
+      createdAt: createTimestamp(new Date('2026-01-01T00:09:00.000Z')),
+    });
+    const otherRoot = createSummaryNode({
+      id: createSummaryNodeId('sum_scope_other_root'),
+      conversationId,
+      kind: 'condensed',
+      content: 'Other root summary',
+      tokenCount: createTokenCount(3),
+      createdAt: createTimestamp(new Date('2026-01-01T00:09:30.000Z')),
     });
 
     await dag.createNode(alpha);
     await dag.createNode(beta);
+    await dag.createNode(gamma);
+    await dag.createNode(root);
+    await dag.createNode(otherRoot);
+    await dag.addCondensedEdges(root.id, [alpha.id, gamma.id]);
+    await dag.addCondensedEdges(otherRoot.id, [beta.id]);
 
-    const results = await dag.searchSummaries(conversationId, 'auth');
-    expect(results.map((summary) => summary.id)).toEqual([alpha.id]);
+    const results = await dag.searchSummaries(conversationId, 'auth system token');
+    expect(results.map((summary) => summary.id)).toEqual([alpha.id, gamma.id]);
+
+    const scopedResults = await dag.searchSummaries(conversationId, 'summary', root.id);
+    expect(scopedResults.map((summary) => summary.id)).toEqual([gamma.id, alpha.id, root.id]);
+
+    const scopedOtherResults = await dag.searchSummaries(conversationId, 'summary', otherRoot.id);
+    expect(scopedOtherResults.map((summary) => summary.id)).toEqual([beta.id, otherRoot.id]);
   });
 
   it('reports all integrity checks and detects missing artifact propagation', async () => {

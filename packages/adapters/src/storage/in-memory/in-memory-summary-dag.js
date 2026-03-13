@@ -58,6 +58,28 @@ const checkForCycleOnEdge = (state, summaryId, parentSummaryId) => {
         throw new InvalidDagEdgeError('Adding condensed edge would create a cycle.');
     }
 };
+const collectScopedSummaryIds = (state, rootSummaryId) => {
+    if (!state.summaryNodesById.has(rootSummaryId)) {
+        return [];
+    }
+    const scoped = [];
+    const queue = [rootSummaryId];
+    const visited = new Set();
+    while (queue.length > 0) {
+        const current = queue.shift();
+        if (current === undefined || visited.has(current)) {
+            continue;
+        }
+        visited.add(current);
+        scoped.push(current);
+        for (const parentId of state.condensedParentEdgesBySummary.get(current) ?? []) {
+            if (!visited.has(parentId)) {
+                queue.push(parentId);
+            }
+        }
+    }
+    return scoped;
+};
 const expandSummaryToMessageIds = (state, summaryId) => {
     const visited = new Set();
     const inPath = new Set();
@@ -339,16 +361,42 @@ export class InMemorySummaryDag {
             .sort((left, right) => left.sequence - right.sequence);
         return messages;
     }
-    async searchSummaries(conversationId, query) {
-        const normalized = toLowerCase(query.trim());
+    async searchSummaries(conversationId, query, scope) {
+        const normalized = query.trim();
         if (normalized.length === 0) {
+            return [];
+        }
+        const scopedIds = scope === undefined
+            ? null
+            : new Set(collectScopedSummaryIds(this.state, scope).filter((summaryId) => {
+                const node = this.state.summaryNodesById.get(summaryId);
+                return node?.conversationId === conversationId;
+            }));
+        if (scope !== undefined && scopedIds !== null && scopedIds.size === 0) {
             return [];
         }
         const summaryIds = this.state.summaryNodeIdsByConversation.get(conversationId) ?? [];
         return summaryIds
+            .filter((summaryId) => scopedIds === null || scopedIds.has(summaryId))
             .map((summaryId) => this.state.summaryNodesById.get(summaryId))
             .filter((node) => node !== undefined)
-            .filter((node) => toLowerCase(node.content).includes(normalized));
+            .map((node, index) => ({
+            node,
+            index,
+            score: scoreTokenOverlap(node.content, normalized),
+        }))
+            .filter((entry) => entry.score > 0)
+            .sort((left, right) => {
+            if (right.score !== left.score) {
+                return right.score - left.score;
+            }
+            const createdAtDiff = right.node.createdAt.getTime() - left.node.createdAt.getTime();
+            if (createdAtDiff !== 0) {
+                return createdAtDiff;
+            }
+            return left.index - right.index;
+        })
+            .map((entry) => entry.node);
     }
     async checkIntegrity(conversationId) {
         const checks = [

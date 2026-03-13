@@ -1,0 +1,24 @@
+{
+  "examples": [
+    { "sampleId": "conv-26", "qaIndex": 0 },
+    { "sampleId": "conv-26", "qaIndex": 1 },
+    { "sampleId": "conv-26", "qaIndex": 2 },
+    { "sampleId": "conv-26", "qaIndex": 3 },
+    { "sampleId": "conv-26", "qaIndex": 4 },
+    { "sampleId": "conv-26", "qaIndex": 5 },
+    { "sampleId": "conv-26", "qaIndex": 6 },
+    { "sampleId": "conv-26", "qaIndex": 7 },
+    { "sampleId": "conv-26", "qaIndex": 14 },
+    { "sampleId": "conv-26", "qaIndex": 22 },
+    { "sampleId": "conv-26", "qaIndex": 82 },
+    { "sampleId": "conv-26", "qaIndex": 83 },
+    { "sampleId": "conv-26", "qaIndex": 84 },
+    { "sampleId": "conv-26", "qaIndex": 152 },
+    { "sampleId": "conv-26", "qaIndex": 153 },
+    { "sampleId": "conv-26", "qaIndex": 154 },
+    { "sampleId": "conv-26", "qaIndex": 155 },
+    { "sampleId": "conv-26", "qaIndex": 156 },
+    { "sampleId": "conv-26", "qaIndex": 157 },
+    { "sampleId": "conv-26", "qaIndex": 158 }
+  ]
+}

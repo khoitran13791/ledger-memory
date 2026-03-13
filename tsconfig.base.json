@@ -19,7 +19,8 @@
       "@ledgermind/application": ["packages/application/src/index.ts"],
       "@ledgermind/adapters": ["packages/adapters/src/index.ts"],
       "@ledgermind/infrastructure": ["packages/infrastructure/src/index.ts"],
-      "@ledgermind/sdk": ["packages/sdk/src/index.ts"]
+      "@ledgermind/sdk": ["packages/sdk/src/index.ts"],
+      "@ledgermind/benchmark-locomo": ["benchmarks/locomo/src/index.ts"]
     }
   }
 }

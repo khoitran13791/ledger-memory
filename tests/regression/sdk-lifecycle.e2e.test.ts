@@ -258,6 +258,12 @@ describe('sdk lifecycle e2e', () => {
     expect(described.kind).toBe('artifact');
     expect(described.tokenCount).toEqual(stored.tokenCount);
     expect(described.metadata).toEqual({ explorerUsed: explored.explorerUsed });
+    expect(described.planningSignals).toEqual({
+      explorerUsed: explored.explorerUsed,
+      hasExplorationSummary: true,
+      lexicalAnchors: [],
+      evidenceIds: [],
+    });
     expect(described.explorationSummary).toBe(explored.summary);
   });
 

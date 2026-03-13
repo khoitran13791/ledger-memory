@@ -133,6 +133,8 @@ type TestState = {
   contextVersion: ContextVersion;
   events: LedgerEvent[];
   summaries: Map<SummaryNode['id'], SummaryNode>;
+  summarySearchResults: Map<string, readonly SummaryNode[]>;
+  searchQueries: Array<{ readonly query: string; readonly scope?: SummaryNode['id'] }>;
   artifacts: Map<ArtifactId, Artifact>;
   contextTokenCount: number;
 };
@@ -198,9 +200,11 @@ class TestLedgerReadPort implements LedgerReadPort {
   async searchEvents(
     conversationIdInput: ConversationId,
     query: string,
+    scope?: SummaryNode['id'],
   ): Promise<readonly LedgerEvent[]> {
     void conversationIdInput;
     void query;
+    void scope;
     return [];
   }
 
@@ -246,10 +250,14 @@ class TestSummaryDagPort implements SummaryDagPort {
   async searchSummaries(
     conversationIdInput: ConversationId,
     query: string,
+    scope?: SummaryNode['id'],
   ): Promise<readonly SummaryNode[]> {
     void conversationIdInput;
-    void query;
-    return [];
+    this.state.searchQueries.push({
+      query,
+      ...(scope === undefined ? {} : { scope }),
+    });
+    return this.state.summarySearchResults.get(query) ?? [];
   }
 
   async checkIntegrity(conversationIdInput: ConversationId): Promise<IntegrityReport> {
@@ -313,6 +321,7 @@ const createState = (input?: {
   readonly contextItems?: readonly ContextItem[];
   readonly events?: readonly LedgerEvent[];
   readonly summaries?: readonly SummaryNode[];
+  readonly summarySearchResults?: Readonly<Record<string, readonly SummaryNode[]>>;
   readonly artifacts?: readonly Artifact[];
   readonly contextTokenCount?: number;
 }): TestState => {
@@ -322,7 +331,11 @@ const createState = (input?: {
     contextVersion: createContextVersion(0),
     events: [...(input?.events ?? [])],
     summaries: new Map((input?.summaries ?? []).map((summary) => [summary.id, summary] as const)),
+    summarySearchResults: new Map(
+      Object.entries(input?.summarySearchResults ?? {}).map(([query, summaries]) => [query, [...summaries]] as const),
+    ),
     artifacts: new Map((input?.artifacts ?? []).map((artifact) => [artifact.id, artifact] as const)),
+    searchQueries: [],
     contextTokenCount: input?.contextTokenCount ?? 0,
   };
 };
@@ -427,16 +440,22 @@ describe('MaterializeContextUseCase', () => {
       },
     ]);
     expect(output.budgetUsed.value).toBe(22);
+    expect(output.retrievalMatchCount).toBe(0);
+    expect(output.retrievalAddedCount).toBe(0);
+    expect(output.compactionTriggered).toBe(false);
+    expect(output.trimmedToFit).toBe(false);
+    expect(output.droppedMessageCount).toBe(0);
+    expect(output.droppedSummaryCount).toBe(0);
   });
 
-  it('triggers blocking hard compaction when current context exceeds hard threshold', async () => {
+  it('triggers soft compaction to fit available budget when below hard threshold', async () => {
     const state = createState({
-      conversation: createTestConversation({ contextWindow: 100, hardThreshold: 0.8 }),
+      conversation: createTestConversation({ contextWindow: 100, hardThreshold: 0.9 }),
       contextItems: [],
       events: [],
       summaries: [],
       artifacts: [],
-      contextTokenCount: 81,
+      contextTokenCount: 85,
     });
 
     const { useCase, runCompaction } = createUseCase({
@@ -449,7 +468,7 @@ describe('MaterializeContextUseCase', () => {
       },
     });
 
-    await useCase.execute({
+    const output = await useCase.execute({
       conversationId,
       budgetTokens: 90,
       overheadTokens: 10,
@@ -458,13 +477,155 @@ describe('MaterializeContextUseCase', () => {
     expect(runCompaction.calls).toHaveLength(1);
     expect(runCompaction.calls[0]).toEqual({
       conversationId,
-      trigger: 'hard',
+      trigger: 'soft',
       targetTokens: createTokenCount(80),
     });
+    expect(output.compactionTriggered).toBe(true);
   });
 
-  it('returns typed failure when materialized context exceeds available budget', async () => {
-    const message = createTestMessage({ tokenCount: 25, content: 'too-large' });
+  it('trims unpinned items to fit available budget instead of failing', async () => {
+    const message1 = createTestMessage({
+      id: createEventId('evt_trim_1'),
+      tokenCount: 12,
+      content: 'first-large-message',
+      sequence: 1,
+    });
+    const message2 = createTestMessage({
+      id: createEventId('evt_trim_2'),
+      tokenCount: 12,
+      content: 'second-large-message',
+      sequence: 2,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({
+          conversationId,
+          position: 0,
+          ref: createMessageContextItemRef(message1.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 1,
+          ref: createMessageContextItemRef(message2.id),
+        }),
+      ],
+      events: [message1, message2],
+      contextTokenCount: 24,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 20,
+      overheadTokens: 0,
+    });
+
+    expect(output.modelMessages).toHaveLength(1);
+    expect(output.modelMessages[0]?.content).toBe('second-large-message');
+    expect(output.budgetUsed.value).toBe(12);
+    expect(output.trimmedToFit).toBe(true);
+    expect(output.droppedMessageCount).toBe(1);
+    expect(output.droppedSummaryCount).toBe(0);
+  });
+
+  it('prioritizes raw messages over summaries when budget pressure forces a choice', async () => {
+    const message = createTestMessage({
+      id: createEventId('evt_trim_message_priority'),
+      tokenCount: 12,
+      content: 'raw-evidence-turn',
+      sequence: 1,
+    });
+    const summary = createTestSummary({
+      id: createSummaryNodeId('sum_trim_message_priority'),
+      content: '[Summary] condensed-evidence-turn',
+      tokenCount: 12,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({
+          conversationId,
+          position: 0,
+          ref: createMessageContextItemRef(message.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 1,
+          ref: createSummaryContextItemRef(summary.id),
+        }),
+      ],
+      events: [message],
+      summaries: [summary],
+      contextTokenCount: 24,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 12,
+      overheadTokens: 0,
+    });
+
+    expect(output.modelMessages).toEqual([{ role: 'user', content: 'raw-evidence-turn' }]);
+    expect(output.summaryReferences).toEqual([]);
+    expect(output.budgetUsed.value).toBe(12);
+    expect(output.trimmedToFit).toBe(true);
+    expect(output.droppedMessageCount).toBe(0);
+    expect(output.droppedSummaryCount).toBe(1);
+  });
+
+  it('continues after non-converged compaction and still trims to budget', async () => {
+    const message = createTestMessage({
+      id: createEventId('evt_non_converged_recovery'),
+      tokenCount: 12,
+      content: 'recoverable-message',
+      sequence: 1,
+    });
+
+    const state = createState({
+      conversation: createTestConversation({ contextWindow: 100, hardThreshold: 0.8 }),
+      contextItems: [
+        createContextItem({
+          conversationId,
+          position: 0,
+          ref: createMessageContextItemRef(message.id),
+        }),
+      ],
+      events: [message],
+      contextTokenCount: 95,
+    });
+
+    const { useCase, runCompaction } = createUseCase({
+      state,
+      runCompactionResult: {
+        rounds: 10,
+        nodesCreated: [],
+        tokensFreed: createTokenCount(0),
+        converged: false,
+      },
+    });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 100,
+      overheadTokens: 20,
+    });
+
+    expect(runCompaction.calls).toHaveLength(1);
+    expect(output.budgetUsed.value).toBeLessThanOrEqual(80);
+    expect(output.compactionTriggered).toBe(true);
+  });
+
+  it('returns typed failure when pinned items alone exceed budget', async () => {
+    const message = createTestMessage({
+      id: createEventId('evt_pinned_over_budget'),
+      tokenCount: 30,
+      content: 'pinned-message',
+      sequence: 1,
+    });
 
     const state = createState({
       contextItems: [
@@ -475,7 +636,7 @@ describe('MaterializeContextUseCase', () => {
         }),
       ],
       events: [message],
-      contextTokenCount: 25,
+      contextTokenCount: 30,
     });
 
     const { useCase } = createUseCase({ state });
@@ -484,43 +645,14 @@ describe('MaterializeContextUseCase', () => {
       conversationId,
       budgetTokens: 20,
       overheadTokens: 0,
+      pinRules: [{ type: 'message', messageId: message.id }],
     });
 
     await expect(execution).rejects.toBeInstanceOf(MaterializeContextBudgetExceededError);
     await expect(execution).rejects.toMatchObject({
       code: 'MATERIALIZE_CONTEXT_BUDGET_EXCEEDED',
       availableBudget: 20,
-      requiredBudget: 25,
-    });
-  });
-
-  it('returns typed failure when hard compaction does not converge', async () => {
-    const state = createState({
-      conversation: createTestConversation({ contextWindow: 100, hardThreshold: 0.8 }),
-      contextTokenCount: 90,
-    });
-
-    const { useCase } = createUseCase({
-      state,
-      runCompactionResult: {
-        rounds: 10,
-        nodesCreated: [],
-        tokensFreed: createTokenCount(0),
-        converged: false,
-      },
-    });
-
-    const execution = useCase.execute({
-      conversationId,
-      budgetTokens: 100,
-      overheadTokens: 20,
-    });
-
-    await expect(execution).rejects.toBeInstanceOf(MaterializeContextBudgetExceededError);
-    await expect(execution).rejects.toMatchObject({
-      code: 'MATERIALIZE_CONTEXT_BUDGET_EXCEEDED',
-      availableBudget: 80,
-      requiredBudget: 90,
+      requiredBudget: 30,
     });
   });
 
@@ -579,7 +711,7 @@ describe('MaterializeContextUseCase', () => {
     expect(output.modelMessages[0]!.content).toContain('[Summary] test content');
   });
 
-  it('prioritizes pinned items first in materialized output', async () => {
+  it('keeps pinned items while preserving chronological output order', async () => {
     const msg1 = createTestMessage({ id: createEventId('evt_pin_1'), content: 'first', tokenCount: 5, sequence: 1 });
     const msg2 = createTestMessage({ id: createEventId('evt_pin_2'), content: 'second', tokenCount: 5, sequence: 2 });
 
@@ -601,9 +733,9 @@ describe('MaterializeContextUseCase', () => {
       pinRules: [{ type: 'message', messageId: msg2.id }],
     });
 
-    // Pinned item (msg2) should come first
-    expect(output.modelMessages[0]!.content).toBe('second');
-    expect(output.modelMessages[1]!.content).toBe('first');
+    expect(output.modelMessages[0]!.content).toBe('first');
+    expect(output.modelMessages[1]!.content).toBe('second');
+    expect(output.modelMessages.some((message) => message.content === 'second')).toBe(true);
   });
 
   it('returns empty systemPreamble when no summaries or artifacts are present', async () => {
@@ -626,6 +758,221 @@ describe('MaterializeContextUseCase', () => {
     });
 
     expect(output.systemPreamble).toBe('');
+  });
+
+  it('captures staged retrieval diagnostics and ranking decisions in output', async () => {
+    const primarySummary = createTestSummary({
+      id: createSummaryNodeId('sum_retrieval_primary'),
+      content: '[Summary] auth token rotation details',
+      tokenCount: 8,
+      artifactIds: [artifactId],
+    });
+    const keywordSummary = createTestSummary({
+      id: createSummaryNodeId('sum_retrieval_keyword'),
+      content: '[Summary] token key expiry reminders',
+      tokenCount: 7,
+    });
+    const artifact = createTestArtifact();
+
+    const state = createState({
+      summaries: [primarySummary, keywordSummary],
+      summarySearchResults: {
+        'auth token rotation #ZX-41': [primarySummary],
+        'auth token rotation': [primarySummary],
+        'ZX-41': [primarySummary],
+      },
+      artifacts: [artifact],
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 40,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'auth token rotation #ZX-41', scope: primarySummary.id, limit: 1 }],
+    });
+
+    expect(output.retrievalMatchCount).toBe(3);
+    expect(output.retrievalAddedCount).toBe(1);
+    expect(state.searchQueries).toEqual([
+      { query: 'auth token rotation #ZX-41', scope: primarySummary.id },
+      { query: 'auth token rotation', scope: primarySummary.id },
+      { query: 'ZX-41', scope: primarySummary.id },
+    ]);
+
+    const firstHint = output.retrievalDiagnostics?.[0];
+    expect(firstHint?.hintQuery).toBe('auth token rotation #ZX-41');
+    expect(firstHint?.scopeSummaryId).toBe(primarySummary.id);
+    expect(firstHint?.limit).toBe(1);
+    expect(firstHint?.stageQueries).toEqual([
+      {
+        stage: 'primary',
+        query: 'auth token rotation #ZX-41',
+        matchCount: 1,
+      },
+      {
+        stage: 'keywords',
+        query: 'auth token rotation',
+        matchCount: 1,
+      },
+      {
+        stage: 'anchors',
+        query: 'ZX-41',
+        matchCount: 1,
+      },
+    ]);
+
+    const firstDecision = firstHint?.candidateDecisions[0];
+    expect(firstDecision?.summaryId).toBe(primarySummary.id);
+    expect(firstDecision?.selected).toBe(true);
+    expect(firstDecision?.reason).toBe('selected');
+    expect(firstDecision?.score).toBeGreaterThan(0);
+
+    expect(firstHint?.candidateDecisions.find((candidate) => candidate.summaryId === keywordSummary.id)).toBeUndefined();
+    expect(firstHint?.selectedSummaryIds).toEqual([primarySummary.id]);
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([primarySummary.id]);
+    expect(output.artifactReferences.map((reference) => reference.id)).toEqual([artifact.id]);
+    expect(output.budgetUsed.value).toBe(8);
+  });
+
+  it('keeps raw messages under retrieval-reserve pressure before dropping summaries', async () => {
+    const rawMessage = createTestMessage({
+      id: createEventId('evt_trim_retrieval_reserve_message'),
+      content: 'raw-evidence-under-reserve-pressure',
+      tokenCount: 16,
+      sequence: 1,
+    });
+    const olderSummary = createTestSummary({
+      id: createSummaryNodeId('sum_trim_retrieval_reserve_old'),
+      content: '[Summary] older-summary-context',
+      tokenCount: 12,
+    });
+    const newerSummary = createTestSummary({
+      id: createSummaryNodeId('sum_trim_retrieval_reserve_new'),
+      content: '[Summary] newer-summary-context',
+      tokenCount: 12,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({
+          conversationId,
+          position: 0,
+          ref: createMessageContextItemRef(rawMessage.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 1,
+          ref: createSummaryContextItemRef(olderSummary.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 2,
+          ref: createSummaryContextItemRef(newerSummary.id),
+        }),
+      ],
+      events: [rawMessage],
+      summaries: [olderSummary, newerSummary],
+      contextTokenCount: 40,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 40,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'no-op-retrieval', limit: 1 }],
+    });
+
+    expect(output.modelMessages.map((message) => message.content)).toEqual([
+      'raw-evidence-under-reserve-pressure',
+      `[Summary ID: ${newerSummary.id}]\n[Summary] newer-summary-context`,
+    ]);
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([newerSummary.id]);
+    expect(output.retrievalAddedCount).toBe(0);
+    expect(output.budgetUsed.value).toBe(28);
+    expect(output.trimmedToFit).toBe(true);
+    expect(output.droppedMessageCount).toBe(0);
+    expect(output.droppedSummaryCount).toBe(1);
+  });
+
+  it('throws typed invalid-reference error for unknown retrieval scope', async () => {
+    const summary = createTestSummary({
+      id: createSummaryNodeId('sum_scope_known'),
+      content: '[Summary] auth token rotation details',
+      tokenCount: 8,
+    });
+
+    const state = createState({
+      summaries: [summary],
+      summarySearchResults: {
+        'auth token rotation': [summary],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const execution = useCase.execute({
+      conversationId,
+      budgetTokens: 40,
+      overheadTokens: 0,
+      retrievalHints: [
+        {
+          query: 'auth token rotation',
+          scope: createSummaryNodeId('sum_scope_missing'),
+          limit: 1,
+        },
+      ],
+    });
+
+    await expect(execution).rejects.toBeInstanceOf(InvalidReferenceError);
+    await expect(execution).rejects.toMatchObject({
+      code: 'INVALID_REFERENCE',
+      referenceKind: 'summary_scope',
+      referenceId: 'sum_scope_missing',
+    });
+  });
+
+  it('throws typed invalid-reference error when scoped retrieval has no matches', async () => {
+    const summary = createTestSummary({
+      id: createSummaryNodeId('sum_scope_known_nomatch'),
+      content: '[Summary] unrelated content',
+      tokenCount: 8,
+    });
+
+    const state = createState({
+      summaries: [summary],
+      summarySearchResults: {
+        query: [],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const execution = useCase.execute({
+      conversationId,
+      budgetTokens: 40,
+      overheadTokens: 0,
+      retrievalHints: [
+        {
+          query: 'query',
+          scope: summary.id,
+          limit: 1,
+        },
+      ],
+    });
+
+    await expect(execution).rejects.toBeInstanceOf(InvalidReferenceError);
+    await expect(execution).rejects.toMatchObject({
+      code: 'INVALID_REFERENCE',
+      referenceKind: 'summary_scope',
+      referenceId: summary.id,
+    });
   });
 
   it('emits ContextMaterialized domain event when eventPublisher is provided', async () => {

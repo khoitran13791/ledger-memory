@@ -13,7 +13,31 @@ import {
 import type { InMemoryPersistenceState } from './state';
 import { createInMemoryPersistenceState } from './state';
 
-const toLowerCase = (value: string): string => value.toLocaleLowerCase();
+const toSearchTokens = (value: string): readonly string[] => {
+  return value
+    .toLocaleLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1);
+};
+
+const scoreTokenOverlap = (content: string, query: string): number => {
+  const queryTokens = toSearchTokens(query);
+  if (queryTokens.length === 0) {
+    return 0;
+  }
+
+  const contentTokens = new Set(toSearchTokens(content));
+  let overlapCount = 0;
+
+  for (const token of queryTokens) {
+    if (contentTokens.has(token)) {
+      overlapCount += 1;
+    }
+  }
+
+  return overlapCount;
+};
 
 const uniquePush = <T>(target: T[], value: T): void => {
   if (!target.includes(value)) {
@@ -90,6 +114,37 @@ const checkForCycleOnEdge = (
   if (reachesTarget(parentSummaryId, summaryId)) {
     throw new InvalidDagEdgeError('Adding condensed edge would create a cycle.');
   }
+};
+
+const collectScopedSummaryIds = (
+  state: InMemoryPersistenceState,
+  rootSummaryId: SummaryNodeId,
+): readonly SummaryNodeId[] => {
+  if (!state.summaryNodesById.has(rootSummaryId)) {
+    return [];
+  }
+
+  const scoped: SummaryNodeId[] = [];
+  const queue: SummaryNodeId[] = [rootSummaryId];
+  const visited = new Set<SummaryNodeId>();
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current === undefined || visited.has(current)) {
+      continue;
+    }
+
+    visited.add(current);
+    scoped.push(current);
+
+    for (const parentId of state.condensedParentEdgesBySummary.get(current) ?? []) {
+      if (!visited.has(parentId)) {
+        queue.push(parentId);
+      }
+    }
+  }
+
+  return scoped;
 };
 
 const expandSummaryToMessageIds = (
@@ -546,18 +601,52 @@ export class InMemorySummaryDag implements SummaryDagPort {
   async searchSummaries(
     conversationId: ConversationId,
     query: string,
+    scope?: SummaryNodeId,
   ): Promise<readonly SummaryNode[]> {
-    const normalized = toLowerCase(query.trim());
+    const normalized = query.trim();
     if (normalized.length === 0) {
+      return [];
+    }
+
+    const scopedIds =
+      scope === undefined
+        ? null
+        : new Set(
+            collectScopedSummaryIds(this.state, scope).filter((summaryId) => {
+              const node = this.state.summaryNodesById.get(summaryId);
+              return node?.conversationId === conversationId;
+            }),
+          );
+
+    if (scope !== undefined && scopedIds !== null && scopedIds.size === 0) {
       return [];
     }
 
     const summaryIds = this.state.summaryNodeIdsByConversation.get(conversationId) ?? [];
 
     return summaryIds
+      .filter((summaryId) => scopedIds === null || scopedIds.has(summaryId))
       .map((summaryId) => this.state.summaryNodesById.get(summaryId))
       .filter((node): node is SummaryNode => node !== undefined)
-      .filter((node) => toLowerCase(node.content).includes(normalized));
+      .map((node, index) => ({
+        node,
+        index,
+        score: scoreTokenOverlap(node.content, normalized),
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => {
+        if (right.score !== left.score) {
+          return right.score - left.score;
+        }
+
+        const createdAtDiff = right.node.createdAt.getTime() - left.node.createdAt.getTime();
+        if (createdAtDiff !== 0) {
+          return createdAtDiff;
+        }
+
+        return left.index - right.index;
+      })
+      .map((entry) => entry.node);
   }
 
   async checkIntegrity(conversationId: ConversationId): Promise<IntegrityReport> {

@@ -19,6 +19,7 @@ module.exports = {
       { type: 'adapters', pattern: 'packages/adapters/src/**' },
       { type: 'infrastructure', pattern: 'packages/infrastructure/src/**' },
       { type: 'sdk', pattern: 'packages/sdk/src/**' },
+      { type: 'benchmark', pattern: 'benchmarks/**/src/**' },
     ],
   },
   rules: {
@@ -32,6 +33,7 @@ module.exports = {
           { from: 'adapters', allow: ['application', 'domain'] },
           { from: 'infrastructure', allow: ['adapters', 'application', 'domain'] },
           { from: 'sdk', allow: ['infrastructure', 'adapters', 'application', 'domain'] },
+          { from: 'benchmark', allow: ['sdk', 'infrastructure', 'adapters', 'application', 'domain'] },
         ],
       },
     ],

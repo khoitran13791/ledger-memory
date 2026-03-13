@@ -92,13 +92,17 @@ export class InMemoryLedgerStore {
             return true;
         });
     }
-    async searchEvents(conversationId, query) {
+    async searchEvents(conversationId, query, scope) {
         const normalizedQuery = toLowerCase(query.trim());
         if (normalizedQuery.length === 0) {
             return [];
         }
         const events = this.state.ledgerEventsByConversation.get(conversationId) ?? [];
+        const scopedMessageIds = scope ? collectScopedMessageIds(this.state, scope) : null;
         return sortEventsBySequence(events).filter((event) => {
+            if (scopedMessageIds !== null && !scopedMessageIds.has(event.id)) {
+                return false;
+            }
             return toLowerCase(event.content).includes(normalizedQuery);
         });
     }

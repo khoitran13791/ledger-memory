@@ -10,7 +10,7 @@ export declare class InMemorySummaryDag implements SummaryDagPort {
     addCondensedEdges(summaryId: SummaryNodeId, parentSummaryIds: readonly SummaryNodeId[]): Promise<void>;
     getParentSummaryIds(summaryId: SummaryNodeId): Promise<readonly SummaryNodeId[]>;
     expandToMessages(summaryId: SummaryNodeId): Promise<readonly LedgerEvent[]>;
-    searchSummaries(conversationId: ConversationId, query: string): Promise<readonly SummaryNode[]>;
+    searchSummaries(conversationId: ConversationId, query: string, scope?: SummaryNodeId): Promise<readonly SummaryNode[]>;
     checkIntegrity(conversationId: ConversationId): Promise<IntegrityReport>;
 }
 //# sourceMappingURL=in-memory-summary-dag.d.ts.map

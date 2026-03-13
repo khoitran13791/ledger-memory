@@ -5,6 +5,7 @@
     { "path": "./packages/application" },
     { "path": "./packages/adapters" },
     { "path": "./packages/infrastructure" },
-    { "path": "./packages/sdk" }
+    { "path": "./packages/sdk" },
+    { "path": "./benchmarks/locomo" }
   ]
 }

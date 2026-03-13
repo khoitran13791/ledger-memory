@@ -8,6 +8,7 @@ import type {
   DomainEvent,
   HashPort,
   SummaryNode,
+  SummaryNodeId,
   TokenCount,
 } from '@ledgermind/domain';
 import {
@@ -187,7 +188,14 @@ class NoopSummaryDagPort implements SummaryDagPort {
     return [];
   }
 
-  async searchSummaries(): Promise<readonly SummaryNode[]> {
+  async searchSummaries(
+    conversationIdInput?: ConversationId,
+    queryInput?: string,
+    scopeInput?: SummaryNodeId,
+  ): Promise<readonly SummaryNode[]> {
+    void conversationIdInput;
+    void queryInput;
+    void scopeInput;
     return [];
   }
 

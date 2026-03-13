@@ -327,7 +327,14 @@ class TestLedgerReadPort implements LedgerReadPort {
     });
   }
 
-  async searchEvents(): Promise<readonly LedgerEvent[]> {
+  async searchEvents(
+    conversationIdInput?: ConversationId,
+    queryInput?: string,
+    scopeInput?: SummaryNodeId,
+  ): Promise<readonly LedgerEvent[]> {
+    void conversationIdInput;
+    void queryInput;
+    void scopeInput;
     return [];
   }
 
@@ -490,7 +497,14 @@ class TestSummaryDagPort implements SummaryDagPort {
     return this.controls.expandedMessagesBySummaryId.get(summaryId) ?? [];
   }
 
-  async searchSummaries(): Promise<readonly SummaryNode[]> {
+  async searchSummaries(
+    conversationIdInput?: ConversationId,
+    queryInput?: string,
+    scopeInput?: SummaryNodeId,
+  ): Promise<readonly SummaryNode[]> {
+    void conversationIdInput;
+    void queryInput;
+    void scopeInput;
     return [];
   }
 

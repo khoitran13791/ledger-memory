@@ -1,5 +1,5 @@
 import type { MemoryEngine, RunCompactionConfig } from '@ledgermind/application';
-export type { AppendLedgerEventsInput, AppendLedgerEventsOutput, ArtifactReference, ArtifactSource, CheckIntegrityInput, CheckIntegrityOutput, DescribeInput, DescribeOutput, ExpandInput, ExpandOutput, ExploreArtifactInput, ExploreArtifactOutput, ExplorerHints, GrepInput, GrepMatch, GrepOutput, MaterializeContextInput, MaterializeContextOutput, MemoryEngine, Metadata, ModelMessage, NewLedgerEvent, PinRule, RetrievalHint, RunCompactionInput, RunCompactionOutput, StoreArtifactInput, StoreArtifactOutput, SummaryReference, } from '@ledgermind/application';
+export type { AppendLedgerEventsInput, AppendLedgerEventsOutput, ArtifactReference, ArtifactSource, CheckIntegrityInput, CheckIntegrityOutput, DescribeArtifactPlanningSignals, DescribeInput, DescribeOutput, DescribeSummaryPlanningSignals, ExpandInput, ExpandOutput, ExploreArtifactInput, ExploreArtifactOutput, ExplorerHints, GrepInput, GrepMatch, GrepOutput, MaterializeContextInput, MaterializeContextOutput, MemoryEngine, Metadata, ModelMessage, NewLedgerEvent, PinRule, RetrievalHint, RunCompactionInput, RunCompactionOutput, StoreArtifactInput, StoreArtifactOutput, SummaryReference, } from '@ledgermind/application';
 export type MemoryEngineTokenizerConfig = {
     readonly type: 'deterministic';
 } | {

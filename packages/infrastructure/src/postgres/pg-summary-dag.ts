@@ -475,6 +475,7 @@ export class PgSummaryDag implements SummaryDagPort {
   async searchSummaries(
     conversationId: ConversationId,
     query: string,
+    scope?: SummaryNodeId,
   ): Promise<readonly SummaryNode[]> {
     const normalized = query.trim();
     if (normalized.length === 0) {
@@ -483,12 +484,27 @@ export class PgSummaryDag implements SummaryDagPort {
 
     try {
       const result = await this.executor.query<SummaryNodeRow>(
-        `SELECT id, conversation_id, kind, content, token_count, artifact_ids, created_at
-         FROM summary_nodes
-         WHERE conversation_id = $1
-           AND to_tsvector('english', content) @@ plainto_tsquery('english', $2)
-         ORDER BY created_at ASC`,
-        [conversationId, normalized],
+        `WITH RECURSIVE scoped_summaries AS (
+          SELECT sn.id
+          FROM summary_nodes sn
+          WHERE sn.id = $3::text
+            AND sn.conversation_id = $1
+
+          UNION ALL
+
+          SELECT child.id
+          FROM summary_nodes child
+          JOIN summary_parent_edges spe ON spe.summary_id = child.id
+          JOIN scoped_summaries ss ON spe.parent_summary_id = ss.id
+          WHERE child.conversation_id = $1
+        )
+        SELECT id, conversation_id, kind, content, token_count, artifact_ids, created_at
+        FROM summary_nodes
+        WHERE conversation_id = $1
+          AND ($3::text IS NULL OR id IN (SELECT id FROM scoped_summaries))
+          AND to_tsvector('english', content) @@ plainto_tsquery('english', $2)
+        ORDER BY created_at ASC`,
+        [conversationId, normalized, scope ?? null],
       );
 
       return result.rows.map(toSummaryNode);

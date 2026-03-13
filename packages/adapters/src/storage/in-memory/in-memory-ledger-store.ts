@@ -145,15 +145,24 @@ export class InMemoryLedgerStore implements LedgerAppendPort, LedgerReadPort {
     });
   }
 
-  async searchEvents(conversationId: ConversationId, query: string): Promise<readonly LedgerEvent[]> {
+  async searchEvents(
+    conversationId: ConversationId,
+    query: string,
+    scope?: SummaryNodeId,
+  ): Promise<readonly LedgerEvent[]> {
     const normalizedQuery = toLowerCase(query.trim());
     if (normalizedQuery.length === 0) {
       return [];
     }
 
     const events = this.state.ledgerEventsByConversation.get(conversationId) ?? [];
+    const scopedMessageIds = scope ? collectScopedMessageIds(this.state, scope) : null;
 
     return sortEventsBySequence(events).filter((event) => {
+      if (scopedMessageIds !== null && !scopedMessageIds.has(event.id)) {
+        return false;
+      }
+
       return toLowerCase(event.content).includes(normalizedQuery);
     });
   }

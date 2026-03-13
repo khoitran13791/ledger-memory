@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:conformance": "vitest run conformance/__tests__/conformance.cross-adapter.test.ts",
     "test:quality:deterministic": "vitest run quality/__tests__/compaction-quality-deterministic.test.ts",
+    "test:quality:locomo:smoke": "vitest run quality/__tests__/locomo-smoke.test.ts",
     "test:probes": "vitest run probes/__tests__/probe-evaluation.cross-adapter.test.ts",
     "clean": "rm -rf dist tsconfig.tsbuildinfo"
   },

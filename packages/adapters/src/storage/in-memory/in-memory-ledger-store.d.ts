@@ -7,7 +7,7 @@ export declare class InMemoryLedgerStore implements LedgerAppendPort, LedgerRead
     appendEvents(conversationId: ConversationId, events: readonly LedgerEvent[]): Promise<void>;
     getNextSequence(conversationId: ConversationId): Promise<SequenceNumber>;
     getEvents(conversationId: ConversationId, range?: SequenceRange): Promise<readonly LedgerEvent[]>;
-    searchEvents(conversationId: ConversationId, query: string): Promise<readonly LedgerEvent[]>;
+    searchEvents(conversationId: ConversationId, query: string, scope?: SummaryNodeId): Promise<readonly LedgerEvent[]>;
     regexSearchEvents(conversationId: ConversationId, pattern: string, scope?: SummaryNodeId): Promise<readonly LedgerReadGrepMatch[]>;
 }
 //# sourceMappingURL=in-memory-ledger-store.d.ts.map

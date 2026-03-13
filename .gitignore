@@ -26,3 +26,6 @@ Thumbs.db
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Benchmark artifacts
+benchmarks/locomo/runs/
