@@ -35,6 +35,7 @@ import {
   createIdService,
   createTimestamp,
   createTokenCount,
+  type EventId,
   type ConversationId,
   type HashPort,
   type MessageRole,
@@ -165,6 +166,17 @@ export interface LedgermindRuntime {
   readonly conversationId: ConversationId;
   readonly engine: MemoryEngine;
   readonly runtimeMode: LongMemEvalRuntimeMode;
+  readonly eventLookup: ReadonlyMap<
+    string,
+    {
+      readonly eventId: EventId;
+      readonly content: string;
+      readonly sourceId: string;
+      readonly sessionId: string;
+      readonly sessionDate: string;
+      readonly role: string;
+    }
+  >;
   destroy(): Promise<void>;
 }
 
@@ -222,7 +234,7 @@ export const createLedgermindRuntime = async (input: {
   const engine = createEngine({ deps });
   const fixedOccurredAt = createTimestamp(new Date('2026-03-01T00:00:00.000Z'));
 
-  await engine.append({
+  const appendOutput = await engine.append({
     conversationId: conversation.id,
     events: input.example.history.flatMap((session) =>
       session.turns.map((turn) => {
@@ -253,6 +265,33 @@ export const createLedgermindRuntime = async (input: {
     ),
   });
 
+  const eventLookup = new Map<
+    string,
+    {
+      readonly eventId: EventId;
+      readonly content: string;
+      readonly sourceId: string;
+      readonly sessionId: string;
+      readonly sessionDate: string;
+      readonly role: string;
+    }
+  >();
+  for (const event of appendOutput.appendedEvents) {
+    const sourceId = typeof event.metadata?.['sourceId'] === 'string' ? event.metadata['sourceId'] : event.id;
+    const sessionId = typeof event.metadata?.['sessionId'] === 'string' ? event.metadata['sessionId'] : 'unknown-session';
+    const sessionDate =
+      typeof event.metadata?.['sessionDate'] === 'string' ? event.metadata['sessionDate'] : input.example.metadata.questionDate;
+    const role = typeof event.metadata?.['role'] === 'string' ? event.metadata['role'] : event.role;
+    eventLookup.set(event.id, {
+      eventId: event.id,
+      content: event.content,
+      sourceId,
+      sessionId,
+      sessionDate,
+      role,
+    });
+  }
+
   if (input.precompact === true) {
     await engine.runCompaction({
       conversationId: conversation.id,
@@ -264,6 +303,7 @@ export const createLedgermindRuntime = async (input: {
   return {
     conversationId: conversation.id,
     engine,
+    eventLookup,
     runtimeMode: input.runtimeMode,
     destroy: async () => undefined,
   };

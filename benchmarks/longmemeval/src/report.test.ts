@@ -24,15 +24,52 @@ const perExampleRows: readonly LongMemEvalPerExampleRecord[] = [
     completionTokens: 12,
     estimatedCostUsd: 0.015,
     scorerMode: 'fallback_exact_match',
+    evidenceDiagnostics: {
+      goldEvidenceIds: ['sess-100#turn-0'],
+      matchedEvidenceIds: ['sess-100#turn-0'],
+      missingEvidenceIds: [],
+      recall: 1,
+      hasGoldEvidenceInContext: true,
+      hasAllGoldEvidenceInContext: true,
+    },
+    failureClassification: {
+      category: 'none',
+      reason: 'Answer matched after evidence became reachable.',
+      goldEvidenceReachable: true,
+      hasGoldEvidenceInContext: true,
+      hasAllGoldEvidenceInContext: true,
+    },
   },
 ];
 
 const traceRows: readonly LongMemEvalTraceRecord[] = [
   {
+    traceSchemaVersion: 'longmemeval_trace_v1',
     exampleId: 'q-001',
     baseline: 'full_history_upper_bound',
     parityMode: 'upper_bound',
+    initialContextIds: ['sess-100#turn-0'],
+    postToolContextIds: ['sess-100#turn-0'],
+    summaryReferenceIds: [],
+    describedIds: [],
+    expandedIds: [],
+    grepQueries: [],
     toolSteps: [],
+    evidenceDiagnostics: {
+      goldEvidenceIds: ['sess-100#turn-0'],
+      matchedEvidenceIds: ['sess-100#turn-0'],
+      missingEvidenceIds: [],
+      recall: 1,
+      hasGoldEvidenceInContext: true,
+      hasAllGoldEvidenceInContext: true,
+    },
+    failureClassification: {
+      category: 'none',
+      reason: 'Answer matched after evidence became reachable.',
+      goldEvidenceReachable: true,
+      hasGoldEvidenceInContext: true,
+      hasAllGoldEvidenceInContext: true,
+    },
     latencyMs: 25,
     promptTokens: 2048,
     completionTokens: 12,
@@ -83,7 +120,10 @@ describe('writeBenchmarkArtifacts', () => {
     expect(perExampleJsonl).toContain('"score":1');
     expect(perExampleJsonl).toContain('"parityMode":"upper_bound"');
     expect(traceJsonl).toContain('"exampleId":"q-001"');
+    expect(traceJsonl).toContain('"traceSchemaVersion":"longmemeval_trace_v1"');
     expect(summaryMarkdown).toContain('Aggregate Score');
+    expect(summaryMarkdown).toContain('Retrieval Effectiveness');
+    expect(summaryMarkdown).toContain('Failure Mix');
     expect(summaryMarkdown).toContain('full_history_upper_bound');
     expect(summaryMarkdown).toContain('upper_bound');
   });

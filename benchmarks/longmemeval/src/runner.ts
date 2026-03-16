@@ -4,7 +4,9 @@ import type {
   LongMemEvalBaselineSummary,
   LongMemEvalBenchmarkConfig,
   LongMemEvalConfigSnapshot,
+  LongMemEvalEvidenceDiagnostics,
   LongMemEvalExample,
+  LongMemEvalFailureClassification,
   LongMemEvalPerExampleRecord,
   LongMemEvalRunSummary,
   LongMemEvalTraceRecord,
@@ -52,6 +54,71 @@ const summarizeBaseline = (input: {
   };
 };
 
+const unique = (values: readonly string[]): readonly string[] => [...new Set(values)];
+
+const deriveGoldEvidenceIds = (example: LongMemEvalExample): readonly string[] => {
+  const answerTurns = example.history.flatMap((session) =>
+    session.turns.filter((turn) => turn.hasAnswer).flatMap((turn) => [turn.turnId, session.sessionId]),
+  );
+
+  return unique([...(example.goldEvidenceIds ?? []), ...answerTurns]);
+};
+
+const toEvidenceDiagnostics = (input: {
+  readonly example: LongMemEvalExample;
+  readonly contextIds: readonly string[];
+}): LongMemEvalEvidenceDiagnostics => {
+  const goldEvidenceIds = deriveGoldEvidenceIds(input.example);
+  const matchedEvidenceIds = goldEvidenceIds.filter((id) => input.contextIds.includes(id));
+  const missingEvidenceIds = goldEvidenceIds.filter((id) => !matchedEvidenceIds.includes(id));
+  const recall = goldEvidenceIds.length === 0 ? 1 : matchedEvidenceIds.length / goldEvidenceIds.length;
+
+  return {
+    goldEvidenceIds,
+    matchedEvidenceIds,
+    missingEvidenceIds,
+    recall,
+    hasGoldEvidenceInContext: matchedEvidenceIds.length > 0,
+    hasAllGoldEvidenceInContext: missingEvidenceIds.length === 0,
+  };
+};
+
+const classifyFailure = (input: {
+  readonly initialEvidenceDiagnostics: LongMemEvalEvidenceDiagnostics;
+  readonly finalEvidenceDiagnostics: LongMemEvalEvidenceDiagnostics;
+  readonly score: number;
+}): LongMemEvalFailureClassification => {
+  const goldEvidenceReachable = input.finalEvidenceDiagnostics.hasGoldEvidenceInContext;
+
+  if (!goldEvidenceReachable && input.finalEvidenceDiagnostics.goldEvidenceIds.length > 0) {
+    return {
+      category: 'reachability_failure',
+      reason: 'Gold evidence never became reachable in the final context.',
+      goldEvidenceReachable,
+      hasGoldEvidenceInContext: input.initialEvidenceDiagnostics.hasGoldEvidenceInContext,
+      hasAllGoldEvidenceInContext: input.initialEvidenceDiagnostics.hasAllGoldEvidenceInContext,
+    };
+  }
+
+  if (input.score < 1) {
+    return {
+      category: 'answer_synthesis_failure',
+      reason: 'Gold evidence was reachable, but the predicted answer still missed the reference.',
+      goldEvidenceReachable,
+      hasGoldEvidenceInContext: input.initialEvidenceDiagnostics.hasGoldEvidenceInContext,
+      hasAllGoldEvidenceInContext: input.initialEvidenceDiagnostics.hasAllGoldEvidenceInContext,
+    };
+  }
+
+  return {
+    category: 'none',
+    reason: 'Answer matched after evidence became reachable.',
+    goldEvidenceReachable,
+    hasGoldEvidenceInContext: input.initialEvidenceDiagnostics.hasGoldEvidenceInContext,
+    hasAllGoldEvidenceInContext: input.initialEvidenceDiagnostics.hasAllGoldEvidenceInContext,
+  };
+};
+
 export const runLongMemEvalBenchmark = async (input: {
   readonly config: LongMemEvalBenchmarkConfig;
   readonly examples: readonly LongMemEvalExample[];
@@ -75,6 +142,19 @@ export const runLongMemEvalBenchmark = async (input: {
         parityTokenBudget: input.config.fairness.tokenBudget,
         scorerPath: input.config.scorerPath,
       });
+      const initialEvidenceDiagnostics = toEvidenceDiagnostics({
+        example,
+        contextIds: execution.initialContextIds,
+      });
+      const finalEvidenceDiagnostics = toEvidenceDiagnostics({
+        example,
+        contextIds: execution.postToolContextIds,
+      });
+      const failureClassification = classifyFailure({
+        initialEvidenceDiagnostics,
+        finalEvidenceDiagnostics,
+        score: scoring.score,
+      });
 
       perExampleRows.push({
         exampleId: example.exampleId,
@@ -88,13 +168,24 @@ export const runLongMemEvalBenchmark = async (input: {
         completionTokens: execution.completionTokens,
         estimatedCostUsd,
         scorerMode: scoring.scorerMode,
+        evidenceDiagnostics: finalEvidenceDiagnostics,
+        failureClassification,
       });
 
       traceRows.push({
+        traceSchemaVersion: 'longmemeval_trace_v1',
         exampleId: example.exampleId,
         baseline: strategy.baseline,
         parityMode: scoring.parityMode,
+        initialContextIds: execution.initialContextIds,
+        postToolContextIds: execution.postToolContextIds,
+        summaryReferenceIds: execution.summaryReferenceIds,
+        describedIds: execution.describedIds,
+        expandedIds: execution.expandedIds,
+        grepQueries: execution.grepQueries,
         toolSteps: execution.toolSteps,
+        evidenceDiagnostics: finalEvidenceDiagnostics,
+        failureClassification,
         latencyMs,
         promptTokens: execution.promptTokens,
         completionTokens: execution.completionTokens,

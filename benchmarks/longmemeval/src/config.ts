@@ -15,7 +15,11 @@ const defaultScorerPath = path.join(benchmarkDir, 'vendor', 'official-scorer', '
 const defaultSmokeExampleIdsPath = path.join(benchmarkDir, 'config', 'smoke-example-ids.json');
 const defaultCanaryExampleIdsPath = path.join(benchmarkDir, 'config', 'canary-example-ids.json');
 const defaultRunsDir = path.join(benchmarkDir, 'runs');
-const defaultBaselines: readonly LongMemEvalBaselineName[] = ['full_history_upper_bound'];
+const defaultBaselines: readonly LongMemEvalBaselineName[] = [
+  'full_history_upper_bound',
+  'ledgermind_static_materialize',
+  'ledgermind_agentic_loop',
+];
 
 const parseRuntimeMode = (value: string): LongMemEvalRuntimeMode => {
   if (value === 'static_materialize' || value === 'agentic_loop') {

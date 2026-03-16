@@ -9,6 +9,11 @@ export type LongMemEvalRuntimeMode = 'static_materialize' | 'agentic_loop';
 
 export type LongMemEvalScorerMode = 'official_python' | 'fallback_exact_match';
 
+export type LongMemEvalFailureCategory =
+  | 'none'
+  | 'reachability_failure'
+  | 'answer_synthesis_failure';
+
 export interface LongMemEvalFairnessConfig {
   readonly modelName: string;
   readonly promptTemplate: string;
@@ -82,11 +87,37 @@ export interface LongMemEvalTraceToolStep {
   readonly outcome: 'ok' | 'error' | 'skipped';
 }
 
+export interface LongMemEvalEvidenceDiagnostics {
+  readonly goldEvidenceIds: readonly string[];
+  readonly matchedEvidenceIds: readonly string[];
+  readonly missingEvidenceIds: readonly string[];
+  readonly recall: number;
+  readonly hasGoldEvidenceInContext: boolean;
+  readonly hasAllGoldEvidenceInContext: boolean;
+}
+
+export interface LongMemEvalFailureClassification {
+  readonly category: LongMemEvalFailureCategory;
+  readonly reason: string;
+  readonly goldEvidenceReachable: boolean;
+  readonly hasGoldEvidenceInContext: boolean;
+  readonly hasAllGoldEvidenceInContext: boolean;
+}
+
 export interface LongMemEvalTraceRecord {
+  readonly traceSchemaVersion: 'longmemeval_trace_v1';
   readonly exampleId: string;
   readonly baseline: LongMemEvalBaselineName;
   readonly parityMode: LongMemEvalParityMode;
+  readonly initialContextIds: readonly string[];
+  readonly postToolContextIds: readonly string[];
+  readonly summaryReferenceIds: readonly string[];
+  readonly describedIds: readonly string[];
+  readonly expandedIds: readonly string[];
+  readonly grepQueries: readonly string[];
   readonly toolSteps: readonly LongMemEvalTraceToolStep[];
+  readonly evidenceDiagnostics: LongMemEvalEvidenceDiagnostics;
+  readonly failureClassification: LongMemEvalFailureClassification;
   readonly latencyMs: number;
   readonly promptTokens: number;
   readonly completionTokens: number;
@@ -105,6 +136,8 @@ export interface LongMemEvalPerExampleRecord {
   readonly completionTokens: number;
   readonly estimatedCostUsd: number;
   readonly scorerMode: LongMemEvalScorerMode;
+  readonly evidenceDiagnostics: LongMemEvalEvidenceDiagnostics;
+  readonly failureClassification: LongMemEvalFailureClassification;
 }
 
 export interface LongMemEvalBaselineSummary {
