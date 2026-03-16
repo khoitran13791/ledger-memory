@@ -29,3 +29,7 @@ Thumbs.db
 
 # Benchmark artifacts
 benchmarks/locomo/runs/
+benchmarks/longmemeval/runs/
+
+# Local agent worktrees
+.claude/worktrees/
