@@ -28,4 +28,5 @@ export { buildAnswerPrompt, LONGMEMEVAL_ANSWER_PROMPT } from './prompts.js';
 export { writeBenchmarkArtifacts } from './report.js';
 export { normalizeAnswer, scorePrediction } from './scorer.js';
 export { createBaselineStrategies } from './baselines.js';
+export { createLedgermindRuntime, createLedgermindRuntimeFromConfig } from './ledgermind-runtime.js';
 export { runLongMemEvalBenchmark } from './runner.js';
