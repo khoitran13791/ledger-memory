@@ -7,6 +7,11 @@ describe('buildBenchmarkConfig', () => {
     const config = buildBenchmarkConfig([]);
 
     expect(config.runtimeMode).toBe('static_materialize');
+    expect(config.baselines).toEqual([
+      'full_history_upper_bound',
+      'ledgermind_static_materialize',
+      'ledgermind_agentic_loop',
+    ]);
     expect(config.outputDir).toContain('benchmarks/longmemeval/runs/');
     expect(config.smoke).toBe(false);
     expect(config.canary).toBe(false);
