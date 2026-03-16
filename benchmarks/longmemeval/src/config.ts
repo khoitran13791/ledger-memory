@@ -1,26 +1,11 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export type LongMemEvalRuntimeMode = 'static_materialize' | 'agentic_loop';
-
-export interface LongMemEvalRunCliOptions {
-  readonly smoke: boolean;
-  readonly canary: boolean;
-  readonly outDir?: string;
-  readonly runtimeMode?: LongMemEvalRuntimeMode;
-}
-
-export interface LongMemEvalBenchmarkConfig {
-  readonly smoke: boolean;
-  readonly canary: boolean;
-  readonly runtimeMode: LongMemEvalRuntimeMode;
-  readonly datasetPath: string;
-  readonly scorerPath: string;
-  readonly smokeExampleIdsPath: string;
-  readonly canaryExampleIdsPath: string;
-  readonly outputDir: string;
-  readonly runId: string;
-}
+import type {
+  LongMemEvalBenchmarkConfig,
+  LongMemEvalRunCliOptions,
+  LongMemEvalRuntimeMode,
+} from './types.js';
 
 const benchmarkDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const defaultDatasetPath = path.join(benchmarkDir, 'data', 'official', 'dataset.jsonl');
