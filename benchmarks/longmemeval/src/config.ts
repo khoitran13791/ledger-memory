@@ -1,7 +1,9 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { LONGMEMEVAL_ANSWER_PROMPT } from './prompts.js';
 import type {
+  LongMemEvalBaselineName,
   LongMemEvalBenchmarkConfig,
   LongMemEvalRunCliOptions,
   LongMemEvalRuntimeMode,
@@ -13,6 +15,7 @@ const defaultScorerPath = path.join(benchmarkDir, 'vendor', 'official-scorer', '
 const defaultSmokeExampleIdsPath = path.join(benchmarkDir, 'config', 'smoke-example-ids.json');
 const defaultCanaryExampleIdsPath = path.join(benchmarkDir, 'config', 'canary-example-ids.json');
 const defaultRunsDir = path.join(benchmarkDir, 'runs');
+const defaultBaselines: readonly LongMemEvalBaselineName[] = ['full_history_upper_bound'];
 
 const parseRuntimeMode = (value: string): LongMemEvalRuntimeMode => {
   if (value === 'static_materialize' || value === 'agentic_loop') {
@@ -91,11 +94,22 @@ export const buildBenchmarkConfig = (argv: readonly string[]): LongMemEvalBenchm
     smoke: options.smoke,
     canary: options.canary,
     runtimeMode: options.runtimeMode ?? 'static_materialize',
+    baselines: defaultBaselines,
+    fairness: {
+      modelName: 'longmemeval-oracle-placeholder',
+      promptTemplate: LONGMEMEVAL_ANSWER_PROMPT,
+      temperature: 0,
+      topP: 1,
+      tokenBudget: 16_000,
+      maxAnswerTokens: 128,
+    },
     datasetPath: defaultDatasetPath,
     scorerPath: defaultScorerPath,
     smokeExampleIdsPath: defaultSmokeExampleIdsPath,
     canaryExampleIdsPath: defaultCanaryExampleIdsPath,
     outputDir: options.outDir ?? path.join(defaultRunsDir, runId),
     runId,
+    costPer1kPromptUsd: 0,
+    costPer1kCompletionUsd: 0,
   };
 };

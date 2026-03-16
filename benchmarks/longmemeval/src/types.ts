@@ -7,6 +7,17 @@ export type LongMemEvalParityMode = 'parity' | 'upper_bound';
 
 export type LongMemEvalRuntimeMode = 'static_materialize' | 'agentic_loop';
 
+export type LongMemEvalScorerMode = 'official_python' | 'fallback_exact_match';
+
+export interface LongMemEvalFairnessConfig {
+  readonly modelName: string;
+  readonly promptTemplate: string;
+  readonly temperature: number;
+  readonly topP: number;
+  readonly tokenBudget: number;
+  readonly maxAnswerTokens: number;
+}
+
 export interface LongMemEvalRunCliOptions {
   readonly smoke: boolean;
   readonly canary: boolean;
@@ -18,12 +29,16 @@ export interface LongMemEvalBenchmarkConfig {
   readonly smoke: boolean;
   readonly canary: boolean;
   readonly runtimeMode: LongMemEvalRuntimeMode;
+  readonly baselines: readonly LongMemEvalBaselineName[];
+  readonly fairness: LongMemEvalFairnessConfig;
   readonly datasetPath: string;
   readonly scorerPath: string;
   readonly smokeExampleIdsPath: string;
   readonly canaryExampleIdsPath: string;
   readonly outputDir: string;
   readonly runId: string;
+  readonly costPer1kPromptUsd: number;
+  readonly costPer1kCompletionUsd: number;
 }
 
 export interface LongMemEvalHistoryTurn {
@@ -85,6 +100,34 @@ export interface LongMemEvalPerExampleRecord {
   readonly prediction: string;
   readonly answer: string;
   readonly score: number;
+  readonly latencyMs: number;
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly estimatedCostUsd: number;
+  readonly scorerMode: LongMemEvalScorerMode;
+}
+
+export interface LongMemEvalBaselineSummary {
+  readonly baseline: LongMemEvalBaselineName;
+  readonly parityMode: LongMemEvalParityMode;
+  readonly averageScore: number;
+  readonly averagePromptTokens: number;
+  readonly averageCompletionTokens: number;
+  readonly averageLatencyMs: number;
+  readonly averageCostUsd: number;
+  readonly scorerMode: LongMemEvalScorerMode;
+}
+
+export interface LongMemEvalRunSummary {
+  readonly runId: string;
+  readonly exampleCount: number;
+  readonly baselines: readonly LongMemEvalBaselineSummary[];
+}
+
+export interface LongMemEvalConfigSnapshot extends Readonly<Record<string, unknown>> {
+  readonly runId?: string;
+  readonly smoke?: boolean;
+  readonly canary?: boolean;
 }
 
 export interface LongMemEvalOfficialTurn {
@@ -103,4 +146,21 @@ export interface LongMemEvalOfficialExample {
   readonly haystack_dates: readonly string[];
   readonly haystack_sessions: readonly (readonly LongMemEvalOfficialTurn[])[];
   readonly answer_session_ids?: readonly string[];
+}
+
+export interface LongMemEvalScoringInput {
+  readonly baseline: LongMemEvalBaselineName;
+  readonly prediction: string;
+  readonly answer: string;
+  readonly promptTokens: number;
+  readonly parityTokenBudget: number;
+  readonly scorerPath: string;
+}
+
+export interface LongMemEvalScoringResult {
+  readonly normalizedPrediction: string;
+  readonly normalizedAnswer: string;
+  readonly score: number;
+  readonly parityMode: LongMemEvalParityMode;
+  readonly scorerMode: LongMemEvalScorerMode;
 }

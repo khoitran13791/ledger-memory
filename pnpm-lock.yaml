@@ -61,6 +61,34 @@ importers:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@22.19.13)(tsx@4.21.0)
 
+  benchmarks/longmemeval:
+    dependencies:
+      '@ledgermind/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
+      '@ledgermind/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@ledgermind/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@ledgermind/infrastructure':
+        specifier: workspace:*
+        version: link:../../packages/infrastructure
+    devDependencies:
+      '@types/node':
+        specifier: ^22.18.0
+        version: 22.19.13
+      tsx:
+        specifier: ^4.20.5
+        version: 4.21.0
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.13)(tsx@4.21.0)
+
   packages/adapters:
     dependencies:
       '@ledgermind/application':
