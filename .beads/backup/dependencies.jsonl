@@ -65,6 +65,7 @@
 {"created_at":"2026-03-04T23:31:38Z","created_by":"khoitran13791","depends_on_id":"ledger-memory-2fx","issue_id":"ledger-memory-2fx.5","type":"parent-child"}
 {"created_at":"2026-03-04T23:31:41Z","created_by":"khoitran13791","depends_on_id":"ledger-memory-2fx.4","issue_id":"ledger-memory-2fx.5","type":"blocks"}
 {"created_at":"2026-03-04T23:31:41Z","created_by":"khoitran13791","depends_on_id":"ledger-memory-2fx.5","issue_id":"ledger-memory-2fx.5.1","type":"parent-child"}
+{"created_at":"2026-03-16T11:47:50Z","created_by":"khoitran13791","depends_on_id":"ledger-memory-wh3","issue_id":"ledger-memory-bxt","type":"blocks"}
 {"created_at":"2026-03-06T01:40:25Z","created_by":"khoitran13791","depends_on_id":"ledger-memory-dbt","issue_id":"ledger-memory-dbt.1","type":"parent-child"}
 {"created_at":"2026-03-06T01:40:26Z","created_by":"khoitran13791","depends_on_id":"ledger-memory-dbt.1","issue_id":"ledger-memory-dbt.1.1","type":"parent-child"}
 {"created_at":"2026-03-06T01:40:26Z","created_by":"khoitran13791","depends_on_id":"ledger-memory-dbt.1","issue_id":"ledger-memory-dbt.1.2","type":"parent-child"}
