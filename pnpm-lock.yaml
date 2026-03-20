@@ -82,6 +82,19 @@ importers:
         specifier: workspace:*
         version: link:../domain
 
+  packages/claude-code:
+    dependencies:
+      '@ledgermind/application':
+        specifier: workspace:*
+        version: link:../application
+      '@ledgermind/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^22.18.0
+        version: 22.19.13
+
   packages/domain: {}
 
   packages/infrastructure:

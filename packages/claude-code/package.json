@@ -1,0 +1,36 @@
+{
+  "name": "@ledgermind/claude-code",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "ledgermind-claude-session-start": "dist/commands/session-start.js",
+    "ledgermind-claude-pre-compact": "dist/commands/pre-compact.js",
+    "ledgermind-claude-stop": "dist/commands/stop.js",
+    "ledgermind-claude-post-tool-use": "dist/commands/post-tool-use.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@ledgermind/application": "workspace:*",
+    "@ledgermind/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run --passWithNoTests",
+    "smoke:precompact": "node --experimental-strip-types src/commands/pre-compact.ts",
+    "smoke:stop": "node --experimental-strip-types src/commands/stop.ts",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+  }
+}
