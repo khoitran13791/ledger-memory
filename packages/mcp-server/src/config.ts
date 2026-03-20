@@ -7,6 +7,10 @@ export interface McpServerConfig {
   readonly bindingStorePath?: string;
   readonly enableWriteTools: boolean;
   readonly readOnly: boolean;
+  readonly defaultRuntime?: string;
+  readonly defaultUserScope?: string;
+  readonly defaultWorkspaceScope?: string;
+  readonly defaultBranchScope?: string;
 }
 
 interface ParseMcpServerConfigOptions {
@@ -115,5 +119,11 @@ export const parseMcpServerConfig = ({
     ...(bindingStorePath === undefined ? {} : { bindingStorePath }),
     enableWriteTools,
     readOnly: !enableWriteTools,
+    ...(env.LEDGERMIND_MCP_RUNTIME === undefined ? {} : { defaultRuntime: env.LEDGERMIND_MCP_RUNTIME }),
+    ...(env.LEDGERMIND_MCP_USER_SCOPE === undefined ? {} : { defaultUserScope: env.LEDGERMIND_MCP_USER_SCOPE }),
+    ...(env.LEDGERMIND_MCP_WORKSPACE_SCOPE === undefined
+      ? {}
+      : { defaultWorkspaceScope: env.LEDGERMIND_MCP_WORKSPACE_SCOPE }),
+    ...(env.LEDGERMIND_MCP_BRANCH_SCOPE === undefined ? {} : { defaultBranchScope: env.LEDGERMIND_MCP_BRANCH_SCOPE }),
   };
 };

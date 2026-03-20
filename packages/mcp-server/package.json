@@ -17,6 +17,7 @@
   "dependencies": {
     "@ledgermind/adapters": "workspace:*",
     "@ledgermind/application": "workspace:*",
+    "@ledgermind/domain": "workspace:*",
     "@ledgermind/sdk": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.27.1"
   },

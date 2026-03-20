@@ -6,6 +6,16 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema, type Implementation } from '@modelcontextprotocol/sdk/types.js';
 
 import type { McpServerConfig } from './config';
+import { createFileSessionBindingStore } from './file-session-binding-store';
+import {
+  applySessionBindingToToolArguments,
+  readSessionBindingMetadata,
+  resolveSessionBinding,
+} from './session-binding';
+import {
+  createInMemorySessionBindingStore,
+  type SessionBindingStore,
+} from './session-binding-store';
 import { createMcpToolRegistry, type McpToolRegistration } from './tool-registry';
 
 const SERVER_INFO: Implementation = {
@@ -22,6 +32,7 @@ export interface LedgermindMcpServerRuntime {
   readonly config: McpServerConfig;
   readonly engine: MemoryEngine;
   readonly registry: readonly McpToolRegistration[];
+  readonly sessionBindingStore: SessionBindingStore;
   readonly server: Server;
 }
 
@@ -36,6 +47,10 @@ export const createLedgermindMcpServer = ({
   config,
   engine = createEngineFromConfig(config),
 }: CreateLedgermindMcpServerOptions): LedgermindMcpServerRuntime => {
+  const sessionBindingStore =
+    config.bindingStorePath === undefined
+      ? createInMemorySessionBindingStore()
+      : createFileSessionBindingStore(config.bindingStorePath);
   const catalog = createCanonicalMemoryToolCatalog(engine);
   const registry = createMcpToolRegistry(catalog);
   const server = new Server(SERVER_INFO, {
@@ -64,13 +79,36 @@ export const createLedgermindMcpServer = ({
       };
     }
 
-    return registration.execute(request.params.arguments);
+    const metadata = readSessionBindingMetadata(request.params._meta);
+    const resolvedArguments =
+      metadata === undefined
+        ? request.params.arguments
+        : applySessionBindingToToolArguments(
+            request.params.name,
+            request.params.arguments,
+            await resolveSessionBinding(sessionBindingStore, {
+              runtime: metadata.runtime ?? config.defaultRuntime ?? 'mcp',
+              runtimeSessionId: metadata.runtimeSessionId,
+              userScope: metadata.userScope ?? config.defaultUserScope ?? 'local-user',
+              workspaceScope: metadata.workspaceScope ?? config.defaultWorkspaceScope ?? 'local-workspace',
+              ...(metadata.branchScope ?? config.defaultBranchScope) === undefined
+                ? {}
+                : { branchScope: metadata.branchScope ?? config.defaultBranchScope },
+              ...(metadata.parentRuntimeSessionId === undefined
+                ? {}
+                : { parentRuntimeSessionId: metadata.parentRuntimeSessionId }),
+            }),
+            metadata,
+          );
+
+    return registration.execute(resolvedArguments);
   });
 
   return {
     config,
     engine,
     registry,
+    sessionBindingStore,
     server,
   };
 };
