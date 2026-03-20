@@ -13,10 +13,10 @@ export interface ResolveSessionBindingInput extends SessionBindingLookup {
 }
 
 export interface SessionBindingRuntimeMetadata {
-  readonly runtime?: string;
-  readonly runtimeSessionId?: string;
-  readonly userScope?: string;
-  readonly workspaceScope?: string;
+  readonly runtime: string;
+  readonly runtimeSessionId: string;
+  readonly userScope: string;
+  readonly workspaceScope: string;
   readonly branchScope?: string;
   readonly parentRuntimeSessionId?: string;
   readonly isSubAgent?: boolean;
@@ -91,15 +91,16 @@ export const readSessionBindingMetadata = (
     return undefined;
   }
 
+  const branchScope = readOptionalString('branchScope');
+  const parentRuntimeSessionId = readOptionalString('parentRuntimeSessionId');
+
   return {
     runtime,
     runtimeSessionId,
     userScope,
     workspaceScope,
-    ...(readOptionalString('branchScope') === undefined ? {} : { branchScope: readOptionalString('branchScope') }),
-    ...(readOptionalString('parentRuntimeSessionId') === undefined
-      ? {}
-      : { parentRuntimeSessionId: readOptionalString('parentRuntimeSessionId') }),
+    ...(branchScope === undefined ? {} : { branchScope }),
+    ...(parentRuntimeSessionId === undefined ? {} : { parentRuntimeSessionId }),
     ...(typeof raw.isSubAgent === 'boolean' ? { isSubAgent: raw.isSubAgent } : {}),
   };
 };

@@ -22,16 +22,25 @@ const createMinimalEngine = (): {
   readonly describe: ReturnType<typeof vi.fn<(input: DescribeInput) => Promise<DescribeOutput>>>;
   readonly expand: ReturnType<typeof vi.fn<(input: ExpandInput) => Promise<ExpandOutput>>>;
 } => {
-  const grep = vi.fn(async (_input: GrepInput): Promise<GrepOutput> => ({ matches: [] }));
-  const describe = vi.fn(async (_input: DescribeInput): Promise<DescribeOutput> => ({
-    kind: 'summary',
-    metadata: { topic: 'auth' },
-    tokenCount: { value: 2 } as DescribeOutput['tokenCount'],
-    references: {
-      summaryIds: ['sum_parent_1'],
-    },
-  }));
-  const expand = vi.fn(async (_input: ExpandInput): Promise<ExpandOutput> => ({ messages: [] }));
+  const grep = vi.fn(async (input: GrepInput): Promise<GrepOutput> => {
+    void input;
+    return { matches: [] };
+  });
+  const describe = vi.fn(async (input: DescribeInput): Promise<DescribeOutput> => {
+    void input;
+    return ({
+      kind: 'summary',
+      metadata: { topic: 'auth' },
+      tokenCount: { value: 2 } as DescribeOutput['tokenCount'],
+      references: {
+        summaryIds: ['sum_parent_1'],
+      },
+    }) as unknown as DescribeOutput;
+  });
+  const expand = vi.fn(async (input: ExpandInput): Promise<ExpandOutput> => {
+    void input;
+    return { messages: [] };
+  });
 
   return {
     engine: { grep, describe, expand },
@@ -84,7 +93,7 @@ describe('createLedgermindMcpServer', () => {
         summaryIds: ['sum_parent_1', 'sum_123'],
       },
     });
-    expect(result.content[0]).toMatchObject({
+    expect((result.content as Array<{ type: string }>)[0]).toMatchObject({
       type: 'text',
     });
     expect(result.isError).toBeUndefined();

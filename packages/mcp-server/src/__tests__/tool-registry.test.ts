@@ -21,13 +21,22 @@ const createMinimalEngine = (): {
   readonly describe: ReturnType<typeof vi.fn<(input: DescribeInput) => Promise<DescribeOutput>>>;
   readonly expand: ReturnType<typeof vi.fn<(input: ExpandInput) => Promise<ExpandOutput>>>;
 } => {
-  const grep = vi.fn(async (_input: GrepInput): Promise<GrepOutput> => ({ matches: [] }));
-  const describe = vi.fn(async (_input: DescribeInput): Promise<DescribeOutput> => ({
-    kind: 'summary',
-    metadata: {},
-    tokenCount: { value: 1 } as DescribeOutput['tokenCount'],
-  }));
-  const expand = vi.fn(async (_input: ExpandInput): Promise<ExpandOutput> => ({ messages: [] }));
+  const grep = vi.fn(async (input: GrepInput): Promise<GrepOutput> => {
+    void input;
+    return { matches: [] };
+  });
+  const describe = vi.fn(async (input: DescribeInput): Promise<DescribeOutput> => {
+    void input;
+    return {
+      kind: 'summary',
+      metadata: {},
+      tokenCount: { value: 1 } as DescribeOutput['tokenCount'],
+    };
+  });
+  const expand = vi.fn(async (input: ExpandInput): Promise<ExpandOutput> => {
+    void input;
+    return { messages: [] };
+  });
 
   return {
     engine: { grep, describe, expand },

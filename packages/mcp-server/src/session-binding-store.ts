@@ -24,13 +24,6 @@ export interface SessionBindingStore {
   list(): Promise<readonly SessionBindingRecord[]>;
 }
 
-const matchesBinding = (candidate: SessionBindingRecord, lookup: SessionBindingLookup): boolean =>
-  candidate.runtime === lookup.runtime &&
-  candidate.runtimeSessionId === lookup.runtimeSessionId &&
-  candidate.userScope === lookup.userScope &&
-  candidate.workspaceScope === lookup.workspaceScope &&
-  candidate.branchScope === lookup.branchScope;
-
 export const createInMemorySessionBindingStore = (): SessionBindingStore => {
   const bindings = new Map<string, SessionBindingRecord>();
 
@@ -51,7 +44,7 @@ export const createInMemorySessionBindingStore = (): SessionBindingStore => {
       bindings.set(getKey(binding), binding);
     },
     async list() {
-      return [...bindings.values()].filter((binding) => matchesBinding(binding, binding));
+      return [...bindings.values()];
     },
   };
 };

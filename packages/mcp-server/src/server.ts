@@ -6,6 +6,11 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema, type Implementation } from '@modelcontextprotocol/sdk/types.js';
 
 import type { McpServerConfig } from './config';
+import {
+  authorizeMcpToolInvocation,
+  canExposeMcpTool,
+  toAuthorizationErrorResult,
+} from './authorization';
 import { createFileSessionBindingStore } from './file-session-binding-store';
 import {
   applySessionBindingToToolArguments,
@@ -52,7 +57,9 @@ export const createLedgermindMcpServer = ({
       ? createInMemorySessionBindingStore()
       : createFileSessionBindingStore(config.bindingStorePath);
   const catalog = createCanonicalMemoryToolCatalog(engine);
-  const registry = createMcpToolRegistry(catalog);
+  const catalogByName = new Map(catalog.map((definition) => [definition.name, definition]));
+  const visibleCatalog = catalog.filter((definition) => canExposeMcpTool(definition, config));
+  const registry = createMcpToolRegistry(visibleCatalog);
   const server = new Server(SERVER_INFO, {
     capabilities: {
       tools: {
@@ -66,8 +73,8 @@ export const createLedgermindMcpServer = ({
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const registration = registry.find((entry) => entry.tool.name === request.params.name);
-    if (registration === undefined) {
+    const definition = catalogByName.get(request.params.name);
+    if (definition === undefined) {
       return {
         content: [
           {
@@ -78,6 +85,8 @@ export const createLedgermindMcpServer = ({
         isError: true,
       };
     }
+
+    const registration = registry.find((entry) => entry.tool.name === request.params.name);
 
     const metadata = readSessionBindingMetadata(request.params._meta);
     const resolvedArguments =
@@ -100,6 +109,20 @@ export const createLedgermindMcpServer = ({
             }),
             metadata,
           );
+
+    const authorization = authorizeMcpToolInvocation({
+      tool: definition,
+      config,
+      argumentsInput: resolvedArguments,
+      metadata,
+    });
+
+    if (!authorization.allowed || registration === undefined) {
+      return toAuthorizationErrorResult(
+        request.params.name,
+        authorization.reason ?? `${request.params.name} is not available in the current MCP server configuration.`,
+      );
+    }
 
     return registration.execute(resolvedArguments);
   });
