@@ -4,6 +4,8 @@ export {
   VercelAiMemoryToolsAdapter,
 } from './vercel-ai-memory-tools.adapter';
 
+export { createCanonicalMemoryToolCatalog } from './canonical-memory-tool-catalog';
+
 export type { VercelMemoryToolSet } from './vercel-ai-memory-tools.adapter';
 
 export {
