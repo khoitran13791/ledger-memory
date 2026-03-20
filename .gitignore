@@ -20,6 +20,7 @@ coverage/
 Thumbs.db
 .vscode/
 .idea/
+.worktrees/
 *.tmp
 *.swp
 
