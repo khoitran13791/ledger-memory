@@ -11,6 +11,8 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "mcp:dev": "pnpm --filter @ledgermind/mcp-server dev",
+    "mcp:smoke": "pnpm --filter @ledgermind/mcp-server smoke",
     "benchmark:locomo": "pnpm --filter @ledgermind/benchmark-locomo benchmark",
     "benchmark:locomo:smoke": "pnpm --filter @ledgermind/benchmark-locomo benchmark:smoke",
     "benchmark:locomo:canary": "pnpm --filter @ledgermind/benchmark-locomo benchmark:canary",

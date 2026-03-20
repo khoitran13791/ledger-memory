@@ -1,0 +1,35 @@
+{
+  "name": "@ledgermind/mcp-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "ledgermind-mcp-server": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@ledgermind/adapters": "workspace:*",
+    "@ledgermind/application": "workspace:*",
+    "@ledgermind/sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run --passWithNoTests",
+    "dev": "node --experimental-strip-types src/cli.ts",
+    "smoke": "node --experimental-strip-types src/cli.ts --help",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+  }
+}
