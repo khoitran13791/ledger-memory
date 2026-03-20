@@ -27,6 +27,7 @@ import {
   createVercelTools,
   VercelAiMemoryToolsAdapter,
 } from '../vercel-ai-memory-tools.adapter';
+import { createCanonicalMemoryToolCatalog } from '../canonical-memory-tool-catalog';
 
 type MinimalMemoryEngine = Pick<MemoryEngine, 'grep' | 'describe' | 'expand'>;
 
@@ -201,7 +202,7 @@ describe('createVercelMemoryTools', () => {
     expect(Object.keys(tools).sort()).toEqual([
       'memory.describe',
       'memory.expand',
-      'memory.grep',
+      'memory.recall',
     ]);
   });
 
@@ -234,7 +235,7 @@ describe('createVercelMemoryTools', () => {
     ).toThrow(TypeError);
   });
 
-  it('returns stable callable definitions for grep, describe, and expand', () => {
+  it('returns stable callable definitions for recall, describe, and expand', () => {
     const { engine } = createMinimalEngine();
 
     const first = createVercelMemoryTools(engine as MemoryEngine);
@@ -243,7 +244,7 @@ describe('createVercelMemoryTools', () => {
     expect(Object.keys(first).sort()).toEqual([
       'memory.describe',
       'memory.expand',
-      'memory.grep',
+      'memory.recall',
     ]);
     expect(Object.keys(second).sort()).toEqual(Object.keys(first).sort());
 
@@ -264,14 +265,14 @@ describe('createVercelMemoryTools', () => {
     expect(Object.keys(alias).sort()).toEqual(Object.keys(canonical).sort());
   });
 
-  it('returns canonical success envelope for grep execution', async () => {
+  it('returns canonical success envelope for recall execution', async () => {
     const { engine, grep } = createMinimalEngine();
     const tools = createVercelMemoryTools(engine as MemoryEngine);
 
-    const grepTool = getToolSetTool(tools, 'memory.grep');
-    const result = await grepTool.execute({
+    const recallTool = getToolSetTool(tools, 'memory.recall');
+    const result = await recallTool.execute({
       conversationId: 'conv_1',
-      pattern: 'alpha',
+      query: 'alpha',
       scope: 'sum_scope_1',
     });
 
@@ -289,7 +290,7 @@ describe('createVercelMemoryTools', () => {
     expect(envelope.meta).toBeUndefined();
   });
 
-  it('preserves grep match event identifiers when available', async () => {
+  it('preserves recall match event identifiers when available', async () => {
     const { engine, grep } = createMinimalEngine();
     const tools = createVercelMemoryTools(engine as MemoryEngine);
 
@@ -308,10 +309,10 @@ describe('createVercelMemoryTools', () => {
       ],
     });
 
-    const grepTool = getToolSetTool(tools, 'memory.grep');
-    const result = await grepTool.execute({
+    const recallTool = getToolSetTool(tools, 'memory.recall');
+    const result = await recallTool.execute({
       conversationId: 'conv_1',
-      pattern: 'alpha',
+      query: 'alpha',
     });
 
     const envelope = assertSuccessEnvelope(result, {
@@ -378,7 +379,7 @@ describe('createVercelMemoryTools', () => {
     });
   });
 
-  it('preserves summary, artifact, and event references when grep output provides them', async () => {
+  it('preserves summary, artifact, and event references when recall output provides them', async () => {
     const { engine, grep } = createMinimalEngine();
     const tools = createVercelMemoryTools(engine as MemoryEngine);
 
@@ -393,10 +394,10 @@ describe('createVercelMemoryTools', () => {
 
     grep.mockResolvedValueOnce(grepOutputWithReferences);
 
-    const grepTool = getToolSetTool(tools, 'memory.grep');
-    const result = await grepTool.execute({
+    const recallTool = getToolSetTool(tools, 'memory.recall');
+    const result = await recallTool.execute({
       conversationId: 'conv_1',
-      pattern: 'alpha',
+      query: 'alpha',
       scope: 'sum_scope_1',
     });
 
@@ -630,10 +631,10 @@ describe('createVercelMemoryTools', () => {
 
     grep.mockRejectedValueOnce(new InvalidReferenceError('summary_scope', 'sum_missing'));
 
-    const grepTool = getToolSetTool(tools, 'memory.grep');
-    const result = await grepTool.execute({
+    const recallTool = getToolSetTool(tools, 'memory.recall');
+    const result = await recallTool.execute({
       conversationId: 'conv_1',
-      pattern: 'alpha',
+      query: 'alpha',
       scope: 'sum_missing',
     });
 
@@ -681,10 +682,10 @@ describe('createVercelMemoryTools', () => {
 
     grep.mockRejectedValueOnce(new ConversationNotFoundError(createConversationId('conv_missing')));
 
-    const grepTool = getToolSetTool(tools, 'memory.grep');
-    const result = await grepTool.execute({
+    const recallTool = getToolSetTool(tools, 'memory.recall');
+    const result = await recallTool.execute({
       conversationId: 'conv_missing',
-      pattern: 'alpha',
+      query: 'alpha',
     });
 
     const envelope = assertErrorEnvelope(result, 'CONVERSATION_NOT_FOUND');
@@ -708,6 +709,32 @@ describe('createVercelMemoryTools', () => {
 });
 
 describe('VercelAiMemoryToolsAdapter', () => {
+  it('exposes the same canonical tool names and policy metadata as the shared catalog', () => {
+    const { engine } = createMinimalEngine();
+    const adapter = new VercelAiMemoryToolsAdapter();
+
+    const catalog = createCanonicalMemoryToolCatalog(engine as MemoryEngine);
+    const tools = adapter.createTools(engine as MemoryEngine);
+
+    expect(
+      tools.map((tool) => ({
+        name: tool.name,
+        access: tool.access,
+        requiresApproval: tool.requiresApproval,
+        subAgentOnly: tool.subAgentOnly,
+        idempotent: tool.idempotent,
+      })),
+    ).toEqual(
+      catalog.map((tool) => ({
+        name: tool.name,
+        access: tool.access,
+        requiresApproval: tool.requiresApproval,
+        subAgentOnly: tool.subAgentOnly,
+        idempotent: tool.idempotent,
+      })),
+    );
+  });
+
   it('creates the same required memory tools via ToolProviderPort', () => {
     const { engine } = createMinimalEngine();
     const adapter = new VercelAiMemoryToolsAdapter();
@@ -715,7 +742,7 @@ describe('VercelAiMemoryToolsAdapter', () => {
     const tools = adapter.createTools(engine as MemoryEngine);
 
     expect(tools.map((tool) => tool.name)).toEqual([
-      'memory.grep',
+      'memory.recall',
       'memory.describe',
       'memory.expand',
     ]);
