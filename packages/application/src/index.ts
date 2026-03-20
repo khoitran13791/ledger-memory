@@ -38,7 +38,12 @@ export type {
 } from './ports/driving/memory-engine.port';
 
 export type { DomainEventSubscriber } from './ports/driving/event-subscriber.port';
-export type { ToolDefinition, ToolProviderPort } from './ports/driving/tool-provider.port';
+export type {
+  ToolAccessLevel,
+  ToolDefinition,
+  ToolPolicyMetadata,
+  ToolProviderPort,
+} from './ports/driving/tool-provider.port';
 
 export type { ArtifactStorePort } from './ports/driven/persistence/artifact-store.port';
 export type { ContextProjectionPort } from './ports/driven/persistence/context-projection.port';
