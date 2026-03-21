@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "ledgermind": {
+      "command": "pnpm",
+      "args": [
+        "--dir",
+        "../..",
+        "exec",
+        "ledgermind-mcp-server",
+        "--binding-store",
+        ".ledgermind/session-bindings.json"
+      ],
+      "env": {
+        "LEDGERMIND_MCP_RUNTIME": "ampcode"
+      }
+    }
+  }
+}

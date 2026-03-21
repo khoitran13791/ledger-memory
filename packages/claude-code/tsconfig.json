@@ -11,6 +11,7 @@
     { "path": "../application" },
     { "path": "../adapters" },
     { "path": "../infrastructure" },
-    { "path": "../sdk" }
+    { "path": "../sdk" },
+    { "path": "../mcp-server" }
   ]
 }

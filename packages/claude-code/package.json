@@ -19,6 +19,8 @@
   },
   "dependencies": {
     "@ledgermind/application": "workspace:*",
+    "@ledgermind/domain": "workspace:*",
+    "@ledgermind/mcp-server": "workspace:*",
     "@ledgermind/sdk": "workspace:*"
   },
   "devDependencies": {

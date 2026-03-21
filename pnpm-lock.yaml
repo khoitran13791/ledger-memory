@@ -87,6 +87,12 @@ importers:
       '@ledgermind/application':
         specifier: workspace:*
         version: link:../application
+      '@ledgermind/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@ledgermind/mcp-server':
+        specifier: workspace:*
+        version: link:../mcp-server
       '@ledgermind/sdk':
         specifier: workspace:*
         version: link:../sdk

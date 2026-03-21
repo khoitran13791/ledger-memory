@@ -1,7 +1,83 @@
 #!/usr/bin/env node
 
-export const runPreCompactCommand = async (): Promise<void> => {
-  process.stderr.write('LedgerMind Claude pre-compact hook is not implemented yet.\n');
+import { createHash } from 'node:crypto';
+
+import { createTokenCount } from '@ledgermind/domain';
+
+import type { PreCompactHookContext } from '../context';
+import { buildCommandRuntime, isDirectExecution, type ClaudeCommandOptions } from '../runtime';
+import { parseTranscriptFile } from '../transcript';
+
+const createPreCompactIdempotencyKey = (
+  context: PreCompactHookContext,
+  transcriptDigest: string,
+): string =>
+  createHash('sha256')
+    .update(
+      JSON.stringify({
+        hook: context.hookName,
+        sessionId: context.sessionId,
+        transcriptDigest,
+        trigger: context.trigger,
+      }),
+    )
+    .digest('hex');
+
+const budgetCharsToTokens = (budgetChars: number): number => Math.max(128, Math.ceil(budgetChars / 4));
+
+export const runPreCompactCommand = async (options: ClaudeCommandOptions = {}): Promise<void> => {
+  const runtime = await buildCommandRuntime(options);
+  const context = runtime.expectHookContext('PreCompact') as PreCompactHookContext;
+  const binding = await runtime.resolveBinding(context);
+  const checkpoint = await runtime.transcriptCheckpointStore.get(context.sessionId, context.transcriptPath);
+  const parseOptions = {
+    ...(checkpoint?.lineCount === undefined ? {} : { startLine: checkpoint.lineCount }),
+    onWarning: runtime.warn,
+  };
+  const transcript = await parseTranscriptFile(context.transcriptPath, {
+    source: 'claude-code',
+    hook: context.hookName,
+    trigger: context.trigger,
+  }, parseOptions);
+
+  if (transcript.events.length > 0) {
+    await runtime.engine.append({
+      conversationId: binding.conversationId,
+      events: transcript.events,
+      idempotencyKey: createPreCompactIdempotencyKey(context, transcript.digest),
+    });
+  }
+
+  await runtime.transcriptCheckpointStore.save({
+    sessionId: context.sessionId,
+    transcriptPath: context.transcriptPath,
+    lineCount: transcript.lineCount,
+  });
+
+  await runtime.engine.runCompaction({
+    conversationId: binding.conversationId,
+    trigger: 'soft',
+    targetTokens: createTokenCount(budgetCharsToTokens(runtime.config.injectedContextBudgetChars)),
+  });
+
+  const summary = await runtime.engine.materializeContext({
+    conversationId: binding.conversationId,
+    budgetTokens: budgetCharsToTokens(runtime.config.injectedContextBudgetChars),
+    overheadTokens: 0,
+  });
+
+  runtime.writeJson({
+    hookSpecificOutput: {
+      hookEventName: 'PreCompact',
+      additionalContext: [
+        'LedgerMind archived the full Claude Code transcript before compaction.',
+        'Use the LedgerMind MCP tools to recover detailed history when needed.',
+        `Key context summary:\n${summary.systemPreamble}`,
+      ].join('\n'),
+    },
+  });
 };
 
-await runPreCompactCommand();
+if (isDirectExecution(import.meta.url)) {
+  await runPreCompactCommand();
+}

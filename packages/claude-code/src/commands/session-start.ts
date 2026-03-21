@@ -1,7 +1,20 @@
 #!/usr/bin/env node
 
-export const runSessionStartCommand = async (): Promise<void> => {
-  process.stderr.write('LedgerMind Claude session-start hook is not implemented yet.\n');
+import { buildCommandRuntime, isDirectExecution, type ClaudeCommandOptions } from '../runtime';
+
+export const runSessionStartCommand = async (options: ClaudeCommandOptions = {}): Promise<void> => {
+  const runtime = await buildCommandRuntime(options);
+  const context = runtime.expectHookContext('SessionStart');
+  const binding = await runtime.resolveBinding(context);
+
+  runtime.writeJson({
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+      additionalContext: `LedgerMind resumed conversation ${String(binding.conversationId)} for this Claude Code session.`,
+    },
+  });
 };
 
-await runSessionStartCommand();
+if (isDirectExecution(import.meta.url)) {
+  await runSessionStartCommand();
+}
