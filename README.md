@@ -59,13 +59,23 @@ pnpm --filter @ledgermind/infrastructure migrate:status
 pnpm --filter @ledgermind/infrastructure migrate:down
 ```
 
+## Agent Integrations
+
+- `@ledgermind/mcp-server` exposes the canonical memory tool catalog over stdio MCP.
+- `@ledgermind/claude-code` adds Claude Code lifecycle hooks for session binding, pre-compaction archival, stop-time persistence, and optional artifact indexing.
+- Amp-style runtimes currently consume the same MCP surface rather than a dedicated runtime package.
+
+Example configs live under `examples/claude-code/` and `examples/ampcode/`.
+
 ## Key docs
 
 - `docs/high-level-design.md` — architecture blueprint
 - `docs/design-decisions-addendum.md` — implementation decisions and invariants
 - `docs/testing-strategy.md` — test strategy and quality gates
 - `docs/implementation-roadmap.md` — delivery roadmap and sprint sequencing
-- `docs/claude-code-integration.md` — Claude Code integration notes
+- `docs/agent-integration-architecture.md` — MCP-first agent integration ADR
+- `docs/claude-code-integration.md` — implemented Claude Code integration guide
+- `docs/ampcode-integration.md` — Amp-facing MCP setup and current limits
 - `docs/locomo-benchmark-plan.md` — LOCOMO benchmark rollout plan
 
 ## LOCOMO benchmark harness

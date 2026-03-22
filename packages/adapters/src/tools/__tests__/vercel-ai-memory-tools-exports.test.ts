@@ -7,7 +7,7 @@ import {
   createVercelMemoryTools,
   createVercelTools,
   VercelAiMemoryToolsAdapter,
-} from '@ledgermind/adapters';
+} from '../index';
 
 describe('tools public exports', () => {
   it('exposes Vercel memory tool adapter APIs from @ledgermind/adapters root', () => {
@@ -25,10 +25,10 @@ describe('tools public exports', () => {
     const aliasTools = createVercelTools(engine as MemoryEngine);
     const adapterTools = new VercelAiMemoryToolsAdapter().createTools(engine as MemoryEngine);
 
-    expect(Object.keys(tools).sort()).toEqual(['memory.describe', 'memory.expand', 'memory.grep']);
-    expect(Object.keys(aliasTools).sort()).toEqual(['memory.describe', 'memory.expand', 'memory.grep']);
+    expect(Object.keys(tools).sort()).toEqual(['memory.describe', 'memory.expand', 'memory.recall']);
+    expect(Object.keys(aliasTools).sort()).toEqual(['memory.describe', 'memory.expand', 'memory.recall']);
     expect(adapterTools.map((tool) => tool.name)).toEqual([
-      'memory.grep',
+      'memory.recall',
       'memory.describe',
       'memory.expand',
     ]);

@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "tsconfig.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../domain" },
+    { "path": "../application" },
+    { "path": "../adapters" },
+    { "path": "../infrastructure" },
+    { "path": "../sdk" },
+    { "path": "../mcp-server" }
+  ]
+}

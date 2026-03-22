@@ -1,0 +1,9 @@
+## LedgerMind Memory
+
+This repository uses LedgerMind as the long-term memory layer for Claude Code.
+
+1. Start a task by checking whether LedgerMind already has relevant context for the current conversation.
+2. Use `mcp__ledgermind__memory.describe` when you need metadata about a returned summary or artifact reference.
+3. Use `mcp__ledgermind__memory.expand` only when a summary is too compressed and the task genuinely needs the raw message trail.
+4. Treat `memory.expand` as privileged: only use it for focused follow-up work, not broad transcript dumps.
+5. Remember that `PreCompact` and `Stop` hooks archive session context automatically, so avoid re-pasting large transcript excerpts into your responses.

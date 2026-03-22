@@ -1,0 +1,178 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Readable, Writable } from 'node:stream';
+
+import type {
+  AppendLedgerEventsInput,
+  CheckIntegrityInput,
+  CheckIntegrityOutput,
+  DescribeInput,
+  DescribeOutput,
+  ExpandInput,
+  ExpandOutput,
+  ExploreArtifactInput,
+  ExploreArtifactOutput,
+  GrepInput,
+  GrepOutput,
+  MaterializeContextInput,
+  MaterializeContextOutput,
+  MemoryEngine,
+  RunCompactionInput,
+  RunCompactionOutput,
+  StoreArtifactInput,
+  StoreArtifactOutput,
+} from '@ledgermind/application';
+import { createTokenCount } from '@ledgermind/domain';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { runStopCommand } from '../commands/stop';
+
+class RecordingMemoryEngine implements MemoryEngine {
+  readonly appendCalls: AppendLedgerEventsInput[] = [];
+  readonly runCompactionCalls: RunCompactionInput[] = [];
+
+  async append(input: AppendLedgerEventsInput) {
+    this.appendCalls.push(input);
+    return {
+      appendedEvents: [],
+      contextTokenCount: createTokenCount(0),
+    };
+  }
+
+  async materializeContext(_input: MaterializeContextInput): Promise<MaterializeContextOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async runCompaction(input: RunCompactionInput): Promise<RunCompactionOutput> {
+    this.runCompactionCalls.push(input);
+    return {
+      rounds: 1,
+      nodesCreated: [],
+      tokensFreed: createTokenCount(0),
+      converged: true,
+    };
+  }
+
+  async checkIntegrity(_input: CheckIntegrityInput): Promise<CheckIntegrityOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async grep(_input: GrepInput): Promise<GrepOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async describe(_input: DescribeInput): Promise<DescribeOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async expand(_input: ExpandInput): Promise<ExpandOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async storeArtifact(_input: StoreArtifactInput): Promise<StoreArtifactOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async exploreArtifact(_input: ExploreArtifactInput): Promise<ExploreArtifactOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+}
+
+class MemoryWritable extends Writable {
+  override _write(
+    _chunk: string | Uint8Array,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    callback();
+  }
+}
+
+const tempDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
+
+describe('runStopCommand', () => {
+  it('archives the final transcript tail before writing a bounded closing note', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ledgermind-stop-'));
+    tempDirectories.push(directory);
+
+    const transcriptDirectory = join(directory, '.claude');
+    await mkdir(transcriptDirectory, { recursive: true });
+    await writeFile(
+      join(transcriptDirectory, 'transcript.jsonl'),
+      [
+        JSON.stringify({ message: { role: 'user', content: 'Please summarize the deployment risk.' } }),
+        JSON.stringify({ message: { role: 'assistant', content: 'The migration needs a rollback plan.' } }),
+      ].join('\n'),
+      'utf8',
+    );
+
+    const engine = new RecordingMemoryEngine();
+    const repeatedMessage = 'Final debugging note. '.repeat(150);
+
+    await runStopCommand({
+      stdin: Readable.from([
+        JSON.stringify({
+          session_id: 'sess-stop',
+          transcript_path: join(transcriptDirectory, 'transcript.jsonl'),
+          cwd: directory,
+          permission_mode: 'default',
+          hook_event_name: 'Stop',
+          stop_hook_active: true,
+          last_assistant_message: repeatedMessage,
+        }),
+      ]),
+      stdout: new MemoryWritable(),
+      stderr: new MemoryWritable(),
+      env: {
+        USER: 'agent',
+        LEDGERMIND_CLAUDE_CONTEXT_BUDGET_CHARS: '240',
+      },
+      engine,
+    });
+
+    expect(engine.appendCalls).toHaveLength(1);
+    const [appendCall] = engine.appendCalls;
+    expect(appendCall).toBeDefined();
+    expect(appendCall?.events).toHaveLength(3);
+    expect(appendCall?.events[0]).toMatchObject({
+      role: 'user',
+      content: 'Please summarize the deployment risk.',
+    });
+    expect(appendCall?.events[1]).toMatchObject({
+      role: 'assistant',
+      content: 'The migration needs a rollback plan.',
+    });
+    const stopEvent = appendCall?.events[2];
+    expect(stopEvent).toBeDefined();
+    expect(stopEvent).toMatchObject({
+      role: 'system',
+      metadata: {
+        source: 'claude-code',
+        hook: 'Stop',
+        transcriptPath: join(transcriptDirectory, 'transcript.jsonl'),
+      },
+    });
+    expect(stopEvent?.content).toContain('Session closed in Claude Code.');
+    expect(stopEvent?.content).toContain('Last assistant message excerpt:');
+    expect(stopEvent?.content).not.toContain(repeatedMessage);
+    expect(stopEvent?.content.length).toBeLessThan(500);
+
+    expect(engine.runCompactionCalls).toEqual([
+      expect.objectContaining({
+        trigger: 'soft',
+      }),
+    ]);
+  });
+});

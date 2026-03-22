@@ -20,6 +20,26 @@ const requireString = (value: unknown, fieldName: string, exampleId: string): st
   return value;
 };
 
+const requireStringAllowingEmpty = (value: unknown, fieldName: string, exampleId: string): string => {
+  if (typeof value !== 'string' || (value !== '' && value.trim().length === 0)) {
+    throw new Error(`LongMemEval example ${exampleId} is missing required field ${fieldName}`);
+  }
+
+  return value;
+};
+
+const requireScalarString = (value: unknown, fieldName: string, exampleId: string): string => {
+  if (typeof value === 'string') {
+    return requireString(value, fieldName, exampleId);
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  throw new Error(`LongMemEval example ${exampleId} is missing required field ${fieldName}`);
+};
+
 const requireStringArray = (value: unknown, fieldName: string, exampleId: string): readonly string[] => {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
     throw new Error(`LongMemEval example ${exampleId} is missing required field ${fieldName}`);
@@ -37,7 +57,7 @@ const normalizeTurn = (input: {
   return {
     turnId: `${input.sessionId}#turn-${input.turnIndex}`,
     role: requireString(input.turn.role, `haystack_sessions turn role at ${input.sessionId}[${input.turnIndex}]`, input.exampleId),
-    content: requireString(
+    content: requireStringAllowingEmpty(
       input.turn.content,
       `haystack_sessions turn content at ${input.sessionId}[${input.turnIndex}]`,
       input.exampleId,
@@ -51,7 +71,7 @@ export const normalizeLongMemEvalExample = (input: LongMemEvalOfficialExample): 
   const exampleId = requireString(input.question_id, 'question_id', '<unknown>');
   const questionType = requireString(input.question_type, 'question_type', exampleId);
   const question = requireString(input.question, 'question', exampleId);
-  const answer = requireString(input.answer, 'answer', exampleId);
+  const answer = requireScalarString(input.answer, 'answer', exampleId);
   const questionDate = requireString(input.question_date, 'question_date', exampleId);
   const haystackSessionIds = requireStringArray(input.haystack_session_ids, 'haystack_session_ids', exampleId);
   const haystackDates = requireStringArray(input.haystack_dates, 'haystack_dates', exampleId);
