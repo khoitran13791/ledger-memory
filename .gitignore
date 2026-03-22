@@ -31,6 +31,9 @@ Thumbs.db
 # Benchmark artifacts
 benchmarks/locomo/runs/
 benchmarks/longmemeval/runs/
+benchmarks/longmemeval/data/official/dataset.jsonl
+benchmarks/longmemeval/vendor/official-scorer/evaluate.py
+benchmarks/longmemeval/vendor/official-scorer/__pycache__/
 
 # Local agent worktrees
 .claude/worktrees/

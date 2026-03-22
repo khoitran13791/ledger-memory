@@ -173,7 +173,7 @@ export interface LongMemEvalOfficialExample {
   readonly question_id: string;
   readonly question_type: string;
   readonly question: string;
-  readonly answer: string;
+  readonly answer: string | number;
   readonly question_date: string;
   readonly haystack_session_ids: readonly string[];
   readonly haystack_dates: readonly string[];
