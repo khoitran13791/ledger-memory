@@ -9,6 +9,7 @@ import type { ConversationId, EventMetadata } from '@ledgermind/domain';
 import { NonMonotonicSequenceError } from '@ledgermind/domain';
 
 import { PgLedgerStore } from '../pg-ledger-store';
+import type { PgPoolClientLike } from '../types';
 import { createExecutorForClient, createPostgresTestHarness } from './postgres-test-harness';
 
 const createEvent = (
@@ -102,7 +103,60 @@ const setupScopedSearchFixture = async (
   };
 };
 
+class QueryCountingExecutor implements PgPoolClientLike {
+  readonly queries: string[] = [];
+
+  async query<Row extends object = Record<string, unknown>>(
+    text: string,
+    params?: readonly unknown[],
+  ): Promise<{ rows: readonly Row[]; rowCount: number | null }> {
+    this.queries.push(text);
+    void params;
+
+    if (text.includes('FROM conversations') && text.includes('FOR UPDATE')) {
+      return { rows: [{ id: 'conv_perf' } as Row], rowCount: 1 };
+    }
+
+    if (text.includes('SELECT COALESCE(MAX(seq), 0) + 1 AS next_sequence')) {
+      return { rows: [{ next_sequence: 1 } as Row], rowCount: 1 };
+    }
+
+    if (text.includes('INSERT INTO ledger_events')) {
+      return { rows: [], rowCount: 3 };
+    }
+
+    if (text.includes('SELECT id\n             FROM ledger_events\n             WHERE id = $1')) {
+      return { rows: [], rowCount: 0 };
+    }
+
+    if (text.includes('SELECT id, metadata\n             FROM ledger_events')) {
+      return { rows: [], rowCount: 0 };
+    }
+
+    throw new Error(`Unexpected query in QueryCountingExecutor: ${text}`);
+  }
+
+  release(): void {
+    // no-op for test double compatibility with PgExecutor union shape
+  }
+}
+
 describe('PgLedgerStore', () => {
+  it('batches sequential appends into a single insert query when validation allows it', async () => {
+    const executor = new QueryCountingExecutor();
+    const ledger = new PgLedgerStore(executor);
+    const conversationId = 'conv_perf' as ConversationId;
+
+    await ledger.appendEvents(conversationId, [
+      createEvent(conversationId, 1, 'alpha event'),
+      createEvent(conversationId, 2, 'beta event'),
+      createEvent(conversationId, 3, 'gamma event'),
+    ]);
+
+    expect(executor.queries).toHaveLength(3);
+    expect(executor.queries[2]).toContain('INSERT INTO ledger_events');
+  });
+
   it('appends events atomically in input order and supports range reads', async () => {
     const harness = await createPostgresTestHarness();
 
@@ -156,6 +210,100 @@ describe('PgLedgerStore', () => {
 
       const loaded = await ledger.getEvents(conversationId);
       expect(loaded).toEqual([source]);
+    } finally {
+      await harness.destroy();
+    }
+  });
+
+  it('round-trips batched event metadata and persists the batch idempotency key only once', async () => {
+    const harness = await createPostgresTestHarness();
+
+    try {
+      const { ledger, conversationId, withClient } = harness;
+
+      const first = createLedgerEvent({
+        id: createEventId(`evt_${conversationId}_roundtrip_batch_1`),
+        conversationId,
+        sequence: createSequenceNumber(1),
+        role: 'assistant',
+        content: 'batched round-trip payload alpha',
+        tokenCount: createTokenCount(21),
+        occurredAt: createTimestamp(new Date('2026-01-01T00:00:11.000Z')),
+        metadata: {
+          __ledgermind_idempotencyKey: 'batch-roundtrip-key',
+          __ledgermind_idempotencyDigest: 'batch-roundtrip-digest',
+          artifactIds: ['file_rt_batch_1'],
+          nested: {
+            part: 'alpha',
+          },
+        },
+      });
+      const second = createLedgerEvent({
+        id: createEventId(`evt_${conversationId}_roundtrip_batch_2`),
+        conversationId,
+        sequence: createSequenceNumber(2),
+        role: 'user',
+        content: 'batched round-trip payload beta',
+        tokenCount: createTokenCount(22),
+        occurredAt: createTimestamp(new Date('2026-01-01T00:00:12.000Z')),
+        metadata: {
+          __ledgermind_idempotencyKey: 'batch-roundtrip-key',
+          __ledgermind_idempotencyDigest: 'batch-roundtrip-digest',
+          artifactIds: ['file_rt_batch_2'],
+          nested: {
+            part: 'beta',
+          },
+        },
+      });
+
+      await ledger.appendEvents(conversationId, [first, second]);
+
+      const loaded = await ledger.getEvents(conversationId);
+      expect(loaded).toEqual([first, second]);
+
+      await withClient(async (client) => {
+        const result = await client.query<{
+          readonly seq: number | string;
+          readonly idempotency_key: string | null;
+        }>(
+          `
+            SELECT seq, idempotency_key
+            FROM ledger_events
+            WHERE conversation_id = $1
+            ORDER BY seq ASC
+          `,
+          [conversationId],
+        );
+
+        expect(result.rows).toEqual([
+          { seq: '1', idempotency_key: 'batch-roundtrip-key' },
+          { seq: '2', idempotency_key: null },
+        ]);
+      });
+    } finally {
+      await harness.destroy();
+    }
+  });
+
+  it('completes partial same-digest retries after the first batch event is already persisted', async () => {
+    const harness = await createPostgresTestHarness();
+
+    try {
+      const { ledger, conversationId } = harness;
+      const first = createEvent(conversationId, 1, 'partial retry alpha', {
+        __ledgermind_idempotencyKey: 'partial-retry-key',
+        __ledgermind_idempotencyDigest: 'partial-retry-digest',
+      });
+      const second = createEvent(conversationId, 2, 'partial retry beta', {
+        __ledgermind_idempotencyKey: 'partial-retry-key',
+        __ledgermind_idempotencyDigest: 'partial-retry-digest',
+      });
+
+      await ledger.appendEvents(conversationId, [first]);
+      await ledger.appendEvents(conversationId, [first, second]);
+
+      const loaded = await ledger.getEvents(conversationId);
+      expect(loaded).toEqual([first, second]);
     } finally {
       await harness.destroy();
     }

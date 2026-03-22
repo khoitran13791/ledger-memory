@@ -52,6 +52,19 @@ interface ExistingIdempotencyRow {
   readonly metadata: unknown;
 }
 
+interface PendingLedgerInsertRow {
+  readonly id: string;
+  readonly conversationId: string;
+  readonly sequence: number;
+  readonly role: LedgerEvent['role'];
+  readonly content: string;
+  readonly tokenCount: number;
+  readonly occurredAt: string;
+  readonly metadataJson: string;
+  readonly idempotencyKey: string | null;
+  readonly idempotencyDigest: string | null;
+}
+
 interface RegexMatchRow {
   readonly id: string;
   readonly seq: number;
@@ -68,6 +81,52 @@ interface PgErrorConstraintCandidate {
 const IDEMPOTENCY_KEY_METADATA_FIELD = '__ledgermind_idempotencyKey';
 const IDEMPOTENCY_DIGEST_METADATA_FIELD = '__ledgermind_idempotencyDigest';
 const LEDGER_IDEMPOTENCY_CONSTRAINT = 'ledger_events_conversation_id_idempotency_key_key';
+const INSERT_SINGLE_LEDGER_EVENT_SQL = `INSERT INTO ledger_events (
+  id,
+  conversation_id,
+  seq,
+  role,
+  content,
+  token_count,
+  occurred_at,
+  metadata,
+  idempotency_key
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+ON CONFLICT (id) DO NOTHING`;
+const INSERT_BATCH_LEDGER_EVENTS_SQL = `INSERT INTO ledger_events (
+  id,
+  conversation_id,
+  seq,
+  role,
+  content,
+  token_count,
+  occurred_at,
+  metadata,
+  idempotency_key
+)
+SELECT
+  payload.id,
+  payload.conversation_id,
+  payload.seq,
+  payload.role::message_role,
+  payload.content,
+  payload.token_count,
+  payload.occurred_at,
+  payload.metadata,
+  payload.idempotency_key
+FROM jsonb_to_recordset($1::jsonb) AS payload(
+  id text,
+  conversation_id text,
+  seq bigint,
+  role text,
+  content text,
+  token_count integer,
+  occurred_at timestamptz,
+  metadata jsonb,
+  idempotency_key text
+)
+ON CONFLICT (id) DO NOTHING`;
 
 const createExcerpt = (content: string, start: number, length: number): string => {
   const excerptStart = Math.max(0, start - 24);
@@ -145,8 +204,116 @@ const createIdempotencyConflictError = (
   return new IdempotencyConflictError(conversationId, idempotencyKey);
 };
 
+const toPendingInsertRow = (
+  event: LedgerEvent,
+  conversationId: ConversationId,
+  idempotencyKey: string | null,
+  idempotencyDigest: string | null,
+): PendingLedgerInsertRow => {
+  return {
+    id: event.id,
+    conversationId,
+    sequence: event.sequence,
+    role: event.role,
+    content: event.content,
+    tokenCount: event.tokenCount.value,
+    occurredAt: event.occurredAt.toISOString(),
+    metadataJson: JSON.stringify(event.metadata),
+    idempotencyKey,
+    idempotencyDigest,
+  };
+};
+
 export class PgLedgerStore implements LedgerAppendPort, LedgerReadPort {
   constructor(private readonly executor: PgExecutor) {}
+
+  private async findExistingByIdempotency(
+    conversationId: ConversationId,
+    idempotencyKey: string,
+  ): Promise<ExistingIdempotencyRow | null> {
+    const existingByIdempotency = await this.executor.query<ExistingIdempotencyRow>(
+      `SELECT id, metadata
+       FROM ledger_events
+       WHERE conversation_id = $1
+         AND idempotency_key = $2
+       LIMIT 1`,
+      [conversationId, idempotencyKey],
+    );
+
+    return existingByIdempotency.rows[0] ?? null;
+  }
+
+  private existingRowMatchesDigest(existingRow: ExistingIdempotencyRow, digest: string | null): boolean {
+    const existingMetadata = toEventMetadata(existingRow.metadata);
+    const existingDigest = readMetadataStringField(existingMetadata, IDEMPOTENCY_DIGEST_METADATA_FIELD);
+    return digest !== null && existingDigest === digest;
+  }
+
+  private async insertPreparedEventsIndividually(
+    conversationId: ConversationId,
+    rows: readonly PendingLedgerInsertRow[],
+  ): Promise<void> {
+    for (const row of rows) {
+      try {
+        await this.executor.query(INSERT_SINGLE_LEDGER_EVENT_SQL, [
+          row.id,
+          row.conversationId,
+          row.sequence,
+          row.role,
+          row.content,
+          row.tokenCount,
+          row.occurredAt,
+          row.metadataJson,
+          row.idempotencyKey,
+        ]);
+      } catch (error) {
+        if (row.idempotencyKey !== null && isUniqueIdempotencyConflict(error)) {
+          const existingRow = await this.findExistingByIdempotency(conversationId, row.idempotencyKey);
+          if (existingRow !== null && this.existingRowMatchesDigest(existingRow, row.idempotencyDigest)) {
+            continue;
+          }
+
+          throw createIdempotencyConflictError(conversationId, row.idempotencyKey);
+        }
+
+        throw error;
+      }
+    }
+  }
+
+  private async insertPreparedEvents(
+    conversationId: ConversationId,
+    rows: readonly PendingLedgerInsertRow[],
+  ): Promise<void> {
+    if (rows.length === 0) {
+      return;
+    }
+
+    const payload = rows.map((row) => {
+      return {
+        id: row.id,
+        conversation_id: row.conversationId,
+        seq: row.sequence,
+        role: row.role,
+        content: row.content,
+        token_count: row.tokenCount,
+        occurred_at: row.occurredAt,
+        metadata: JSON.parse(row.metadataJson) as Record<string, unknown>,
+        idempotency_key: row.idempotencyKey,
+      };
+    });
+
+    try {
+      await this.executor.query(INSERT_BATCH_LEDGER_EVENTS_SQL, [JSON.stringify(payload)]);
+    } catch (error) {
+      if (rows.some((row) => row.idempotencyKey !== null) && isUniqueIdempotencyConflict(error)) {
+        await this.insertPreparedEventsIndividually(conversationId, rows);
+        return;
+      }
+
+      throw error;
+    }
+  }
 
   async appendEvents(conversationId: ConversationId, events: readonly LedgerEvent[]): Promise<void> {
     if (events.length === 0) {
@@ -171,6 +338,7 @@ export class PgLedgerStore implements LedgerAppendPort, LedgerReadPort {
 
       let expectedSequence = parsePgBigInt(sequenceResult.rows[0]?.next_sequence ?? 1, 'next_sequence');
       const persistedIdempotencyKeys = new Set<string>();
+      const rowsToInsert: PendingLedgerInsertRow[] = [];
 
       for (const event of events) {
         if (event.conversationId !== conversationId) {
@@ -180,21 +348,9 @@ export class PgLedgerStore implements LedgerAppendPort, LedgerReadPort {
         const idempotency = extractIdempotencyMetadata(event);
 
         if (idempotency.key !== null && !persistedIdempotencyKeys.has(idempotency.key)) {
-          const existingByIdempotency = await this.executor.query<ExistingIdempotencyRow>(
-            `SELECT id, metadata
-             FROM ledger_events
-             WHERE conversation_id = $1
-               AND idempotency_key = $2
-             LIMIT 1`,
-            [conversationId, idempotency.key],
-          );
-
-          const existingRow = existingByIdempotency.rows[0];
-          if (existingRow) {
-            const existingMetadata = toEventMetadata(existingRow.metadata);
-            const existingDigest = readMetadataStringField(existingMetadata, IDEMPOTENCY_DIGEST_METADATA_FIELD);
-
-            if (idempotency.digest !== null && existingDigest === idempotency.digest) {
+          const existingRow = await this.findExistingByIdempotency(conversationId, idempotency.key);
+          if (existingRow !== null) {
+            if (this.existingRowMatchesDigest(existingRow, idempotency.digest)) {
               persistedIdempotencyKeys.add(idempotency.key);
               continue;
             }
@@ -220,66 +376,14 @@ export class PgLedgerStore implements LedgerAppendPort, LedgerReadPort {
           );
         }
 
-        try {
-          const insertResult = await this.executor.query(
-            `INSERT INTO ledger_events (
-              id,
-              conversation_id,
-              seq,
-              role,
-              content,
-              token_count,
-              occurred_at,
-              metadata,
-              idempotency_key
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
-            ON CONFLICT (id) DO NOTHING`,
-            [
-              event.id,
-              conversationId,
-              event.sequence,
-              event.role,
-              event.content,
-              event.tokenCount.value,
-              event.occurredAt,
-              JSON.stringify(event.metadata),
-              idempotency.key !== null && !persistedIdempotencyKeys.has(idempotency.key)
-                ? idempotency.key
-                : null,
-            ],
-          );
-
-          if (toRowCount(insertResult.rowCount) === 0) {
-            continue;
-          }
-        } catch (error) {
-          if (idempotency.key !== null && isUniqueIdempotencyConflict(error)) {
-            const existingByIdempotency = await this.executor.query<ExistingIdempotencyRow>(
-              `SELECT id, metadata
-               FROM ledger_events
-               WHERE conversation_id = $1
-                 AND idempotency_key = $2
-               LIMIT 1`,
-              [conversationId, idempotency.key],
-            );
-
-            const existingRow = existingByIdempotency.rows[0];
-            if (existingRow) {
-              const existingMetadata = toEventMetadata(existingRow.metadata);
-              const existingDigest = readMetadataStringField(existingMetadata, IDEMPOTENCY_DIGEST_METADATA_FIELD);
-
-              if (idempotency.digest !== null && existingDigest === idempotency.digest) {
-                persistedIdempotencyKeys.add(idempotency.key);
-                continue;
-              }
-
-              throw createIdempotencyConflictError(conversationId, idempotency.key);
-            }
-          }
-
-          throw error;
-        }
+        rowsToInsert.push(
+          toPendingInsertRow(
+            event,
+            conversationId,
+            idempotency.key !== null && !persistedIdempotencyKeys.has(idempotency.key) ? idempotency.key : null,
+            idempotency.digest,
+          ),
+        );
 
         if (idempotency.key !== null) {
           persistedIdempotencyKeys.add(idempotency.key);
@@ -287,6 +391,8 @@ export class PgLedgerStore implements LedgerAppendPort, LedgerReadPort {
 
         expectedSequence += 1;
       }
+
+      await this.insertPreparedEvents(conversationId, rowsToInsert);
     } catch (error) {
       return mapPgError(error);
     }
