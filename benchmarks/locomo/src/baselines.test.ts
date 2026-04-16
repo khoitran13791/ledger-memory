@@ -241,6 +241,7 @@ describe('oracle baselines', () => {
 
     expect(staticExecution.provenance?.runtime?.runtimeMode).toBe('static_materialize');
     expect(staticExecution.diagnostics?.toolLoop).toBeUndefined();
+    expect(staticExecution.diagnostics?.materializationErrorCode).toBeUndefined();
 
     expect(agenticExecution.provenance?.runtime?.runtimeMode).toBe('agentic_loop');
     expect(agenticExecution.provenance?.runtime?.artifactBearingExampleCount).toBeGreaterThan(0);

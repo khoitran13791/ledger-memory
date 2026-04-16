@@ -147,6 +147,7 @@ describe('LOCOMO smoke harness', () => {
             readonly executionIndex: number;
             readonly totalExecutionsPlanned: number;
             readonly failureClassification?: { readonly category: string };
+            readonly materializationDiagnostics?: { readonly errorCode?: string };
             readonly provenance?: {
               readonly requestedPredictionMode?: string;
               readonly actualPredictionSource?: string;
@@ -161,6 +162,11 @@ describe('LOCOMO smoke harness', () => {
     expect(traceRows.every((row) => row.failureClassification !== undefined)).toBe(true);
     expect(traceRows.every((row) => row.provenance?.requestedPredictionMode === 'heuristic')).toBe(true);
     expect(traceRows.every((row) => row.provenance?.actualPredictionSource === 'heuristic')).toBe(true);
+    expect(
+      traceRows
+        .filter((row) => row.materializationDiagnostics !== undefined)
+        .every((row) => row.materializationDiagnostics?.errorCode === undefined),
+    ).toBe(true);
     expect(traceRows[0]?.executionIndex).toBe(1);
     expect(traceRows.at(-1)?.executionIndex).toBe(expectedExecutions);
     expect(traceRows[0]?.totalExecutionsPlanned).toBe(expectedExecutions);

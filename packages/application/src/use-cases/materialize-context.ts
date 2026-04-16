@@ -152,6 +152,8 @@ const collectArtifactReferences = async (
   return artifactReferences;
 };
 
+const MAX_ARTIFACT_IDS_IN_PREAMBLE = 4;
+
 const buildSystemPreamble = (
   summaryReferences: readonly SummaryReference[],
   artifactReferences: readonly ArtifactReference[],
@@ -168,8 +170,16 @@ const buildSystemPreamble = (
   }
 
   if (artifactReferences.length > 0) {
-    const ids = artifactReferences.map((ref) => ref.id).join(', ');
-    parts.push(`Available artifacts: ${ids}.`);
+    const visibleIds = artifactReferences
+      .slice(0, MAX_ARTIFACT_IDS_IN_PREAMBLE)
+      .map((ref) => ref.id)
+      .join(', ');
+    const omittedCount = Math.max(0, artifactReferences.length - MAX_ARTIFACT_IDS_IN_PREAMBLE);
+    parts.push(
+      omittedCount === 0
+        ? `Available artifacts: ${visibleIds}.`
+        : `Available artifacts: ${visibleIds}, and ${omittedCount} more.`,
+    );
   }
 
   return parts.join(' ');

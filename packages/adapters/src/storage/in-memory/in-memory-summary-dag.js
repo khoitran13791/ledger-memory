@@ -1,6 +1,26 @@
 import { InvalidDagEdgeError, InvariantViolationError, } from '@ledgermind/domain';
 import { createInMemoryPersistenceState } from './state';
-const toLowerCase = (value) => value.toLocaleLowerCase();
+const toSearchTokens = (value) => {
+    return value
+        .toLocaleLowerCase()
+        .split(/[^a-z0-9]+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length > 1);
+};
+const scoreTokenOverlap = (content, query) => {
+    const queryTokens = toSearchTokens(query);
+    if (queryTokens.length === 0) {
+        return 0;
+    }
+    const contentTokens = new Set(toSearchTokens(content));
+    let overlapCount = 0;
+    for (const token of queryTokens) {
+        if (contentTokens.has(token)) {
+            overlapCount += 1;
+        }
+    }
+    return overlapCount;
+};
 const uniquePush = (target, value) => {
     if (!target.includes(value)) {
         target.push(value);
