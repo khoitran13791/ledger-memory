@@ -36,6 +36,25 @@ export type {
   StoreArtifactOutput,
   SummaryReference,
 } from './ports/driving/memory-engine.port';
+export type {
+  AgenticMapInput,
+  AgenticMapOutput,
+  DelegatedScopeInput,
+  GetOperatorRunInput,
+  GetOperatorRunOutput,
+  KeptWorkInput,
+  LLMMapInput,
+  LLMMapOutput,
+  OperatorBootstrapState,
+  OperatorFailureMetadata,
+  OperatorFinalizationStage,
+  OperatorKind,
+  OperatorResultEntry,
+  OperatorRunStatus,
+  OperatorTaskInspection,
+  OperatorTaskStatus,
+  RetryPolicy,
+} from './ports/driving/operator-execution.port';
 
 export type { DomainEventSubscriber } from './ports/driving/event-subscriber.port';
 export type { ToolDefinition, ToolProviderPort } from './ports/driving/tool-provider.port';
@@ -55,8 +74,29 @@ export type {
   IntegrityReport,
   SummaryDagPort,
 } from './ports/driven/persistence/summary-dag.port';
+export type {
+  AdvanceFinalizationStageInput,
+  AssignTaskChildConversationInput,
+  ClaimRunForFinalizationRetryInput,
+  ClaimTaskLeaseInput,
+  CreateOperatorRunWithTasksInput,
+  FinalizeRunInput,
+  MarkTaskRetryableFailureInput,
+  OperatorExecutionPort,
+  OperatorSubmissionInput,
+  RecordTaskFailureInput,
+  RecordTaskSuccessInput,
+  StoredOperatorRun,
+  StoredOperatorTask,
+} from './ports/driven/persistence/operator-execution.port';
+export { createNoopOperatorExecutionPort } from './ports/driven/persistence/noop-operator-execution.port';
 export type { UnitOfWork, UnitOfWorkPort } from './ports/driven/persistence/unit-of-work.port';
 
+export type {
+  StructuredGenerationInput,
+  StructuredGenerationPort,
+  StructuredGenerationResult,
+} from './ports/driven/llm/structured-generation.port';
 export type {
   SummarizationInput,
   SummarizationMessage,
@@ -66,6 +106,16 @@ export type {
 } from './ports/driven/llm/summarizer.port';
 export type { TokenizerPort } from './ports/driven/llm/tokenizer.port';
 
+export type {
+  DelegationScopeArtifactPayload,
+  DelegationScopeResolution,
+  DelegationScopeResolverPort,
+} from './ports/driven/agents/delegation-scope-resolver.port';
+export type {
+  SubAgentExecutorInput,
+  SubAgentExecutorPort,
+  SubAgentExecutorResult,
+} from './ports/driven/agents/sub-agent-executor.port';
 export type { AuthorizationPort, CallerContext } from './ports/driven/auth/authorization.port';
 export type { ClockPort } from './ports/driven/clock/clock.port';
 export type { FileReaderPort } from './ports/driven/filesystem/file-reader.port';
@@ -92,6 +142,10 @@ export {
   IntegrityCheckExecutionError,
   InvalidReferenceError,
   InvalidTokenizerOutputError,
+  OperatorBootstrapStateError,
+  OperatorFinalizationError,
+  OperatorInputValidationError,
+  OperatorRunNotFoundError,
   TokenizerConfigurationError,
   UnauthorizedExpandError,
   type InvalidReferenceKind,
@@ -135,3 +189,17 @@ export {
   ExploreArtifactUseCase,
   type ExploreArtifactUseCaseDeps,
 } from './use-cases/explore-artifact';
+export {
+  GetOperatorRunUseCase,
+  type GetOperatorRunUseCaseDeps,
+} from './use-cases/get-operator-run';
+export {
+  InvalidOperatorConfigError,
+  createOperatorConfig,
+  type OperatorConfig,
+} from './use-cases/operators/shared/operator-config';
+export { loadOperatorDataset, validateOperatorDatasetSource } from './use-cases/operators/shared/input-dataset';
+export {
+  createFailedResultEntry,
+  createSucceededResultEntry,
+} from './use-cases/operators/shared/result-entry';

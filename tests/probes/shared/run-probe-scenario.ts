@@ -158,6 +158,15 @@ const createEngine = (input: CreateUseCasesInput): MemoryEngine => {
     expand: (engineInput) => expandUseCase.execute(engineInput),
     storeArtifact: (engineInput) => storeArtifactUseCase.execute(engineInput),
     exploreArtifact: (engineInput) => exploreArtifactUseCase.execute(engineInput),
+    llmMap: async () => {
+      throw new Error('llmMap is not supported in probe scenarios yet.');
+    },
+    agenticMap: async () => {
+      throw new Error('agenticMap is not supported in probe scenarios yet.');
+    },
+    getOperatorRun: async () => {
+      throw new Error('getOperatorRun is not supported in probe scenarios yet.');
+    },
   };
 };
 

@@ -55,6 +55,7 @@ import type { ConversationPort } from '../../ports/driven/persistence/conversati
 import type { LedgerAppendPort } from '../../ports/driven/persistence/ledger-append.port';
 import type { LedgerReadPort, SequenceRange } from '../../ports/driven/persistence/ledger-read.port';
 import type { IntegrityReport, SummaryDagPort } from '../../ports/driven/persistence/summary-dag.port';
+import type { OperatorExecutionPort } from '../../ports/driven/persistence/operator-execution.port';
 import type { UnitOfWork, UnitOfWorkPort } from '../../ports/driven/persistence/unit-of-work.port';
 import type { EventPublisherPort } from '../../ports/driven/events/event-publisher.port';
 import { InvalidTokenizerOutputError } from '../../errors/application-errors';
@@ -271,6 +272,41 @@ class NoopArtifactStore implements ArtifactStorePort {
     return;
   }
 }
+
+const noopOperatorExecutionPort = {
+  createRunWithTasks: async () => {
+    throw new Error('Not implemented in this test suite');
+  },
+  getRun: async () => null,
+  getTask: async () => null,
+  listTasksForRun: async () => [],
+  lookupRunByIdempotencyKey: async () => null,
+  claimTaskLease: async () => null,
+  recordTaskSuccess: async () => {
+    throw new Error('Not implemented in this test suite');
+  },
+  recordTaskFailure: async () => {
+    throw new Error('Not implemented in this test suite');
+  },
+  markTaskRetryableFailure: async () => {
+    throw new Error('Not implemented in this test suite');
+  },
+  assignTaskChildConversation: async () => {
+    throw new Error('Not implemented in this test suite');
+  },
+  getTaskBootstrapState: async () => 'bootstrap_not_started',
+  markBootstrapStarted: async () => {
+    throw new Error('Not implemented in this test suite');
+  },
+  markBootstrapCompleted: async () => {
+    throw new Error('Not implemented in this test suite');
+  },
+  claimRunForFinalizationRetry: async () => null,
+  advanceFinalizationStage: async () => 'not_started',
+  finalizeRun: async () => {
+    throw new Error('Not implemented in this test suite');
+  },
+} satisfies OperatorExecutionPort;
 
 class TestConversationStore implements ConversationPort {
   constructor(private readonly state: MutableState) {}
@@ -532,6 +568,7 @@ class TestUnitOfWork implements UnitOfWorkPort {
       dag: new TestSummaryDagPort(workingState, this.dagControls),
       artifacts: new NoopArtifactStore(),
       conversations: new TestConversationStore(workingState),
+      operators: noopOperatorExecutionPort,
     };
 
     const result = await work(uow);

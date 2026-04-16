@@ -13,6 +13,14 @@ import type {
   TokenCount,
 } from '@ledgermind/domain';
 
+import type {
+  AgenticMapInput,
+  AgenticMapOutput,
+  GetOperatorRunInput,
+  GetOperatorRunOutput,
+  LLMMapInput,
+  LLMMapOutput,
+} from './operator-execution.port';
 import type { CallerContext } from '../driven/auth/authorization.port';
 import type { IntegrityReport } from '../driven/persistence/summary-dag.port';
 
@@ -254,4 +262,7 @@ export interface MemoryEngine {
   expand(input: ExpandInput): Promise<ExpandOutput>;
   storeArtifact(input: StoreArtifactInput): Promise<StoreArtifactOutput>;
   exploreArtifact(input: ExploreArtifactInput): Promise<ExploreArtifactOutput>;
+  llmMap(input: LLMMapInput): Promise<LLMMapOutput>;
+  agenticMap(input: AgenticMapInput): Promise<AgenticMapOutput>;
+  getOperatorRun(input: GetOperatorRunInput): Promise<GetOperatorRunOutput>;
 }
