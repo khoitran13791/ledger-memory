@@ -1,14 +1,45 @@
-import type { ArtifactId } from '@ledgermind/domain';
+import { serializeCanonicalJson, type ArtifactId } from '@ledgermind/domain';
 
-import { ArtifactContentUnavailableError, ArtifactNotFoundError, OperatorInputValidationError } from '../../../errors/application-errors';
+import {
+  ArtifactContentUnavailableError,
+  ArtifactNotFoundError,
+  OperatorInputValidationError,
+} from '../../../errors/application-errors';
 import type { ArtifactStorePort } from '../../../ports/driven/persistence/artifact-store.port';
 import type { ConversationPort } from '../../../ports/driven/persistence/conversation.port';
+
+const textEncoder = new TextEncoder();
 
 export interface OperatorDatasetSource {
   readonly conversationId: string;
   readonly items?: readonly unknown[];
   readonly inputArtifactId?: ArtifactId;
 }
+
+export interface LoadedOperatorDataset {
+  readonly items: readonly unknown[];
+  readonly canonicalDatasetJson: string;
+}
+
+const canonicalizeOperatorItems = (items: readonly unknown[]): LoadedOperatorDataset => {
+  const canonicalDatasetJson = serializeCanonicalJson({ items });
+  const parsed = JSON.parse(canonicalDatasetJson) as {
+    readonly items?: readonly unknown[];
+  };
+
+  if (!Array.isArray(parsed.items)) {
+    throw new OperatorInputValidationError('Operator dataset items must be a JSON array.');
+  }
+
+  return {
+    items: parsed.items,
+    canonicalDatasetJson,
+  };
+};
+
+export const getOperatorDatasetByteLength = (canonicalDatasetJson: string): number => {
+  return textEncoder.encode(canonicalDatasetJson).byteLength;
+};
 
 export const validateOperatorDatasetSource = (input: OperatorDatasetSource): void => {
   const hasInlineItems = input.items !== undefined;
@@ -29,11 +60,24 @@ export const loadOperatorDataset = async (
     readonly artifactStore: ArtifactStorePort;
     readonly conversations: ConversationPort;
   },
-): Promise<readonly unknown[]> => {
+  options?: {
+    readonly maxInlineOperatorInputBytes?: number;
+  },
+): Promise<LoadedOperatorDataset> => {
   validateOperatorDatasetSource(input);
+  void deps.conversations;
 
   if (input.items !== undefined) {
-    return input.items;
+    const dataset = canonicalizeOperatorItems(input.items);
+
+    if (
+      options?.maxInlineOperatorInputBytes !== undefined &&
+      getOperatorDatasetByteLength(dataset.canonicalDatasetJson) > options.maxInlineOperatorInputBytes
+    ) {
+      throw new OperatorInputValidationError('Inline operator dataset exceeds maxInlineOperatorInputBytes.');
+    }
+
+    return dataset;
   }
 
   const artifactId = input.inputArtifactId;
@@ -55,10 +99,16 @@ export const loadOperatorDataset = async (
     throw new ArtifactContentUnavailableError(artifactId);
   }
 
-  const parsed = JSON.parse(content) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content) as unknown;
+  } catch {
+    throw new OperatorInputValidationError('Operator input artifact payload must be one JSON array.');
+  }
+
   if (!Array.isArray(parsed)) {
     throw new OperatorInputValidationError('Operator input artifact payload must be one JSON array.');
   }
 
-  return parsed;
+  return canonicalizeOperatorItems(parsed);
 };

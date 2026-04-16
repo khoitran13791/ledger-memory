@@ -195,6 +195,10 @@ export {
   type ExploreArtifactUseCaseDeps,
 } from './use-cases/explore-artifact';
 export {
+  LLMMapUseCase,
+  type LLMMapUseCaseDeps,
+} from './use-cases/llm-map';
+export {
   GetOperatorRunUseCase,
   type GetOperatorRunUseCaseDeps,
 } from './use-cases/get-operator-run';

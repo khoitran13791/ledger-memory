@@ -98,7 +98,7 @@ const createStoredRun = (
     maxRetries: 0,
     retryBackoffSeconds: 30,
   },
-  outputArtifactId,
+  ...(overrides.outputArtifactId === undefined ? { outputArtifactId } : {}),
   taskCount: 1,
   succeededTaskCount: 1,
   failedTaskCount: 0,
@@ -201,7 +201,7 @@ class FakeOperatorExecutionPort implements OperatorExecutionPort {
 }
 
 describe('GetOperatorRunUseCase', () => {
-  it('inlines ordered results only when the serialized payload stays under the configured byte ceiling', async () => {
+  it('reports task counts and inlines ordered results only when the serialized payload stays under the configured byte ceiling', async () => {
     const content = `${JSON.stringify(smallResults[0])}\n`;
     const artifactStore = new FakeArtifactStorePort([
       {
@@ -218,9 +218,98 @@ describe('GetOperatorRunUseCase', () => {
 
     const output = await useCase.execute({ runId });
 
+    expect(output.taskCount).toBe(1);
+    expect(output.succeededTaskCount).toBe(1);
+    expect(output.failedTaskCount).toBe(0);
+    expect(output.pendingTaskCount).toBe(0);
     expect(output.inlineResults).toEqual(smallResults);
     expect(output.outputArtifactId).toBe(outputArtifactId);
     expect(output.tasks.map((task) => task.itemIndex)).toEqual([0]);
+  });
+
+  it('omits inline results when the serialized payload exceeds the configured byte ceiling', async () => {
+    const content = `${JSON.stringify(smallResults[0])}\n`;
+    const artifactStore = new FakeArtifactStorePort([
+      {
+        artifact: createOutputArtifact(outputArtifactId, content),
+        content,
+      },
+    ]);
+    const operatorExecution = new FakeOperatorExecutionPort(
+      createStoredRun({ outputArtifactId }),
+      [createStoredTask()],
+    );
+    const useCase = new GetOperatorRunUseCase({
+      operatorExecution,
+      artifactStore,
+      config: createOperatorConfig({ maxInlineRunResultsBytes: 8 }),
+    });
+
+    const output = await useCase.execute({ runId });
+
+    expect(output.inlineResults).toBeUndefined();
+    expect(output.outputArtifactId).toBe(outputArtifactId);
+  });
+
+  it('includes task-level child conversation, result artifact, and terminal failure metadata', async () => {
+    const {
+      outputArtifactId: _outputArtifactId,
+      ...runWithoutOutputArtifact
+    } = createStoredRun({
+      status: 'completed_with_failures',
+      failedTaskCount: 1,
+      succeededTaskCount: 0,
+      pendingTaskCount: 0,
+      terminalFailureSummary: {
+        code: 'SCHEMA_INVALID',
+        message: 'invalid output',
+        retryable: false,
+      },
+    });
+    const operatorExecution = new FakeOperatorExecutionPort(
+      runWithoutOutputArtifact,
+      [
+        createStoredTask({
+          status: 'failed',
+          attemptCount: 2,
+          childConversationId: createConversationId('conv_child_operator_test'),
+          resultArtifactId: createArtifactId('file_task_result_operator_test'),
+          terminalFailure: {
+            code: 'SCHEMA_INVALID',
+            message: 'invalid output',
+            retryable: false,
+          },
+        }),
+      ],
+    );
+    const useCase = new GetOperatorRunUseCase({
+      operatorExecution,
+      artifactStore: new FakeArtifactStorePort(),
+      config: createOperatorConfig(),
+    });
+
+    const output = await useCase.execute({ runId });
+
+    expect(output.terminalFailureSummary).toEqual({
+      code: 'SCHEMA_INVALID',
+      message: 'invalid output',
+      retryable: false,
+    });
+    expect(output.tasks).toEqual([
+      {
+        taskId: 'task_operator_test_0',
+        itemIndex: 0,
+        status: 'failed',
+        attemptCount: 2,
+        childConversationId: createConversationId('conv_child_operator_test'),
+        resultArtifactId: createArtifactId('file_task_result_operator_test'),
+        terminalFailure: {
+          code: 'SCHEMA_INVALID',
+          message: 'invalid output',
+          retryable: false,
+        },
+      },
+    ]);
   });
 
   it('throws a dedicated error when the run does not exist', async () => {
