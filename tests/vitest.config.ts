@@ -8,6 +8,7 @@ const __dirname = path.dirname(__filename);
 
 export default defineConfig({
   resolve: {
+    extensions: ['.ts', '.tsx', '.mts', '.js', '.jsx', '.mjs', '.json'],
     alias: {
       '@ledgermind/domain': path.resolve(__dirname, '../packages/domain/src/index.ts'),
       '@ledgermind/application': path.resolve(__dirname, '../packages/application/src/index.ts'),
