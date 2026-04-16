@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { createIdService, createTimestamp, type HashPort, type IdService } from '@ledgermind/domain';
 
 import type {
+  AgenticMapInput,
   AppendLedgerEventsInput,
   ArtifactStorePort,
   CheckIntegrityInput,
@@ -13,8 +14,10 @@ import type {
   ExpandInput,
   ExploreArtifactInput,
   FileReaderPort,
+  GetOperatorRunInput,
   GrepInput,
   LedgerReadPort,
+  LLMMapInput,
   MaterializeContextInput,
   MemoryEngine,
   RunCompactionConfig,
@@ -70,12 +73,15 @@ import {
 // ---------------------------------------------------------------------------
 
 export type {
+  AgenticMapInput,
+  AgenticMapOutput,
   AppendLedgerEventsInput,
   AppendLedgerEventsOutput,
   ArtifactReference,
   ArtifactSource,
   CheckIntegrityInput,
   CheckIntegrityOutput,
+  DelegatedScopeInput,
   DescribeArtifactPlanningSignals,
   DescribeInput,
   DescribeOutput,
@@ -85,15 +91,28 @@ export type {
   ExploreArtifactInput,
   ExploreArtifactOutput,
   ExplorerHints,
+  GetOperatorRunInput,
+  GetOperatorRunOutput,
   GrepInput,
   GrepMatch,
   GrepOutput,
+  KeptWorkInput,
+  LLMMapInput,
+  LLMMapOutput,
   MaterializeContextInput,
   MaterializeContextOutput,
   MemoryEngine,
   Metadata,
   ModelMessage,
   NewLedgerEvent,
+  OperatorBootstrapState,
+  OperatorFailureMetadata,
+  OperatorFinalizationStage,
+  OperatorKind,
+  OperatorResultEntry,
+  OperatorRunStatus,
+  OperatorTaskInspection,
+  OperatorTaskStatus,
   PinRule,
   RetrievalHint,
   RetrievalHintDiagnostics,
@@ -101,6 +120,7 @@ export type {
   RetrievalStageQueryDiagnostics,
   RetrievalCandidateDecisionReason,
   RetrievalCandidateDecisionDiagnostics,
+  RetryPolicy,
   RunCompactionInput,
   RunCompactionOutput,
   StoreArtifactInput,
@@ -439,6 +459,18 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
     expand: (input: ExpandInput) => expandUseCase.execute(input),
     storeArtifact: (input: StoreArtifactInput) => storeArtifactUseCase.execute(input),
     exploreArtifact: (input: ExploreArtifactInput) => exploreArtifactUseCase.execute(input),
+    llmMap: async (input: LLMMapInput) => {
+      void input;
+      throw new Error('llmMap is not wired yet.');
+    },
+    agenticMap: async (input: AgenticMapInput) => {
+      void input;
+      throw new Error('agenticMap is not wired yet.');
+    },
+    getOperatorRun: async (input: GetOperatorRunInput) => {
+      void input;
+      throw new Error('getOperatorRun is not wired yet.');
+    },
   };
 
   return engine;

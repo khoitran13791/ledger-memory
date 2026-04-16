@@ -2,6 +2,7 @@ import type { ArtifactStorePort } from './artifact-store.port';
 import type { ContextProjectionPort } from './context-projection.port';
 import type { ConversationPort } from './conversation.port';
 import type { LedgerAppendPort } from './ledger-append.port';
+import type { OperatorExecutionPort } from './operator-execution.port';
 import type { SummaryDagPort } from './summary-dag.port';
 
 export interface UnitOfWork {
@@ -10,6 +11,7 @@ export interface UnitOfWork {
   readonly dag: SummaryDagPort;
   readonly artifacts: ArtifactStorePort;
   readonly conversations: ConversationPort;
+  readonly operators: OperatorExecutionPort;
 }
 
 /**

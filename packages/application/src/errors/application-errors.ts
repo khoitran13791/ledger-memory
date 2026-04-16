@@ -1,5 +1,7 @@
 import type { ArtifactId, ConversationId, SummaryNodeId } from '@ledgermind/domain';
 
+import type { OperatorFinalizationStage } from '../ports/driving/operator-execution.port';
+
 export abstract class ApplicationError extends Error {
   abstract readonly code: string;
 
@@ -141,5 +143,45 @@ export class IntegrityCheckExecutionError extends ApplicationError {
   constructor(conversationId: ConversationId, message?: string) {
     super(message ?? `Integrity checks could not be completed for conversation: ${conversationId}`);
     this.conversationId = conversationId;
+  }
+}
+
+export class OperatorRunNotFoundError extends ApplicationError {
+  readonly code = 'OPERATOR_RUN_NOT_FOUND';
+  readonly runId: string;
+
+  constructor(runId: string) {
+    super(`Operator run not found: ${runId}`);
+    this.runId = runId;
+  }
+}
+
+export class OperatorInputValidationError extends ApplicationError {
+  readonly code = 'OPERATOR_INPUT_INVALID';
+
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+export class OperatorBootstrapStateError extends ApplicationError {
+  readonly code = 'OPERATOR_BOOTSTRAP_STATE_INVALID';
+  readonly taskId: string;
+
+  constructor(taskId: string, message?: string) {
+    super(message ?? `Operator task bootstrap state is invalid for task: ${taskId}`);
+    this.taskId = taskId;
+  }
+}
+
+export class OperatorFinalizationError extends ApplicationError {
+  readonly code = 'OPERATOR_FINALIZATION_FAILED';
+  readonly runId: string;
+  readonly stage: OperatorFinalizationStage;
+
+  constructor(runId: string, stage: OperatorFinalizationStage, message?: string) {
+    super(message ?? `Operator finalization failed for run ${runId} at stage ${stage}.`);
+    this.runId = runId;
+    this.stage = stage;
   }
 }
