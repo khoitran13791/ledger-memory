@@ -1,0 +1,23 @@
+# AGENTS.md
+
+- Follow `CLAUDE.md` first; it is the canonical agent guidance for this repo.
+- No `.cursorrules`, `.cursor/rules/`, `.windsurfrules`, `.clinerules`, `.goosehints`, or `.github/copilot-instructions.md` files exist here.
+- Prereqs: Node.js `>=22`, `pnpm` `9.x`.
+- Root commands: `pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm format`, `pnpm format:write`.
+- Single test: `pnpm vitest run packages/.../foo.test.ts` (or `pnpm vitest run tests/.../bar.test.ts`).
+- Package-scoped work: `pnpm --filter @ledgermind/<pkg> test|build|lint|typecheck`.
+- PostgreSQL migrations: `pnpm --filter @ledgermind/infrastructure migrate:up|status|down`.
+- Monorepo uses strict Clean Architecture: `domain <- application <- adapters <- infrastructure <- sdk`.
+- `packages/domain`: entities, value objects, domain services/events/errors; zero external runtime deps.
+- `packages/application`: use cases, DTOs, and driving/driven ports; owns orchestration and interfaces.
+- `packages/adapters`: in-memory stores, explorers, tokenizer, auth/jobs, and framework/tool adapters.
+- `packages/infrastructure`: PostgreSQL stores/migrations, filesystem readers, and crypto/platform bindings.
+- `packages/sdk`: composition root; exports `createMemoryEngine`, `createInMemoryMemoryEngine`, `createPostgresMemoryEngine`.
+- `packages/mcp-server` exposes memory tools over MCP; `packages/claude-code` provides Claude lifecycle hook commands.
+- Persistence backends today are in-memory and PostgreSQL; core data model is ledger events + context projection + summary DAG + artifacts.
+- Main engine APIs: `append`, `materializeContext`, `runCompaction`, `checkIntegrity`, `grep`, `describe`, `expand`, `storeArtifact`, `exploreArtifact`.
+- Tests live in package `src/**/__tests__` plus repo suites under `tests/golden`, `tests/conformance`, `tests/regression`, `tests/probes`, and `tests/quality`.
+- TypeScript is strict ESM; prefer `import type` for type-only imports and keep readonly/immutable shapes.
+- Respect boundaries: no `pg`, `fs`, `crypto`, `zod`, or framework SDK imports in domain/application; no raw SQL outside infrastructure.
+- Follow existing naming/style: kebab-case files, descriptive port/use-case names, typed errors, constructor injection, Prettier formatting, ESLint boundaries.
+- Preserve documented invariants: canonical SHA-256 IDs, 3-level compaction, optimistic context versioning, 8 DAG integrity checks, and artifact ID propagation.
