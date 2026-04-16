@@ -6,6 +6,7 @@ export { PgArtifactStore } from './postgres/pg-artifact-store';
 export { PgContextProjection } from './postgres/pg-context-projection';
 export { PgConversationStore } from './postgres/pg-conversation-store';
 export { PgLedgerStore } from './postgres/pg-ledger-store';
+export { PgOperatorExecutionStore } from './postgres/pg-operator-execution-store';
 export { PgSummaryDag } from './postgres/pg-summary-dag';
 export {
   PgUnitOfWork,

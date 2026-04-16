@@ -3,5 +3,6 @@ export { registerContextProjectionConformance } from './context-projection.confo
 export { registerConversationConformance } from './conversation.conformance';
 export { registerLedgerAppendConformance } from './ledger-append.conformance';
 export { registerLedgerReadConformance } from './ledger-read.conformance';
+export { registerOperatorExecutionConformance } from './operator-execution.conformance';
 export { registerSummaryDagConformance } from './summary-dag.conformance';
 export { registerUnitOfWorkConformance } from './unit-of-work.conformance';

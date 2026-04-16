@@ -6,6 +6,7 @@ import type {
   ConversationPort,
   LedgerAppendPort,
   LedgerReadPort,
+  OperatorExecutionPort,
   SummaryDagPort,
   UnitOfWorkPort,
 } from '@ledgermind/application';
@@ -17,6 +18,7 @@ import {
   registerConversationConformance,
   registerLedgerAppendConformance,
   registerLedgerReadConformance,
+  registerOperatorExecutionConformance,
   registerSummaryDagConformance,
   registerUnitOfWorkConformance,
 } from './persistence';
@@ -44,6 +46,7 @@ export interface ConformanceRuntime {
   readonly dag: SummaryDagPort;
   readonly artifacts: ArtifactStorePort;
   readonly conversations: ConversationPort;
+  readonly operators: OperatorExecutionPort;
   readonly corruption: ConformanceCorruptionTools;
   destroy(): Promise<void>;
 }
@@ -62,6 +65,7 @@ export const runConformance = (adapter: ConformanceAdapterDefinition): void => {
     registerSummaryDagConformance(adapter);
     registerArtifactStoreConformance(adapter);
     registerConversationConformance(adapter);
+    registerOperatorExecutionConformance(adapter);
     registerUnitOfWorkConformance(adapter);
   });
 };

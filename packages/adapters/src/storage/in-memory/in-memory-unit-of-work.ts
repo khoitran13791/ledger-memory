@@ -1,9 +1,10 @@
-import { createNoopOperatorExecutionPort, type UnitOfWork, type UnitOfWorkPort } from '@ledgermind/application';
+import type { UnitOfWork, UnitOfWorkPort } from '@ledgermind/application';
 
 import { InMemoryArtifactStore } from './in-memory-artifact-store';
 import { InMemoryContextProjection } from './in-memory-context-projection';
 import { InMemoryConversationStore } from './in-memory-conversation-store';
 import { InMemoryLedgerStore } from './in-memory-ledger-store';
+import { InMemoryOperatorExecutionStore } from './in-memory-operator-execution-store';
 import { InMemorySummaryDag } from './in-memory-summary-dag';
 import {
   applyInMemoryPersistenceState,
@@ -19,7 +20,7 @@ const createUnitOfWorkFromState = (state: InMemoryPersistenceState): UnitOfWork 
     dag: new InMemorySummaryDag(state),
     artifacts: new InMemoryArtifactStore(state),
     conversations: new InMemoryConversationStore(state),
-    operators: createNoopOperatorExecutionPort(),
+    operators: new InMemoryOperatorExecutionStore(state),
   };
 };
 

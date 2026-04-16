@@ -1,4 +1,4 @@
-import { createNoopOperatorExecutionPort, type UnitOfWork, type UnitOfWorkPort } from '@ledgermind/application';
+import type { UnitOfWork, UnitOfWorkPort } from '@ledgermind/application';
 
 import type { PgTransactionRetryPolicy } from './transaction';
 
@@ -6,6 +6,7 @@ import { PgArtifactStore } from './pg-artifact-store';
 import { PgContextProjection } from './pg-context-projection';
 import { PgConversationStore } from './pg-conversation-store';
 import { PgLedgerStore } from './pg-ledger-store';
+import { PgOperatorExecutionStore } from './pg-operator-execution-store';
 import { PgSummaryDag } from './pg-summary-dag';
 import type { Pool } from 'pg';
 
@@ -19,7 +20,7 @@ const createUnitOfWork = (executor: PgExecutor): UnitOfWork => {
     dag: new PgSummaryDag(executor),
     artifacts: new PgArtifactStore(executor),
     conversations: new PgConversationStore(executor),
-    operators: createNoopOperatorExecutionPort(),
+    operators: new PgOperatorExecutionStore(executor),
   };
 };
 

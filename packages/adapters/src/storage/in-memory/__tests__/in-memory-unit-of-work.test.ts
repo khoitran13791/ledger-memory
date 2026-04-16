@@ -90,7 +90,8 @@ describe('InMemoryUnitOfWork', () => {
     expect(state.contextItemsByConversation.get(conversationId)).toHaveLength(1);
     expect(state.contextVersionsByConversation.get(conversationId)).toBe(1);
     expect(state.summaryNodeIdsByConversation.get(conversationId)).toHaveLength(1);
-  });
+    expect(await uow.execute(async (tx) => tx.operators.listTasksForRun('missing-run'))).toEqual([]);
+    });
 
   it('rolls back all mutations when callback throws', async () => {
     const state = createInMemoryPersistenceState();

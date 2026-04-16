@@ -14,6 +14,7 @@ import {
   InMemoryContextProjection,
   InMemoryConversationStore,
   InMemoryLedgerStore,
+  InMemoryOperatorExecutionStore,
   InMemorySummaryDag,
   InMemoryUnitOfWork,
 } from '@ledgermind/adapters';
@@ -45,6 +46,7 @@ const createInMemoryAdapter = (): ConformanceAdapterDefinition => {
       const dag = new InMemorySummaryDag(state);
       const artifacts = new InMemoryArtifactStore(state);
       const conversations = new InMemoryConversationStore(state);
+      const operators = new InMemoryOperatorExecutionStore(state);
 
       const conversation = await conversations.create(createConversationCfg('conformance-in-memory'));
 
@@ -56,6 +58,7 @@ const createInMemoryAdapter = (): ConformanceAdapterDefinition => {
         dag,
         artifacts,
         conversations,
+        operators,
         corruption: {
           canInjectOrphanSummaryMessageEdge: false,
           async injectOrphanSummaryMessageEdge() {
@@ -90,6 +93,7 @@ const createPostgresAdapter = (): ConformanceAdapterDefinition => {
         dag: harness.dag,
         artifacts: harness.artifacts,
         conversations: harness.conversations,
+        operators: harness.operators,
         corruption: {
           canInjectOrphanSummaryMessageEdge: true,
           async injectOrphanSummaryMessageEdge(input: {

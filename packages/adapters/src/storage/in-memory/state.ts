@@ -1,3 +1,8 @@
+import type {
+  OperatorFailureMetadata,
+  StoredOperatorRun,
+  StoredOperatorTask,
+} from '@ledgermind/application';
 import {
   createContextItem,
   createContextVersion,
@@ -11,11 +16,17 @@ import {
   type LedgerEvent,
   type SummaryNode,
   type SummaryNodeId,
+  type Timestamp,
 } from '@ledgermind/domain';
 
 export interface StoredArtifactRecord {
   readonly artifact: Artifact;
   readonly content: string | Uint8Array | null;
+}
+
+export interface StoredOperatorTaskRecord extends StoredOperatorTask {
+  readonly output?: unknown;
+  readonly lastFailureAt?: Timestamp;
 }
 
 export interface InMemoryPersistenceState {
@@ -30,6 +41,11 @@ export interface InMemoryPersistenceState {
   readonly leafMessageEdgesBySummary: Map<SummaryNodeId, EventId[]>;
   readonly condensedParentEdgesBySummary: Map<SummaryNodeId, SummaryNodeId[]>;
   readonly artifactsById: Map<ArtifactId, StoredArtifactRecord>;
+  readonly operatorRunsById: Map<string, StoredOperatorRun>;
+  readonly operatorTasksById: Map<string, StoredOperatorTaskRecord>;
+  readonly operatorTaskIdsByRun: Map<string, string[]>;
+  readonly operatorRunIdByConversationAndKey: Map<string, string>;
+  readonly operatorRunOrdinalsByConversation: Map<ConversationId, number>;
 }
 
 const cloneContextItemRef = (item: ContextItem): ContextItem['ref'] => {
@@ -68,6 +84,64 @@ export const cloneArtifactContent = (
   return new Uint8Array(content);
 };
 
+const cloneOperatorFailureMetadata = (failure: OperatorFailureMetadata): OperatorFailureMetadata => {
+  return {
+    code: failure.code,
+    message: failure.message,
+    retryable: failure.retryable,
+    ...(failure.details === undefined ? {} : { details: { ...failure.details } }),
+  };
+};
+
+const cloneStoredOperatorRun = (run: StoredOperatorRun): StoredOperatorRun => {
+  const cloned: StoredOperatorRun = {
+    ...run,
+    outputSchema: { ...run.outputSchema },
+    retryPolicy: { ...run.retryPolicy },
+    ...(run.delegatedScope === undefined
+      ? {}
+      : {
+          delegatedScope: {
+            ...(run.delegatedScope.messageIds === undefined
+              ? {}
+              : { messageIds: [...run.delegatedScope.messageIds] }),
+            ...(run.delegatedScope.summaryIds === undefined
+              ? {}
+              : { summaryIds: [...run.delegatedScope.summaryIds] }),
+            ...(run.delegatedScope.artifactIds === undefined
+              ? {}
+              : { artifactIds: [...run.delegatedScope.artifactIds] }),
+            ...(run.delegatedScope.note === undefined ? {} : { note: run.delegatedScope.note }),
+          },
+        }),
+    ...(run.keptWork === undefined ? {} : { keptWork: { ...run.keptWork } }),
+  };
+
+  if (run.terminalFailureSummary !== undefined) {
+    return {
+      ...cloned,
+      terminalFailureSummary: cloneOperatorFailureMetadata(run.terminalFailureSummary),
+    };
+  }
+
+  return cloned;
+};
+
+const cloneStoredOperatorTask = (task: StoredOperatorTaskRecord): StoredOperatorTaskRecord => {
+  const cloned: StoredOperatorTaskRecord = {
+    ...task,
+  };
+
+  if (task.terminalFailure !== undefined) {
+    return {
+      ...cloned,
+      terminalFailure: cloneOperatorFailureMetadata(task.terminalFailure),
+    };
+  }
+
+  return cloned;
+};
+
 export const createInMemoryPersistenceState = (): InMemoryPersistenceState => {
   return {
     conversations: new Map(),
@@ -81,6 +155,11 @@ export const createInMemoryPersistenceState = (): InMemoryPersistenceState => {
     leafMessageEdgesBySummary: new Map(),
     condensedParentEdgesBySummary: new Map(),
     artifactsById: new Map(),
+    operatorRunsById: new Map(),
+    operatorTasksById: new Map(),
+    operatorTaskIdsByRun: new Map(),
+    operatorRunIdByConversationAndKey: new Map(),
+    operatorRunOrdinalsByConversation: new Map(),
   };
 };
 
@@ -132,6 +211,17 @@ export const cloneInMemoryPersistenceState = (
         },
       ]),
     ),
+    operatorRunsById: new Map(
+      [...state.operatorRunsById.entries()].map(([runId, run]) => [runId, cloneStoredOperatorRun(run)]),
+    ),
+    operatorTasksById: new Map(
+      [...state.operatorTasksById.entries()].map(([taskId, task]) => [taskId, cloneStoredOperatorTask(task)]),
+    ),
+    operatorTaskIdsByRun: new Map(
+      [...state.operatorTaskIdsByRun.entries()].map(([runId, taskIds]) => [runId, [...taskIds]]),
+    ),
+    operatorRunIdByConversationAndKey: new Map(state.operatorRunIdByConversationAndKey),
+    operatorRunOrdinalsByConversation: new Map(state.operatorRunOrdinalsByConversation),
   };
 };
 
@@ -195,6 +285,31 @@ export const applyInMemoryPersistenceState = (
       artifact: record.artifact,
       content: cloneArtifactContent(record.content),
     });
+  }
+
+  target.operatorRunsById.clear();
+  for (const [runId, run] of source.operatorRunsById.entries()) {
+    target.operatorRunsById.set(runId, cloneStoredOperatorRun(run));
+  }
+
+  target.operatorTasksById.clear();
+  for (const [taskId, task] of source.operatorTasksById.entries()) {
+    target.operatorTasksById.set(taskId, cloneStoredOperatorTask(task));
+  }
+
+  target.operatorTaskIdsByRun.clear();
+  for (const [runId, taskIds] of source.operatorTaskIdsByRun.entries()) {
+    target.operatorTaskIdsByRun.set(runId, [...taskIds]);
+  }
+
+  target.operatorRunIdByConversationAndKey.clear();
+  for (const [lookupKey, runId] of source.operatorRunIdByConversationAndKey.entries()) {
+    target.operatorRunIdByConversationAndKey.set(lookupKey, runId);
+  }
+
+  target.operatorRunOrdinalsByConversation.clear();
+  for (const [conversationId, ordinal] of source.operatorRunOrdinalsByConversation.entries()) {
+    target.operatorRunOrdinalsByConversation.set(conversationId, ordinal);
   }
 };
 

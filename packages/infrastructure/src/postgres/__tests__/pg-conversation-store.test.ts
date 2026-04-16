@@ -61,11 +61,13 @@ describe('PgConversationStore', () => {
               'context_items',
               'context_versions',
               'artifacts',
+              'operator_runs',
+              'operator_tasks',
             ],
           ],
         );
 
-        expect(tableResult.rows[0]?.count).toBe('8');
+        expect(tableResult.rows[0]?.count).toBe('10');
       });
     } finally {
       await harness.destroy();
