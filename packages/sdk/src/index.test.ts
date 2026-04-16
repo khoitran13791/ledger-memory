@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { ConversationNotFoundError, TokenizerConfigurationError } from '@ledgermind/application';
+import type { OperatorResultEntry, OperatorRunStatus } from '@ledgermind/application';
 import { InMemoryConversationStore, SimpleTokenizerAdapter, TiktokenTokenizerAdapter } from '@ledgermind/adapters';
 import {
   createCompactionThresholds,
@@ -61,6 +62,9 @@ const expectedEngineMethods = [
   'expand',
   'storeArtifact',
   'exploreArtifact',
+  'llmMap',
+  'agenticMap',
+  'getOperatorRun',
 ] as const;
 
 const expectStableEngineContract = (engine: Record<string, unknown>) => {
@@ -275,6 +279,18 @@ describe('createMemoryEngine initialization validation', () => {
 });
 
 describe('SDK presets', () => {
+  it('re-exports operator public contract types from application', () => {
+    const runStatus: OperatorRunStatus = 'pending';
+    const resultEntry: OperatorResultEntry = {
+      itemIndex: 0,
+      status: 'succeeded',
+      output: { ok: true },
+    };
+
+    expect(runStatus).toBe('pending');
+    expect(resultEntry.status).toBe('succeeded');
+  });
+
   it('exports generic and named preset constructors from SDK module surface', () => {
     expect(createMemoryEngine).toBeTypeOf('function');
     expect(createInMemoryMemoryEngine).toBeTypeOf('function');

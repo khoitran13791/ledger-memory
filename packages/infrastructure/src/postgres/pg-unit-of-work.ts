@@ -1,4 +1,4 @@
-import type { UnitOfWork, UnitOfWorkPort } from '@ledgermind/application';
+import { createNoopOperatorExecutionPort, type UnitOfWork, type UnitOfWorkPort } from '@ledgermind/application';
 
 import type { PgTransactionRetryPolicy } from './transaction';
 
@@ -19,6 +19,7 @@ const createUnitOfWork = (executor: PgExecutor): UnitOfWork => {
     dag: new PgSummaryDag(executor),
     artifacts: new PgArtifactStore(executor),
     conversations: new PgConversationStore(executor),
+    operators: createNoopOperatorExecutionPort(),
   };
 };
 

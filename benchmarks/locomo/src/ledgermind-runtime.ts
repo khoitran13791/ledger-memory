@@ -757,6 +757,15 @@ const createEngine = (input: {
     expand: (input) => expandUseCase.execute(input),
     storeArtifact: (input) => storeArtifactUseCase.execute(input),
     exploreArtifact: (input) => exploreArtifactUseCase.execute(input),
+    llmMap: async () => {
+      throw new Error('llmMap is not supported in the LoCoMo runtime yet.');
+    },
+    agenticMap: async () => {
+      throw new Error('agenticMap is not supported in the LoCoMo runtime yet.');
+    },
+    getOperatorRun: async () => {
+      throw new Error('getOperatorRun is not supported in the LoCoMo runtime yet.');
+    },
   };
 };
 
