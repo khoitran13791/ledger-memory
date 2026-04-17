@@ -13,6 +13,8 @@
     "test": "turbo run test",
     "mcp:dev": "pnpm --filter @ledgermind/mcp-server dev",
     "mcp:smoke": "pnpm --filter @ledgermind/mcp-server smoke",
+    "worker:operator": "pnpm --filter @ledgermind/operator-worker worker",
+    "worker:operator:test": "pnpm --filter @ledgermind/operator-worker test",
     "claude:hook:precompact:smoke": "pnpm --filter @ledgermind/claude-code smoke:precompact",
     "claude:hook:stop:smoke": "pnpm --filter @ledgermind/claude-code smoke:stop",
     "benchmark:longmemeval": "pnpm --filter @ledgermind/benchmark-longmemeval benchmark",
