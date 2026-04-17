@@ -16,6 +16,7 @@ export default defineConfig({
       '@ledgermind/infrastructure': path.resolve(__dirname, '../packages/infrastructure/src/index.ts'),
       '@ledgermind/sdk': path.resolve(__dirname, '../packages/sdk/src/index.ts'),
       '@ledgermind/benchmark-locomo': path.resolve(__dirname, '../benchmarks/locomo/src/index.ts'),
+      '@ledgermind/benchmark-locomo/*': path.resolve(__dirname, '../benchmarks/locomo/src/*'),
     },
   },
 });

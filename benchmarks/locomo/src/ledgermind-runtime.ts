@@ -744,6 +744,7 @@ const createEngine = (input: {
 
   const expandUseCase = new ExpandUseCase({
     authorization: new SubAgentAuthorizationAdapter(),
+    conversations: deps.conversations,
     summaryDag: deps.summaryDag,
   });
 

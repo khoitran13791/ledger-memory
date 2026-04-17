@@ -26,7 +26,7 @@ import type {
 import type { UnitOfWorkPort } from '../ports/driven/persistence/unit-of-work.port';
 import type { NewLedgerEvent } from '../ports/driving/memory-engine.port';
 import type { OperatorFailureMetadata } from '../ports/driving/operator-execution.port';
-import { ConversationNotFoundError } from '../errors/application-errors';
+import { ConversationNotFoundError, OperatorFinalizationError } from '../errors/application-errors';
 import { createOperatorConfig, type OperatorConfig } from './operators/shared/operator-config';
 import { loadOperatorDataset } from './operators/shared/input-dataset';
 
@@ -136,6 +136,16 @@ export class ExecuteOperatorTaskUseCase {
     this.config = createOperatorConfig(deps.config);
   }
 
+  private async finalizeRunIfReady(runId: string): Promise<void> {
+    try {
+      await this.deps.finalizeOperatorRun.execute({ runId });
+    } catch (error) {
+      if (!(error instanceof OperatorFinalizationError)) {
+        throw error;
+      }
+    }
+  }
+
   async execute(): Promise<{ readonly taskId: string; readonly runId: string; readonly status: StoredOperatorTask['status'] } | null> {
     const claimedTask = await this.deps.operatorExecution.claimTaskLease({
       workerId: this.deps.workerId,
@@ -192,7 +202,7 @@ export class ExecuteOperatorTaskUseCase {
         output: result.output,
         completedAt: this.deps.clock.now(),
       });
-      await this.deps.finalizeOperatorRun.execute({ runId: claimedTask.runId });
+      await this.finalizeRunIfReady(claimedTask.runId);
       return {
         taskId: claimedTask.taskId,
         runId: claimedTask.runId,
@@ -245,7 +255,7 @@ export class ExecuteOperatorTaskUseCase {
         },
         completedAt: this.deps.clock.now(),
       });
-      await this.deps.finalizeOperatorRun.execute({ runId: claimedTask.runId });
+      await this.finalizeRunIfReady(claimedTask.runId);
       return {
         taskId: claimedTask.taskId,
         runId: claimedTask.runId,
@@ -258,7 +268,7 @@ export class ExecuteOperatorTaskUseCase {
       output: result.output,
       completedAt: this.deps.clock.now(),
     });
-    await this.deps.finalizeOperatorRun.execute({ runId: claimedTask.runId });
+    await this.finalizeRunIfReady(claimedTask.runId);
     return {
       taskId: claimedTask.taskId,
       runId: claimedTask.runId,
@@ -286,7 +296,7 @@ export class ExecuteOperatorTaskUseCase {
       }
 
       const childConversation = await uow.conversations.create(parentConversation.config, run.conversationId);
-      return this.deps.operatorExecution.assignTaskChildConversation({
+      return uow.operators.assignTaskChildConversation({
         taskId: claimedTask.taskId,
         childConversationId: childConversation.id,
       });
@@ -400,7 +410,7 @@ export class ExecuteOperatorTaskUseCase {
       failure: toFailureMetadata(result, claimedTask.attemptCount, false),
       completedAt: this.deps.clock.now(),
     });
-    await this.deps.finalizeOperatorRun.execute({ runId: claimedTask.runId });
+    await this.finalizeRunIfReady(claimedTask.runId);
     return {
       taskId: claimedTask.taskId,
       runId: claimedTask.runId,

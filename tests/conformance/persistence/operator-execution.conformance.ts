@@ -30,8 +30,10 @@ const createRunInput = (conversationId: ConversationId, overrides: Partial<{
       maxRetries: 2,
       retryBackoffSeconds: 30,
     },
-    idempotencyKey: overrides.idempotencyKey,
-    normalizedInputDigest: overrides.normalizedInputDigest,
+    ...(overrides.idempotencyKey === undefined ? {} : { idempotencyKey: overrides.idempotencyKey }),
+    ...(overrides.normalizedInputDigest === undefined
+      ? {}
+      : { normalizedInputDigest: overrides.normalizedInputDigest }),
     items,
   } as const;
 };
@@ -184,6 +186,9 @@ export const registerOperatorExecutionConformance = (adapter: ConformanceAdapter
           }),
         );
         const [task] = await runtime.operators.listTasksForRun(run.runId);
+        if (task === undefined) {
+          throw new Error('Expected operator task for child assignment test.');
+        }
 
         const firstAssignment = await runtime.operators.assignTaskChildConversation({
           taskId: task.taskId,

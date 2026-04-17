@@ -117,6 +117,7 @@ const selectTerminalFailureSummary = (entries: readonly OperatorResultEntry[]): 
 
 const createHandleContent = (input: {
   readonly runId: string;
+  readonly operatorKind: 'llmMap' | 'agenticMap';
   readonly outputArtifactId: string;
   readonly status: OperatorRunStatus;
   readonly taskCount: number;
@@ -124,7 +125,7 @@ const createHandleContent = (input: {
 }): string => {
   return JSON.stringify({
     type: 'operator_run_handle',
-    operator: 'llmMap',
+    operator: input.operatorKind,
     runId: input.runId,
     status: input.status,
     outputArtifactId: input.outputArtifactId,
@@ -198,6 +199,7 @@ export class FinalizeOperatorRunUseCase {
       if (stage === 'artifact_written') {
         const handleContent = createHandleContent({
           runId: run.runId,
+          operatorKind: run.operatorKind,
           outputArtifactId,
           status: deriveRunStatus(orderedEntries),
           taskCount: orderedEntries.length,

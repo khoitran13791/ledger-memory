@@ -643,7 +643,14 @@ export class PgOperatorExecutionStore implements OperatorExecutionPort {
              SELECT task.task_id, task.run_id
              FROM operator_tasks AS task
              JOIN operator_runs AS run ON run.run_id = task.run_id
-             WHERE task.status = ANY($1::operator_task_status[])
+             WHERE (
+                 task.status = ANY($1::operator_task_status[])
+                 OR (
+                   task.status = 'running'::operator_task_status
+                   AND task.lease_expires_at IS NOT NULL
+                   AND task.lease_expires_at <= $2
+                 )
+               )
                AND (
                  task.status <> 'retryable_failure'::operator_task_status
                  OR task.next_retry_at IS NULL

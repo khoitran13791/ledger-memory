@@ -257,9 +257,17 @@ export class InMemoryOperatorExecutionStore implements OperatorExecutionPort {
     const allowedStatuses = input.allowedStatuses ?? ['pending', 'retryable_failure'];
     const allTasks = [...this.state.operatorTasksById.values()].sort((left, right) => left.itemIndex - right.itemIndex);
 
-    const selectClaimableTask = (candidates: readonly StoredOperatorTaskRecord[]): StoredOperatorTask | null => {
+    const selectClaimableTask = (
+      candidates: readonly StoredOperatorTaskRecord[],
+      options: { readonly allowExpiredRunning?: boolean } = {},
+    ): StoredOperatorTask | null => {
       for (const task of candidates) {
-        if (!allowedStatuses.includes(task.status as (typeof allowedStatuses)[number])) {
+        const canReclaimExpiredRunning =
+          options.allowExpiredRunning === true &&
+          task.status === 'running' &&
+          task.leaseExpiresAt !== undefined &&
+          task.leaseExpiresAt.getTime() <= nowMs;
+        if (!canReclaimExpiredRunning && !allowedStatuses.includes(task.status as (typeof allowedStatuses)[number])) {
           continue;
         }
 
@@ -307,7 +315,7 @@ export class InMemoryOperatorExecutionStore implements OperatorExecutionPort {
       (task) => task.status === 'running' && task.leaseExpiresAt !== undefined && task.leaseExpiresAt.getTime() <= nowMs,
     );
 
-    return selectClaimableTask(expiredRunningTasks) ?? selectClaimableTask(allTasks);
+    return selectClaimableTask(expiredRunningTasks, { allowExpiredRunning: true }) ?? selectClaimableTask(allTasks);
   }
 
   async recordTaskSuccess(input: {

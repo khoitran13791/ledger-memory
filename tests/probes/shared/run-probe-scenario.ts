@@ -132,6 +132,7 @@ const createEngine = (input: CreateUseCasesInput): MemoryEngine => {
     authorization: {
       canExpand: () => true,
     },
+    conversations: input.conversations,
     summaryDag: input.summaryDag,
   });
 
