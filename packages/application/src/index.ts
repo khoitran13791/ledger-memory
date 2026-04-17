@@ -134,7 +134,14 @@ export type { ExplorerRegistryPort } from './ports/driven/explorer/explorer-regi
 // eslint-disable-next-line no-restricted-imports -- local application contract path, not Node.js crypto module
 export type { HashPort } from './ports/driven/crypto/hash.port';
 export type { EventPublisherPort } from './ports/driven/events/event-publisher.port';
-export type { Job, JobId, JobPriority, JobQueuePort } from './ports/driven/jobs/job-queue.port';
+export type {
+  Job,
+  JobHandler,
+  JobId,
+  JobPriority,
+  JobQueuePort,
+  JobSubscription,
+} from './ports/driven/jobs/job-queue.port';
 
 export {
   ApplicationError,

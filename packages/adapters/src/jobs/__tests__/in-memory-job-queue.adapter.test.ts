@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { InMemoryJobQueueAdapter } from '@ledgermind/adapters';
-import type { JobId } from '@ledgermind/application';
+import type { Job, JobId } from '@ledgermind/application';
+
+import { InMemoryJobQueueAdapter } from '../in-memory-job-queue.adapter';
 
 describe('InMemoryJobQueueAdapter', () => {
   it('enqueues jobs in order with deterministic IDs', async () => {
@@ -26,37 +27,81 @@ describe('InMemoryJobQueueAdapter', () => {
     expect(queue.enqueuedJobs[1]?.job.priority).toBe('high');
   });
 
-  it('invokes completion callbacks when completed manually', async () => {
+  it('delivers enqueued jobs to subscribers in order', async () => {
     const queue = new InMemoryJobQueueAdapter();
-    const callback = vi.fn<(result: unknown) => void>();
+    const received: Job[] = [];
 
-    const jobId = await queue.enqueue({
-      type: 'run-compaction',
-      payload: { conversationId: 'conv_3', trigger: 'soft' },
+    await queue.subscribe('operator-run-created', (job) => {
+      received.push(job);
     });
 
-    queue.onComplete(jobId, callback);
-    queue.complete(jobId, { ok: true });
+    await queue.enqueue({
+      type: 'operator-run-created',
+      payload: { runId: 'run_1', conversationId: 'conv_1' },
+      priority: 'normal',
+    });
+    await queue.enqueue({
+      type: 'operator-run-created',
+      payload: { runId: 'run_2', conversationId: 'conv_2' },
+      priority: 'high',
+    });
 
-    expect(callback).toHaveBeenCalledTimes(1);
-    expect(callback).toHaveBeenCalledWith({ ok: true });
+    expect(received).toEqual([
+      {
+        type: 'operator-run-created',
+        payload: { runId: 'run_1', conversationId: 'conv_1' },
+        priority: 'normal',
+      },
+      {
+        type: 'operator-run-created',
+        payload: { runId: 'run_2', conversationId: 'conv_2' },
+        priority: 'high',
+      },
+    ]);
   });
 
-  it('supports multiple callbacks per job', async () => {
+  it('delivers the same wake-up hint to duplicate subscribers', async () => {
     const queue = new InMemoryJobQueueAdapter();
-    const callbackA = vi.fn<(result: unknown) => void>();
-    const callbackB = vi.fn<(result: unknown) => void>();
+    const handlerA = vi.fn<(job: Job) => void>();
+    const handlerB = vi.fn<(job: Job) => void>();
+    const wakeHint = {
+      type: 'operator-run-created',
+      payload: { runId: 'run_3', conversationId: 'conv_3' },
+      priority: 'normal',
+    } satisfies Job;
 
-    const jobId = await queue.enqueue({
-      type: 'run-compaction',
-      payload: { conversationId: 'conv_4', trigger: 'soft' },
+    await queue.subscribe('operator-run-created', handlerA);
+    await queue.subscribe('operator-run-created', handlerB);
+    await queue.enqueue(wakeHint);
+
+    expect(handlerA).toHaveBeenCalledTimes(1);
+    expect(handlerB).toHaveBeenCalledTimes(1);
+    expect(handlerA).toHaveBeenCalledWith(wakeHint);
+    expect(handlerB).toHaveBeenCalledWith(wakeHint);
+  });
+
+  it('stops delivering future jobs after unsubscribe', async () => {
+    const queue = new InMemoryJobQueueAdapter();
+    const handler = vi.fn<(job: Job) => void>();
+
+    const subscription = await queue.subscribe('operator-run-created', handler);
+    await queue.enqueue({
+      type: 'operator-run-created',
+      payload: { runId: 'run_4', conversationId: 'conv_4' },
+      priority: 'normal',
+    });
+    await subscription.close();
+    await queue.enqueue({
+      type: 'operator-run-created',
+      payload: { runId: 'run_5', conversationId: 'conv_5' },
+      priority: 'normal',
     });
 
-    queue.onComplete(jobId, callbackA);
-    queue.onComplete(jobId, callbackB);
-    queue.complete(jobId, 'done');
-
-    expect(callbackA).toHaveBeenCalledWith('done');
-    expect(callbackB).toHaveBeenCalledWith('done');
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith({
+      type: 'operator-run-created',
+      payload: { runId: 'run_4', conversationId: 'conv_4' },
+      priority: 'normal',
+    });
   });
 });

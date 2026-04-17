@@ -1,10 +1,12 @@
 import type { ExpandInput, ExpandOutput } from '../ports/driving/memory-engine.port';
 import type { AuthorizationPort } from '../ports/driven/auth/authorization.port';
+import type { ConversationPort } from '../ports/driven/persistence/conversation.port';
 import type { SummaryDagPort } from '../ports/driven/persistence/summary-dag.port';
 import { InvalidReferenceError, UnauthorizedExpandError } from '../errors/application-errors';
 
 export interface ExpandUseCaseDeps {
   readonly authorization: AuthorizationPort;
+  readonly conversations: ConversationPort;
   readonly summaryDag: SummaryDagPort;
 }
 
@@ -13,6 +15,15 @@ export class ExpandUseCase {
 
   async execute(input: ExpandInput): Promise<ExpandOutput> {
     if (!this.deps.authorization.canExpand(input.callerContext)) {
+      throw new UnauthorizedExpandError(input.callerContext.conversationId, input.summaryId);
+    }
+
+    const callerConversation = await this.deps.conversations.get(input.callerContext.conversationId);
+    if (
+      callerConversation === null ||
+      callerConversation.parentId === null ||
+      callerConversation.parentId !== input.callerContext.parentConversationId
+    ) {
       throw new UnauthorizedExpandError(input.callerContext.conversationId, input.summaryId);
     }
 

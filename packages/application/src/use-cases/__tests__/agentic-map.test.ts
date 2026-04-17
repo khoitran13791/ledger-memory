@@ -51,8 +51,12 @@ class RecordingJobQueue implements JobQueuePort {
     return `job_${this.enqueued.length}` as JobId;
   }
 
-  onComplete(): void {
-    return;
+  async subscribe() {
+    return {
+      close(): void {
+        return;
+      },
+    };
   }
 }
 
