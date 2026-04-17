@@ -203,6 +203,15 @@ export {
   type GetOperatorRunUseCaseDeps,
 } from './use-cases/get-operator-run';
 export {
+  ExecuteOperatorTaskUseCase,
+  type ExecuteOperatorTaskUseCaseDeps,
+} from './use-cases/execute-operator-task';
+export {
+  FinalizeOperatorRunUseCase,
+  type FinalizeOperatorRunInput,
+  type FinalizeOperatorRunUseCaseDeps,
+} from './use-cases/finalize-operator-run';
+export {
   InvalidOperatorConfigError,
   createOperatorConfig,
   type OperatorConfig,

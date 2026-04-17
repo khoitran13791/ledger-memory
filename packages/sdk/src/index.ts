@@ -10,19 +10,25 @@ import type {
   ClockPort,
   ContextProjectionPort,
   ConversationPort,
+  DelegationScopeResolverPort,
   DescribeInput,
   ExpandInput,
   ExploreArtifactInput,
   FileReaderPort,
   GetOperatorRunInput,
   GrepInput,
+  JobQueuePort,
   LedgerReadPort,
   LLMMapInput,
   MaterializeContextInput,
   MemoryEngine,
+  OperatorConfig,
+  OperatorExecutionPort,
   RunCompactionConfig,
   RunCompactionInput,
   StoreArtifactInput,
+  StructuredGenerationPort,
+  SubAgentExecutorPort,
   SummaryDagPort,
   TokenizerPort,
   UnitOfWorkPort,
@@ -32,9 +38,13 @@ import {
   AppendLedgerEventsUseCase,
   CheckIntegrityUseCase,
   DescribeUseCase,
+  ExecuteOperatorTaskUseCase,
   ExpandUseCase,
   ExploreArtifactUseCase,
+  FinalizeOperatorRunUseCase,
+  GetOperatorRunUseCase,
   GrepUseCase,
+  LLMMapUseCase,
   MaterializeContextUseCase,
   RunCompactionUseCase,
   StoreArtifactUseCase,
@@ -49,6 +59,7 @@ import {
   InMemoryContextProjection,
   InMemoryConversationStore,
   InMemoryLedgerStore,
+  InMemoryOperatorExecutionStore,
   InMemorySummaryDag,
   InMemoryUnitOfWork,
   SimpleTokenizerAdapter,
@@ -64,6 +75,7 @@ import {
   PgContextProjection,
   PgConversationStore,
   PgLedgerStore,
+  PgOperatorExecutionStore,
   PgSummaryDag,
   asPgExecutor,
 } from '@ledgermind/infrastructure';
@@ -227,6 +239,7 @@ interface MemoryEnginePersistenceDeps {
   readonly summaryDag: SummaryDagPort;
   readonly artifactStore: ArtifactStorePort;
   readonly conversations: ConversationPort;
+  readonly operatorExecution: OperatorExecutionPort;
   readonly fileReader: FileReaderPort;
 }
 
@@ -299,6 +312,15 @@ export type MemoryEngineTokenizerConfig =
       readonly modelFamily?: 'gpt-4o-mini';
     };
 
+export interface MemoryEngineOperatorConfig {
+  readonly structuredGeneration?: StructuredGenerationPort;
+  readonly subAgentExecutor?: SubAgentExecutorPort;
+  readonly delegationScopeResolver?: DelegationScopeResolverPort;
+  readonly jobQueue?: JobQueuePort;
+  readonly executionMode?: 'durable' | 'inline';
+  readonly config?: Partial<OperatorConfig>;
+}
+
 export interface MemoryEngineConfig {
   readonly storage:
     | { readonly type: 'in-memory' }
@@ -312,6 +334,7 @@ export interface MemoryEngineConfig {
   readonly tokenizer?: MemoryEngineTokenizerConfig;
 
   readonly compaction?: Partial<RunCompactionConfig>;
+  readonly operators?: MemoryEngineOperatorConfig;
 }
 
 export type InMemoryPresetConfig = Omit<MemoryEngineConfig, 'storage'>;
@@ -363,6 +386,7 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
             summaryDag: new InMemorySummaryDag(state),
             artifactStore: new InMemoryArtifactStore(state),
             conversations: new InMemoryConversationStore(state),
+            operatorExecution: new InMemoryOperatorExecutionStore(state),
             fileReader: new NodeFileReader(),
           };
         })()
@@ -377,6 +401,7 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
             summaryDag: new PgSummaryDag(executor),
             artifactStore: new PgArtifactStore(executor),
             conversations: new PgConversationStore(executor),
+            operatorExecution: new PgOperatorExecutionStore(executor),
             fileReader: new NodeFileReader(),
           };
         })();
@@ -436,6 +461,43 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
     summaryDag: persistenceDeps.summaryDag,
   });
 
+  const finalizeOperatorRunUseCase = new FinalizeOperatorRunUseCase({
+    unitOfWork: persistenceDeps.unitOfWork,
+    idService,
+    hashPort,
+    tokenizer,
+    clock,
+  });
+
+  const llmMapUseCase = new LLMMapUseCase({
+    unitOfWork: persistenceDeps.unitOfWork,
+    idService,
+    hashPort,
+    tokenizer,
+    clock,
+    ...(config.operators?.jobQueue === undefined ? {} : { jobQueue: config.operators.jobQueue }),
+    ...(config.operators?.config === undefined ? {} : { config: config.operators.config }),
+  });
+
+  const getOperatorRunUseCase = new GetOperatorRunUseCase({
+    operatorExecution: persistenceDeps.operatorExecution,
+    artifactStore: persistenceDeps.artifactStore,
+    ...(config.operators?.config === undefined ? {} : { config: config.operators.config }),
+  });
+
+  const executeOperatorTaskUseCase =
+    config.operators?.structuredGeneration === undefined
+      ? undefined
+      : new ExecuteOperatorTaskUseCase({
+          operatorExecution: persistenceDeps.operatorExecution,
+          artifactStore: persistenceDeps.artifactStore,
+          structuredGeneration: config.operators.structuredGeneration,
+          finalizeOperatorRun: finalizeOperatorRunUseCase,
+          clock,
+          workerId: 'sdk-inline-worker',
+          ...(config.operators?.config === undefined ? {} : { config: config.operators.config }),
+        });
+
   const storeArtifactUseCase = new StoreArtifactUseCase({
     unitOfWork: persistenceDeps.unitOfWork,
     idService,
@@ -460,17 +522,32 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
     storeArtifact: (input: StoreArtifactInput) => storeArtifactUseCase.execute(input),
     exploreArtifact: (input: ExploreArtifactInput) => exploreArtifactUseCase.execute(input),
     llmMap: async (input: LLMMapInput) => {
-      void input;
-      throw new Error('llmMap is not wired yet.');
+      const submitted = await llmMapUseCase.execute(input);
+      if (config.operators?.executionMode !== 'inline') {
+        return submitted;
+      }
+      if (executeOperatorTaskUseCase === undefined) {
+        throw new Error('Inline operator execution requires operators.structuredGeneration.');
+      }
+
+      while (true) {
+        const executed = await executeOperatorTaskUseCase.execute();
+        if (executed === null) {
+          break;
+        }
+      }
+
+      return getOperatorRunUseCase.execute({ runId: submitted.runId }).then((run) => ({
+        runId: run.runId,
+        status: run.status,
+        ...(submitted.inputArtifactId === undefined ? {} : { inputArtifactId: submitted.inputArtifactId }),
+      }));
     },
     agenticMap: async (input: AgenticMapInput) => {
       void input;
-      throw new Error('agenticMap is not wired yet.');
+      throw new Error('agenticMap execution is not wired yet.');
     },
-    getOperatorRun: async (input: GetOperatorRunInput) => {
-      void input;
-      throw new Error('getOperatorRun is not wired yet.');
-    },
+    getOperatorRun: (input: GetOperatorRunInput) => getOperatorRunUseCase.execute(input),
   };
 
   return engine;

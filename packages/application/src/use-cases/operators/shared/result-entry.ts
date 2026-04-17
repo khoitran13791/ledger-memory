@@ -8,9 +8,9 @@ export const createSucceededResultEntry = (itemIndex: number, output: unknown): 
 
 export const createFailedResultEntry = (
   itemIndex: number,
-  failure: OperatorFailureMetadata,
+  error: OperatorFailureMetadata,
 ): OperatorResultEntry => ({
   itemIndex,
   status: 'failed',
-  failure,
+  error,
 });

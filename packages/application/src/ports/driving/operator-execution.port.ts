@@ -93,6 +93,7 @@ export interface OperatorFailureMetadata {
   readonly code: string;
   readonly message: string;
   readonly retryable: boolean;
+  readonly attemptCount?: number;
   readonly details?: Readonly<Record<string, unknown>>;
 }
 
@@ -105,7 +106,7 @@ export type OperatorResultEntry =
   | {
       readonly itemIndex: number;
       readonly status: 'failed';
-      readonly failure: OperatorFailureMetadata;
+      readonly error: OperatorFailureMetadata;
     };
 
 export interface OperatorTaskInspection {

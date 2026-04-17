@@ -5,7 +5,11 @@ import { join } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { ConversationNotFoundError, TokenizerConfigurationError } from '@ledgermind/application';
-import type { OperatorResultEntry, OperatorRunStatus } from '@ledgermind/application';
+import type {
+  OperatorResultEntry,
+  OperatorRunStatus,
+  StructuredGenerationPort,
+} from '@ledgermind/application';
 import { InMemoryConversationStore, SimpleTokenizerAdapter, TiktokenTokenizerAdapter } from '@ledgermind/adapters';
 import {
   createCompactionThresholds,
@@ -289,6 +293,61 @@ describe('SDK presets', () => {
 
     expect(runStatus).toBe('pending');
     expect(resultEntry.status).toBe('succeeded');
+  });
+
+  it('supports durable submit-only llmMap by default and inline execution when structured generation is configured', async () => {
+    const conversation = createExistingConversation();
+    vi.spyOn(InMemoryConversationStore.prototype, 'get').mockResolvedValue(conversation);
+
+    const durableEngine = createInMemoryMemoryEngine();
+    await expect(
+      durableEngine.llmMap({
+        conversationId,
+        prompt: 'Summarize the item.',
+        outputSchema: { type: 'object', properties: { summary: { type: 'string' } } },
+        concurrencyLimit: 1,
+        retryPolicy: { maxRetries: 0, retryBackoffSeconds: 30 },
+        items: [{ text: 'alpha' }],
+      }),
+    ).resolves.toMatchObject({
+      status: 'pending',
+    });
+
+    const structuredGeneration: StructuredGenerationPort = {
+      async generate() {
+        return {
+          status: 'succeeded',
+          output: { summary: 'alpha' },
+        };
+      },
+    };
+
+    const inlineEngine = createInMemoryMemoryEngine({
+      operators: {
+        executionMode: 'inline',
+        structuredGeneration,
+      },
+    });
+
+    const submit = await inlineEngine.llmMap({
+      conversationId,
+      prompt: 'Summarize the item.',
+      outputSchema: { type: 'object', properties: { summary: { type: 'string' } } },
+      concurrencyLimit: 1,
+      retryPolicy: { maxRetries: 0, retryBackoffSeconds: 30 },
+      items: [{ text: 'alpha' }],
+    });
+    const inspected = await inlineEngine.getOperatorRun({ runId: submit.runId });
+
+    expect(submit.status).toBe('completed');
+    expect(inspected.status).toBe('completed');
+    expect(inspected.inlineResults).toEqual([
+      {
+        itemIndex: 0,
+        status: 'succeeded',
+        output: { summary: 'alpha' },
+      },
+    ]);
   });
 
   it('exports generic and named preset constructors from SDK module surface', () => {

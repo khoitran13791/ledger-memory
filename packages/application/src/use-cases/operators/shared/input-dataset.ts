@@ -1,4 +1,4 @@
-import { serializeCanonicalJson, type ArtifactId } from '@ledgermind/domain';
+import type { ArtifactId } from '@ledgermind/domain';
 
 import {
   ArtifactContentUnavailableError,
@@ -22,17 +22,15 @@ export interface LoadedOperatorDataset {
 }
 
 const canonicalizeOperatorItems = (items: readonly unknown[]): LoadedOperatorDataset => {
-  const canonicalDatasetJson = serializeCanonicalJson({ items });
-  const parsed = JSON.parse(canonicalDatasetJson) as {
-    readonly items?: readonly unknown[];
-  };
+  const canonicalDatasetJson = JSON.stringify(items);
+  const parsed = JSON.parse(canonicalDatasetJson) as unknown;
 
-  if (!Array.isArray(parsed.items)) {
+  if (!Array.isArray(parsed)) {
     throw new OperatorInputValidationError('Operator dataset items must be a JSON array.');
   }
 
   return {
-    items: parsed.items,
+    items: parsed,
     canonicalDatasetJson,
   };
 };
@@ -58,7 +56,7 @@ export const loadOperatorDataset = async (
   input: OperatorDatasetSource,
   deps: {
     readonly artifactStore: ArtifactStorePort;
-    readonly conversations: ConversationPort;
+    readonly conversations?: ConversationPort;
   },
   options?: {
     readonly maxInlineOperatorInputBytes?: number;
