@@ -199,6 +199,10 @@ export {
   type LLMMapUseCaseDeps,
 } from './use-cases/llm-map';
 export {
+  AgenticMapUseCase,
+  type AgenticMapUseCaseDeps,
+} from './use-cases/agentic-map';
+export {
   GetOperatorRunUseCase,
   type GetOperatorRunUseCaseDeps,
 } from './use-cases/get-operator-run';
