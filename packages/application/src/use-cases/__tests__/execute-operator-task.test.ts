@@ -7,6 +7,7 @@ import {
   createConversation,
   createConversationConfig,
   createConversationId,
+  createIdService,
   createSequenceNumber,
   createTimestamp,
   createTokenCount,
@@ -36,9 +37,14 @@ import type {
 } from '../../ports/driven/persistence/operator-execution.port';
 import type { IntegrityReport, SummaryDagPort } from '../../ports/driven/persistence/summary-dag.port';
 import type { UnitOfWork, UnitOfWorkPort } from '../../ports/driven/persistence/unit-of-work.port';
-import type { LLMMapInput } from '../../ports/driving/operator-execution.port';
+import type { AgenticMapInput, LLMMapInput } from '../../ports/driving/operator-execution.port';
+import { AgenticMapUseCase } from '../agentic-map';
 import { LLMMapUseCase } from '../llm-map';
 import { ExecuteOperatorTaskUseCase } from '../execute-operator-task';
+import {
+  DeterministicDelegationScopeResolverPort,
+  DeterministicSubAgentExecutorPort,
+} from './operator-test-doubles';
 
 const conversationId = createConversationId('conv_execute_operator_task');
 
@@ -77,6 +83,7 @@ class DeterministicHashPort {
 class TestArtifactStore implements ArtifactStorePort {
   readonly storedMetadata = new Map<Artifact['id'], Artifact>();
   readonly storedContents = new Map<Artifact['id'], string | Uint8Array>();
+  readonly storeCalls: Array<{ artifactId: Artifact['id']; content: string | Uint8Array | undefined }> = [];
 
   constructor(entries: readonly { artifact: Artifact; content: string | Uint8Array }[] = []) {
     for (const entry of entries) {
@@ -86,6 +93,7 @@ class TestArtifactStore implements ArtifactStorePort {
   }
 
   async store(artifact: Artifact, content?: string | Uint8Array): Promise<void> {
+    this.storeCalls.push({ artifactId: artifact.id, content });
     this.storedMetadata.set(artifact.id, artifact);
     if (content !== undefined) {
       this.storedContents.set(artifact.id, content);
@@ -106,14 +114,23 @@ class TestArtifactStore implements ArtifactStorePort {
 }
 
 class TestConversationStore implements ConversationPort {
-  constructor(private readonly conversations: readonly Conversation[]) {}
+  readonly createdParentIds: ConversationId[] = [];
+
+  constructor(private readonly conversations: Conversation[]) {}
 
   async create(config: ConversationConfig, parentId?: ConversationId): Promise<Conversation> {
-    return createConversation({
-      id: createConversationId(`conv_created_${parentId ?? 'root'}`),
+    if (parentId !== undefined) {
+      this.createdParentIds.push(parentId);
+    }
+
+    const conversation = createConversation({
+      id: createConversationId(`conv_created_${parentId ?? 'root'}_${this.createdParentIds.length}`),
+      parentId: parentId ?? null,
       config,
       createdAt: createTimestamp(new Date('2026-04-13T00:00:00.000Z')),
     });
+    this.conversations.push(conversation);
+    return conversation;
   }
 
   async get(id: ConversationId): Promise<Conversation | null> {
@@ -125,9 +142,13 @@ class TestConversationStore implements ConversationPort {
   }
 }
 
+type StoredTaskWithOutput = StoredOperatorTask & {
+  readonly output?: unknown;
+};
+
 class TestOperatorExecutionPort implements OperatorExecutionPort {
   readonly runs = new Map<string, StoredOperatorRun>();
-  readonly tasksByRun = new Map<string, StoredOperatorTask[]>();
+  readonly tasksByRun = new Map<string, StoredTaskWithOutput[]>();
   readonly retryableFailures: Array<{
     taskId: string;
     failure: StoredOperatorTask['terminalFailure'];
@@ -135,6 +156,9 @@ class TestOperatorExecutionPort implements OperatorExecutionPort {
   }> = [];
   readonly terminalFailures: Array<{ taskId: string; failure: StoredOperatorTask['terminalFailure'] }> = [];
   readonly successes: Array<{ taskId: string; output: unknown }> = [];
+  readonly assignedChildConversations: Array<{ taskId: string; childConversationId: ConversationId }> = [];
+  readonly bootstrapStartedTaskIds: string[] = [];
+  readonly bootstrapCompletedTaskIds: string[] = [];
   readonly finalizationAttempts: string[] = [];
 
   async createRunWithTasks(input: CreateOperatorRunWithTasksInput): Promise<StoredOperatorRun> {
@@ -147,9 +171,12 @@ class TestOperatorExecutionPort implements OperatorExecutionPort {
       createdAt: now,
       updatedAt: now,
       ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+      ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
       outputSchema: input.outputSchema,
       concurrencyLimit: input.concurrencyLimit,
       retryPolicy: input.retryPolicy,
+      ...(input.delegatedScope === undefined ? {} : { delegatedScope: input.delegatedScope }),
+      ...(input.keptWork === undefined ? {} : { keptWork: input.keptWork }),
       ...(input.inputArtifactId === undefined ? {} : { inputArtifactId: input.inputArtifactId }),
       finalizationStage: input.taskCount === 0 ? 'completed' : 'not_started',
       taskCount: input.taskCount,
@@ -159,7 +186,7 @@ class TestOperatorExecutionPort implements OperatorExecutionPort {
       runningTaskCount: 0,
       pendingTaskCount: input.taskCount,
     };
-    const tasks = input.items.map<StoredOperatorTask>((_, itemIndex) => ({
+    const tasks = input.items.map<StoredTaskWithOutput>((_, itemIndex) => ({
       taskId: `${input.runId}:task:${String(itemIndex).padStart(4, '0')}`,
       runId: input.runId,
       conversationId: input.conversationId,
@@ -190,7 +217,7 @@ class TestOperatorExecutionPort implements OperatorExecutionPort {
   }
 
   async listTasksForRun(runId: string): Promise<readonly StoredOperatorTask[]> {
-    return this.tasksByRun.get(runId) ?? [];
+    return [...(this.tasksByRun.get(runId) ?? [])].sort((left, right) => left.itemIndex - right.itemIndex);
   }
 
   async lookupRunByIdempotencyKey(): Promise<StoredOperatorRun | null> {
@@ -248,6 +275,7 @@ class TestOperatorExecutionPort implements OperatorExecutionPort {
         ...current,
         status: 'succeeded',
         ...(input.resultArtifactId === undefined ? {} : { resultArtifactId: input.resultArtifactId }),
+        output: input.output,
       };
       const run = this.runs.get(runId);
       if (run !== undefined) {
@@ -339,20 +367,45 @@ class TestOperatorExecutionPort implements OperatorExecutionPort {
     }
   }
 
-  async assignTaskChildConversation(): Promise<ConversationId> {
-    throw new Error('assignTaskChildConversation not needed in this test suite');
+  async assignTaskChildConversation(input: {
+    taskId: string;
+    childConversationId: ConversationId;
+  }): Promise<ConversationId> {
+    const task = await this.getTask(input.taskId);
+    if (task === null) {
+      throw new Error(`Unknown operator task: ${input.taskId}`);
+    }
+
+    if (task.childConversationId !== undefined) {
+      return task.childConversationId;
+    }
+
+    this.assignedChildConversations.push(input);
+    this.updateTask(input.taskId, (current) => ({
+      ...current,
+      childConversationId: input.childConversationId,
+    }));
+    return input.childConversationId;
   }
 
-  async getTaskBootstrapState(): Promise<StoredOperatorTask['bootstrapState']> {
-    return 'bootstrap_not_started';
+  async getTaskBootstrapState(taskId: string): Promise<StoredOperatorTask['bootstrapState']> {
+    return (await this.getTask(taskId))?.bootstrapState ?? 'bootstrap_not_started';
   }
 
-  async markBootstrapStarted(): Promise<void> {
-    throw new Error('markBootstrapStarted not needed in this test suite');
+  async markBootstrapStarted(taskId: string): Promise<void> {
+    this.bootstrapStartedTaskIds.push(taskId);
+    this.updateTask(taskId, (current) => ({
+      ...current,
+      bootstrapState: 'bootstrap_in_progress',
+    }));
   }
 
-  async markBootstrapCompleted(): Promise<void> {
-    throw new Error('markBootstrapCompleted not needed in this test suite');
+  async markBootstrapCompleted(taskId: string): Promise<void> {
+    this.bootstrapCompletedTaskIds.push(taskId);
+    this.updateTask(taskId, (current) => ({
+      ...current,
+      bootstrapState: 'bootstrap_completed',
+    }));
   }
 
   async claimRunForFinalizationRetry(): Promise<StoredOperatorRun | null> {
@@ -365,6 +418,28 @@ class TestOperatorExecutionPort implements OperatorExecutionPort {
 
   async finalizeRun(): Promise<StoredOperatorRun> {
     throw new Error('finalizeRun not needed in this test suite');
+  }
+
+  private updateTask(
+    taskId: string,
+    updater: (task: StoredTaskWithOutput) => StoredTaskWithOutput,
+  ): void {
+    for (const [runId, tasks] of this.tasksByRun.entries()) {
+      const index = tasks.findIndex((task) => task.taskId === taskId);
+      if (index === -1) {
+        continue;
+      }
+
+      const current = tasks[index];
+      if (current === undefined) {
+        return;
+      }
+
+      const updatedTasks = [...tasks];
+      updatedTasks[index] = updater(current);
+      this.tasksByRun.set(runId, updatedTasks);
+      return;
+    }
   }
 }
 
@@ -476,7 +551,10 @@ class SequencedStructuredGenerationPort implements StructuredGenerationPort {
   }
 }
 
-const createConversationRecord = (id: ConversationId = conversationId): Conversation => {
+const createConversationRecord = (
+  id: ConversationId = conversationId,
+  parentId: ConversationId | null = null,
+): Conversation => {
   const config = createConversationConfig({
     modelName: 'gpt-4o-mini',
     contextWindow: createTokenCount(8_000),
@@ -485,6 +563,7 @@ const createConversationRecord = (id: ConversationId = conversationId): Conversa
 
   return createConversation({
     id,
+    parentId,
     config,
     createdAt: createTimestamp(new Date('2026-04-13T00:00:00.000Z')),
   });
@@ -546,6 +625,37 @@ const createInput = (overrides: {
   items: overrides.items ?? [{ text: 'alpha' }],
 });
 
+const createAgenticInput = (overrides: {
+  readonly conversationId?: ConversationId;
+  readonly items?: AgenticMapInput['items'];
+  readonly retryPolicy?: AgenticMapInput['retryPolicy'];
+  readonly outputSchema?: AgenticMapInput['outputSchema'];
+} = {}): AgenticMapInput => ({
+  conversationId: overrides.conversationId ?? conversationId,
+  taskPrompt: 'Extract one action item.',
+  delegatedScope: {
+    note: 'Only use the selected references.',
+    messageIds: ['evt_1'],
+  },
+  keptWork: {
+    description: 'Keep a concise child summary and final structured output.',
+    expectedOutput: 'JSON object with action and owner.',
+  },
+  outputSchema:
+    overrides.outputSchema ??
+    {
+      type: 'object',
+      properties: {
+        action: { type: 'string' },
+        owner: { type: 'string' },
+      },
+      required: ['action', 'owner'],
+    },
+  concurrencyLimit: 1,
+  retryPolicy: overrides.retryPolicy ?? { maxRetries: 1, retryBackoffSeconds: 30 },
+  items: overrides.items ?? [{ title: 'Follow up with finance' }],
+});
+
 describe('ExecuteOperatorTaskUseCase', () => {
   it('marks structured-generation validation failures as retryable until maxRetries is exhausted, then records a terminal failure with attemptCount details', async () => {
     const generationFailure: StructuredGenerationResult = {
@@ -601,5 +711,191 @@ describe('ExecuteOperatorTaskUseCase', () => {
     const [task] = await operators.listTasksForRun(submit.runId);
     expect(task?.status).toBe('succeeded');
     expect(finalizeOperatorRun.calls).toEqual([submit.runId]);
+  });
+
+  it('creates one child conversation, transitions bootstrap state to completed, and includes childConversationId on the finalized task result', async () => {
+    const hashPort = new DeterministicHashPort();
+    const idService = createIdService(hashPort);
+    const artifactStore = new TestArtifactStore();
+    const operators = new TestOperatorExecutionPort();
+    const conversations = new TestConversationStore([createConversationRecord()]);
+    const unitOfWork = new TestUnitOfWorkPort({
+      conversations,
+      artifacts: artifactStore,
+      operators,
+    });
+    const agenticMap = new AgenticMapUseCase({
+      unitOfWork,
+      idService,
+      hashPort,
+      tokenizer: new SimpleTokenizer(),
+      clock: new DeterministicClock(),
+    });
+    const finalizeOperatorRun = new QueueingFinalizeOperatorRunUseCase();
+    const delegationScopeResolver = new DeterministicDelegationScopeResolverPort({
+      bootstrapEvents: [],
+      childArtifacts: [],
+      sourceReferenceIds: ['evt_1'],
+    });
+    const subAgentExecutor = new DeterministicSubAgentExecutorPort([
+      {
+        status: 'succeeded',
+        output: { action: 'Follow up with finance', owner: 'ops' },
+      },
+    ]);
+    const executeOperatorTask = new ExecuteOperatorTaskUseCase({
+      operatorExecution: operators,
+      artifactStore,
+      structuredGeneration: new SequencedStructuredGenerationPort([]),
+      finalizeOperatorRun,
+      clock: new DeterministicClock(),
+      workerId: 'worker-test',
+      unitOfWork,
+      subAgentExecutor,
+      delegationScopeResolver,
+      idService,
+    });
+    const submit = await agenticMap.execute(createAgenticInput());
+
+    await executeOperatorTask.execute();
+
+    const [task] = await operators.listTasksForRun(submit.runId);
+    expect(conversations.createdParentIds).toEqual([conversationId]);
+    expect(task?.bootstrapState).toBe('bootstrap_completed');
+    expect(task?.childConversationId).toBeDefined();
+    expect(task?.status).toBe('succeeded');
+    expect(subAgentExecutor.calls).toEqual([
+      {
+        childConversationId: task?.childConversationId,
+        outputSchema: createAgenticInput().outputSchema,
+        timeoutSeconds: 300,
+      },
+    ]);
+    expect(delegationScopeResolver.calls).toEqual([createAgenticInput().delegatedScope]);
+    expect(finalizeOperatorRun.calls).toEqual([submit.runId]);
+  });
+
+  it('reuses the existing childConversationId after a crash before bootstrap completion', async () => {
+    const hashPort = new DeterministicHashPort();
+    const idService = createIdService(hashPort);
+    const artifactStore = new TestArtifactStore();
+    const operators = new TestOperatorExecutionPort();
+    const existingChildConversationId = createConversationId('conv_existing_child_retry');
+    const conversations = new TestConversationStore([
+      createConversationRecord(),
+      createConversationRecord(existingChildConversationId, conversationId),
+    ]);
+    const unitOfWork = new TestUnitOfWorkPort({
+      conversations,
+      artifacts: artifactStore,
+      operators,
+    });
+    const agenticMap = new AgenticMapUseCase({
+      unitOfWork,
+      idService,
+      hashPort,
+      tokenizer: new SimpleTokenizer(),
+      clock: new DeterministicClock(),
+    });
+    const submit = await agenticMap.execute(createAgenticInput());
+    const [createdTask] = await operators.listTasksForRun(submit.runId);
+    await operators.assignTaskChildConversation({
+      taskId: createdTask!.taskId,
+      childConversationId: existingChildConversationId,
+    });
+    await operators.markBootstrapStarted(createdTask!.taskId);
+
+    const finalizeOperatorRun = new QueueingFinalizeOperatorRunUseCase();
+    const delegationScopeResolver = new DeterministicDelegationScopeResolverPort({
+      bootstrapEvents: [],
+      childArtifacts: [],
+      sourceReferenceIds: ['evt_1'],
+    });
+    const subAgentExecutor = new DeterministicSubAgentExecutorPort([
+      {
+        status: 'succeeded',
+        output: { action: 'Follow up with finance', owner: 'ops' },
+      },
+    ]);
+    const executeOperatorTask = new ExecuteOperatorTaskUseCase({
+      operatorExecution: operators,
+      artifactStore,
+      structuredGeneration: new SequencedStructuredGenerationPort([]),
+      finalizeOperatorRun,
+      clock: new DeterministicClock(),
+      workerId: 'worker-test',
+      unitOfWork,
+      subAgentExecutor,
+      delegationScopeResolver,
+      idService,
+    });
+
+    await executeOperatorTask.execute();
+
+    const [task] = await operators.listTasksForRun(submit.runId);
+    expect(task?.childConversationId).toBe(existingChildConversationId);
+    expect(conversations.createdParentIds).toEqual([]);
+    expect(subAgentExecutor.calls[0]?.childConversationId).toBe(existingChildConversationId);
+  });
+
+  it('does not start child execution until bootstrap completes', async () => {
+    const hashPort = new DeterministicHashPort();
+    const idService = createIdService(hashPort);
+    const artifactStore = new TestArtifactStore();
+    const operators = new TestOperatorExecutionPort();
+    const childConversationId = createConversationId('conv_existing_child_not_bootstrapped');
+    const conversations = new TestConversationStore([
+      createConversationRecord(),
+      createConversationRecord(childConversationId, conversationId),
+    ]);
+    const unitOfWork = new TestUnitOfWorkPort({
+      conversations,
+      artifacts: artifactStore,
+      operators,
+    });
+    const agenticMap = new AgenticMapUseCase({
+      unitOfWork,
+      idService,
+      hashPort,
+      tokenizer: new SimpleTokenizer(),
+      clock: new DeterministicClock(),
+    });
+    const submit = await agenticMap.execute(createAgenticInput());
+    const [createdTask] = await operators.listTasksForRun(submit.runId);
+    await operators.assignTaskChildConversation({
+      taskId: createdTask!.taskId,
+      childConversationId,
+    });
+
+    const finalizeOperatorRun = new QueueingFinalizeOperatorRunUseCase();
+    const delegationScopeResolver = new DeterministicDelegationScopeResolverPort({
+      bootstrapEvents: [],
+      childArtifacts: [],
+      sourceReferenceIds: ['evt_1'],
+    });
+    const subAgentExecutor = new DeterministicSubAgentExecutorPort([
+      {
+        status: 'succeeded',
+        output: { action: 'Follow up with finance', owner: 'ops' },
+      },
+    ]);
+    const executeOperatorTask = new ExecuteOperatorTaskUseCase({
+      operatorExecution: operators,
+      artifactStore,
+      structuredGeneration: new SequencedStructuredGenerationPort([]),
+      finalizeOperatorRun,
+      clock: new DeterministicClock(),
+      workerId: 'worker-test',
+      unitOfWork,
+      subAgentExecutor,
+      delegationScopeResolver,
+      idService,
+      config: { executionTimeoutSeconds: 300 },
+    });
+
+    await executeOperatorTask.execute();
+
+    expect(subAgentExecutor.calls).toHaveLength(1);
+    expect((await operators.listTasksForRun(submit.runId))[0]?.bootstrapState).toBe('bootstrap_completed');
   });
 });

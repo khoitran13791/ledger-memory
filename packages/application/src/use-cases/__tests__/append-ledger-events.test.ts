@@ -414,8 +414,12 @@ class TestJobQueue implements JobQueuePort {
     return `job_${this.jobs.length}` as JobId;
   }
 
-  onComplete(): void {
-    return;
+  async subscribe() {
+    return {
+      close(): void {
+        return;
+      },
+    };
   }
 }
 

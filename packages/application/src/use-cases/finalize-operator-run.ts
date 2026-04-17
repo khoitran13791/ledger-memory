@@ -59,10 +59,14 @@ const toTerminalFailure = (failure: OperatorFailureMetadata | undefined, task: S
 
 const createResultEntry = (task: StoredOperatorTask & { readonly output?: unknown }): OperatorResultEntry => {
   if (task.status === 'succeeded') {
-    return createSucceededResultEntry(task.itemIndex, task.output);
+    return createSucceededResultEntry(task.itemIndex, task.output, task.childConversationId);
   }
 
-  return createFailedResultEntry(task.itemIndex, toTerminalFailure(task.terminalFailure, task));
+  return createFailedResultEntry(
+    task.itemIndex,
+    toTerminalFailure(task.terminalFailure, task),
+    task.childConversationId,
+  );
 };
 
 const createJsonlContent = (entries: readonly OperatorResultEntry[]): string => {
@@ -75,6 +79,9 @@ const createJsonlContent = (entries: readonly OperatorResultEntry[]): string => 
       return JSON.stringify({
         itemIndex: entry.itemIndex,
         status: entry.status,
+        ...(entry.childConversationId === undefined
+          ? {}
+          : { childConversationId: entry.childConversationId }),
         error: {
           code: entry.error.code,
           message: entry.error.message,

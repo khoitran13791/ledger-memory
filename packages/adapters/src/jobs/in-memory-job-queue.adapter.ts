@@ -1,4 +1,4 @@
-import type { Job, JobId, JobQueuePort } from '@ledgermind/application';
+import type { Job, JobHandler, JobId, JobQueuePort, JobSubscription } from '@ledgermind/application';
 import { InvariantViolationError } from '@ledgermind/domain';
 
 interface EnqueuedJobRecord<TPayload = unknown> {
@@ -16,12 +16,12 @@ const createJobId = (ordinal: number): JobId => {
 
 /**
  * Minimal in-memory queue for deterministic async scheduling in tests.
- * Jobs are recorded in enqueue order and completion callbacks can be triggered manually.
+ * Jobs are recorded in enqueue order and matching subscribers are notified immediately.
  */
 export class InMemoryJobQueueAdapter implements JobQueuePort {
   private nextOrdinal = 1;
-  private readonly completionCallbacks = new Map<JobId, Array<(result: unknown) => void>>();
   private readonly enqueuedJobsInternal: EnqueuedJobRecord[] = [];
+  private readonly subscribers = new Map<string, Set<JobHandler>>();
 
   get enqueuedJobs(): readonly EnqueuedJobRecord[] {
     return [...this.enqueuedJobsInternal];
@@ -31,19 +31,35 @@ export class InMemoryJobQueueAdapter implements JobQueuePort {
     const jobId = createJobId(this.nextOrdinal);
     this.nextOrdinal += 1;
     this.enqueuedJobsInternal.push({ id: jobId, job });
+
+    const subscribers = this.subscribers.get(job.type);
+    if (subscribers !== undefined) {
+      for (const handler of subscribers) {
+        await handler(job);
+      }
+    }
+
     return jobId;
   }
 
-  onComplete(jobId: JobId, callback: (result: unknown) => void): void {
-    const existingCallbacks = this.completionCallbacks.get(jobId) ?? [];
-    this.completionCallbacks.set(jobId, [...existingCallbacks, callback]);
-  }
+  async subscribe<TPayload>(type: string, handler: JobHandler<TPayload>): Promise<JobSubscription> {
+    const subscribers = this.subscribers.get(type) ?? new Set<JobHandler>();
+    subscribers.add(handler as JobHandler);
+    this.subscribers.set(type, subscribers);
 
-  complete(jobId: JobId, result: unknown): void {
-    const callbacks = this.completionCallbacks.get(jobId) ?? [];
-    for (const callback of callbacks) {
-      callback(result);
-    }
+    return {
+      close: () => {
+        const currentSubscribers = this.subscribers.get(type);
+        if (currentSubscribers === undefined) {
+          return;
+        }
+
+        currentSubscribers.delete(handler as JobHandler);
+        if (currentSubscribers.size === 0) {
+          this.subscribers.delete(type);
+        }
+      },
+    };
   }
 }
 

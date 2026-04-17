@@ -6,9 +6,11 @@ import type { CallerContext } from '../../ports/driven/auth/authorization.port';
 import { InvalidReferenceError, UnauthorizedExpandError } from '../../errors/application-errors';
 import { ExpandUseCase } from '../expand';
 import {
+  createTestConversation,
   createTestLedgerEvent,
   createTestSummary,
   FakeAuthorizationPort,
+  FakeConversationPort,
   FakeSummaryDagPort,
 } from './retrieval-test-doubles';
 
@@ -51,8 +53,12 @@ describe('ExpandUseCase', () => {
       expandedMessagesBySummaryId: new Map([[summaryId, [event1, event2]]]),
     });
     const authorization = new FakeAuthorizationPort(true);
+    const conversations = new FakeConversationPort([
+      createTestConversation('conv_expand_parent_uc'),
+      createTestConversation('conv_expand_uc', parentConversationId),
+    ]);
 
-    const useCase = new ExpandUseCase({ authorization, summaryDag });
+    const useCase = new ExpandUseCase({ authorization, conversations, summaryDag });
     const output = await useCase.execute({
       summaryId,
       callerContext: createCaller(true),
@@ -66,8 +72,12 @@ describe('ExpandUseCase', () => {
   it('throws typed authorization error for unauthorized caller', async () => {
     const authorization = new FakeAuthorizationPort(false);
     const summaryDag = new FakeSummaryDagPort();
+    const conversations = new FakeConversationPort([
+      createTestConversation('conv_expand_parent_uc'),
+      createTestConversation('conv_expand_uc', parentConversationId),
+    ]);
 
-    const useCase = new ExpandUseCase({ authorization, summaryDag });
+    const useCase = new ExpandUseCase({ authorization, conversations, summaryDag });
 
     const execution = useCase.execute({
       summaryId,
@@ -88,8 +98,12 @@ describe('ExpandUseCase', () => {
   it('throws typed invalid-reference error for unknown summary', async () => {
     const authorization = new FakeAuthorizationPort(true);
     const summaryDag = new FakeSummaryDagPort();
+    const conversations = new FakeConversationPort([
+      createTestConversation('conv_expand_parent_uc'),
+      createTestConversation('conv_expand_uc', parentConversationId),
+    ]);
 
-    const useCase = new ExpandUseCase({ authorization, summaryDag });
+    const useCase = new ExpandUseCase({ authorization, conversations, summaryDag });
 
     const execution = useCase.execute({
       summaryId: missingSummaryId,
@@ -117,8 +131,12 @@ describe('ExpandUseCase', () => {
 
     const authorization = new FakeAuthorizationPort(true);
     const summaryDag = new FakeSummaryDagPort({ summaries: [summary] });
+    const conversations = new FakeConversationPort([
+      createTestConversation('conv_expand_parent_uc'),
+      createTestConversation('conv_expand_uc', parentConversationId),
+    ]);
 
-    const useCase = new ExpandUseCase({ authorization, summaryDag });
+    const useCase = new ExpandUseCase({ authorization, conversations, summaryDag });
 
     const execution = useCase.execute({
       summaryId,
@@ -133,5 +151,35 @@ describe('ExpandUseCase', () => {
     });
 
     expect(summaryDag.expandCalls).toHaveLength(0);
+  });
+
+  it('rejects when the caller is marked as a sub-agent but stored lineage does not match the declared parent conversation', async () => {
+    const summary = createTestSummary({
+      idValue: 'sum_expand_uc',
+      conversationId,
+      kind: 'leaf',
+      content: 'expandable summary',
+      tokenCount: 20,
+    });
+    const authorization = new FakeAuthorizationPort(true);
+    const summaryDag = new FakeSummaryDagPort({ summaries: [summary] });
+    const conversations = new FakeConversationPort([
+      createTestConversation('conv_expand_parent_uc'),
+      createTestConversation('conv_expand_uc', createConversationId('conv_unexpected_parent_uc')),
+    ]);
+    const useCase = new ExpandUseCase({ authorization, conversations, summaryDag });
+
+    const execution = useCase.execute({
+      summaryId,
+      callerContext: createCaller(true),
+    });
+
+    await expect(execution).rejects.toBeInstanceOf(UnauthorizedExpandError);
+    await expect(execution).rejects.toMatchObject({
+      code: 'UNAUTHORIZED_EXPAND',
+      conversationId,
+      summaryId,
+    });
+    expect(summaryDag.getNodeCalls).toHaveLength(0);
   });
 });

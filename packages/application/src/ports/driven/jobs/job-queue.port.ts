@@ -8,7 +8,13 @@ export interface Job<TPayload = unknown> {
   readonly priority?: JobPriority;
 }
 
+export type JobHandler<TPayload = unknown> = (job: Job<TPayload>) => void | Promise<void>;
+
+export interface JobSubscription {
+  close(): Promise<void> | void;
+}
+
 export interface JobQueuePort {
   enqueue<TPayload>(job: Job<TPayload>): Promise<JobId>;
-  onComplete(jobId: JobId, callback: (result: unknown) => void): void;
+  subscribe<TPayload>(type: string, handler: JobHandler<TPayload>): Promise<JobSubscription>;
 }

@@ -6,6 +6,7 @@
     { "path": "./packages/adapters" },
     { "path": "./packages/infrastructure" },
     { "path": "./packages/sdk" },
+    { "path": "./apps/operator-worker" },
     { "path": "./benchmarks/locomo" }
   ]
 }

@@ -35,6 +35,7 @@ import type {
 } from '@ledgermind/application';
 
 import {
+  AgenticMapUseCase,
   AppendLedgerEventsUseCase,
   CheckIntegrityUseCase,
   DescribeUseCase,
@@ -458,6 +459,7 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
 
   const expandUseCase = new ExpandUseCase({
     authorization,
+    conversations: persistenceDeps.conversations,
     summaryDag: persistenceDeps.summaryDag,
   });
 
@@ -479,6 +481,16 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
     ...(config.operators?.config === undefined ? {} : { config: config.operators.config }),
   });
 
+  const agenticMapUseCase = new AgenticMapUseCase({
+    unitOfWork: persistenceDeps.unitOfWork,
+    idService,
+    hashPort,
+    tokenizer,
+    clock,
+    ...(config.operators?.jobQueue === undefined ? {} : { jobQueue: config.operators.jobQueue }),
+    ...(config.operators?.config === undefined ? {} : { config: config.operators.config }),
+  });
+
   const getOperatorRunUseCase = new GetOperatorRunUseCase({
     operatorExecution: persistenceDeps.operatorExecution,
     artifactStore: persistenceDeps.artifactStore,
@@ -486,15 +498,28 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
   });
 
   const executeOperatorTaskUseCase =
-    config.operators?.structuredGeneration === undefined
+    config.operators?.structuredGeneration === undefined && config.operators?.subAgentExecutor === undefined
       ? undefined
       : new ExecuteOperatorTaskUseCase({
           operatorExecution: persistenceDeps.operatorExecution,
           artifactStore: persistenceDeps.artifactStore,
-          structuredGeneration: config.operators.structuredGeneration,
+          structuredGeneration: config.operators?.structuredGeneration ?? {
+            async generate() {
+              throw new Error('Inline llmMap execution requires operators.structuredGeneration.');
+            },
+          },
           finalizeOperatorRun: finalizeOperatorRunUseCase,
           clock,
           workerId: 'sdk-inline-worker',
+          unitOfWork: persistenceDeps.unitOfWork,
+          ...(config.operators?.subAgentExecutor === undefined
+            ? {}
+            : { subAgentExecutor: config.operators.subAgentExecutor }),
+          ...(config.operators?.delegationScopeResolver === undefined
+            ? {}
+            : { delegationScopeResolver: config.operators.delegationScopeResolver }),
+          tokenizer,
+          idService,
           ...(config.operators?.config === undefined ? {} : { config: config.operators.config }),
         });
 
@@ -544,8 +569,32 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
       }));
     },
     agenticMap: async (input: AgenticMapInput) => {
-      void input;
-      throw new Error('agenticMap execution is not wired yet.');
+      const submitted = await agenticMapUseCase.execute(input);
+      if (config.operators?.executionMode !== 'inline') {
+        return submitted;
+      }
+      if (executeOperatorTaskUseCase === undefined) {
+        throw new Error('Inline operator execution requires runtime executors.');
+      }
+      if (config.operators?.subAgentExecutor === undefined) {
+        throw new Error('Inline agenticMap execution requires operators.subAgentExecutor.');
+      }
+      if (config.operators?.delegationScopeResolver === undefined) {
+        throw new Error('Inline agenticMap execution requires operators.delegationScopeResolver.');
+      }
+
+      while (true) {
+        const executed = await executeOperatorTaskUseCase.execute();
+        if (executed === null) {
+          break;
+        }
+      }
+
+      return getOperatorRunUseCase.execute({ runId: submitted.runId }).then((run) => ({
+        runId: run.runId,
+        status: run.status,
+        ...(submitted.inputArtifactId === undefined ? {} : { inputArtifactId: submitted.inputArtifactId }),
+      }));
     },
     getOperatorRun: (input: GetOperatorRunInput) => getOperatorRunUseCase.execute(input),
   };

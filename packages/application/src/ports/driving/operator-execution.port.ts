@@ -102,11 +102,13 @@ export type OperatorResultEntry =
       readonly itemIndex: number;
       readonly status: 'succeeded';
       readonly output: unknown;
+      readonly childConversationId?: ConversationId;
     }
   | {
       readonly itemIndex: number;
       readonly status: 'failed';
       readonly error: OperatorFailureMetadata;
+      readonly childConversationId?: ConversationId;
     };
 
 export interface OperatorTaskInspection {
