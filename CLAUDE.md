@@ -15,12 +15,13 @@ and simplicity/change safety.
 
 ## Design Documentation
 
-- @docs/high-level-design.md — full architecture blueprint (~1800 lines): Clean Architecture layers, domain model, all use cases, all port interfaces, adapter specs, PostgreSQL schema, compaction algorithm, explorer plugins, token budget, error taxonomy, package structure, implementation roadmap
-- @docs/design-decisions-addendum.md — resolves pre-implementation gaps: ID canonicalization, LedgerEvent schema, context versioning, 8 DAG integrity checks, compaction block definition, deterministic fallback, test stubs, tech stack
+- @docs/high-level-design.md — canonical implementation contract and architecture blueprint: Clean Architecture layers, domain model, use cases, port interfaces, adapter specs, PostgreSQL schema, compaction algorithm, explorer plugins, token budget, error taxonomy, package structure, and roadmap
+- @docs/source-of-truth.md — compatibility redirect to the canonical HLD
+- @docs/design-decisions-addendum.md — supporting record of resolved pre-implementation gaps: ID canonicalization, LedgerEvent schema, context versioning, 8 DAG integrity checks, compaction block definition, deterministic fallback, test stubs, tech stack
 - @docs/testing-strategy.md — testing plan: golden tests, property-based (fast-check), conformance suites, LLM-as-judge, probe evaluation, regression catalog, CI/CD pipeline
 - @docs/claude-code-integration.md — MCP server, hooks, Agent SDK, plugin integration
 - @docs/lcm-framework-research.md — research, market analysis, Volt reference analysis
-- @docs/LCM.pdf — underlying LCM paper
+- @docs/LCM.pdf — upstream research reference, not the repo's sole normative contract
 
 ## Common commands
 

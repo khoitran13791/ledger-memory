@@ -1,7 +1,9 @@
 # LedgerMind: High-Level Design Document
 
-> **Technical Architecture Blueprint — Clean Architecture & SOLID**
-> Version: 1.0 | Date: February 26, 2026 | Status: Draft
+> **Canonical Technical Architecture — Clean Architecture & SOLID**
+> Version: 1.2 | Date: April 18, 2026 | Status: Canonical
+>
+> This document is the single normative high-level design for LedgerMind.
 
 ---
 
@@ -31,7 +33,46 @@
 
 ## 1. Introduction & Goals
 
-### 1.1 What LedgerMind Provides
+### 1.1 Document Role & Precedence
+
+This file is the canonical design contract for LedgerMind. When design
+documents disagree, use this order:
+
+1. `docs/high-level-design.md`
+2. Code and tests, only when they clearly implement this document
+3. `docs/design-decisions-addendum.md` as supporting decision history
+4. `docs/paper/LCM.pdf` as upstream research context
+
+If the code disagrees with this document, treat that as implementation drift
+unless this document is updated first.
+
+### 1.2 What This Document Governs
+
+This document is authoritative for:
+
+- core architecture and invariants
+- public engine contracts
+- memory tool behavior and safety boundaries
+- LedgerMind-specific adaptations of the LCM paper
+- review and update policy for architecture work
+
+### 1.3 Canonical System Model
+
+LedgerMind is a deterministic memory engine built around five core concepts:
+
+- **Immutable Store** — every ledger event is persisted verbatim and is never
+  mutated or deleted
+- **Active Context** — the model-facing context is a mutable projection of raw
+  message pointers and summary pointers; it is a cache, not the source of truth
+- **Summary DAG** — leaf summaries cover messages, condensed summaries cover
+  summaries, and the DAG must remain acyclic
+- **Artifacts** — large external content is tracked by content-addressed IDs
+  plus structural metadata and exploration summaries; path-backed content may
+  remain on disk rather than being duplicated into the immutable ledger
+- **Operator Runs** — `llmMap` and `agenticMap` are durable, engine-managed
+  executions whose iteration, retries, and finalization are owned by the engine
+
+### 1.4 What LedgerMind Provides
 
 LedgerMind is **"Postgres for agent memory"** — a standalone, framework-agnostic memory infrastructure with formal compaction semantics for any LLM agent application.
 
@@ -45,7 +86,7 @@ Based on the **Lossless Context Management (LCM)** architecture (Ehrlich & Black
 - **Memory access tools** — `grep`, `expand`, `describe` for retrieval without context bloat
 - **Operator-level recursion** — `llm_map` and `agentic_map` for data parallelism
 
-### 1.2 Success Criteria (Testable)
+### 1.5 Success Criteria (Testable)
 
 | Criterion | Verification |
 |-----------|-------------|
@@ -56,14 +97,38 @@ Based on the **Lossless Context Management (LCM)** architecture (Ehrlich & Black
 | **Pluggable explorers** | New file type explorer added without modifying any existing code |
 | **DAG integrity** | 8 integrity checks pass after any sequence of operations |
 
-### 1.3 Non-Goals
+### 1.6 Non-Goals
 
 - Hosted SaaS / multi-tenant auth (Phase 3)
 - UI / dashboard
 - Embeddings-first RAG (DAG is primary; vector index is optional add-on)
 - Framework-specific runtime ownership (LedgerMind is infrastructure, not an agent framework)
 
-### 1.4 Reference Implementation
+### 1.7 Relationship to LCM and Supporting Docs
+
+The **LCM paper** is the conceptual foundation for LedgerMind, but the repo
+does not treat the paper as the sole implementation contract. LedgerMind makes
+these repo-specific decisions:
+
+| Topic | Canonical LedgerMind Decision |
+|---|---|
+| Tool names | Public tools use `memory.*` naming rather than `lcm_*`; the repo currently exposes both `memory.recall` (MCP catalog) and `memory.grep` (Vercel adapter) over the same retrieval use case family |
+| Engine surface | LedgerMind exposes a typed programmatic API in addition to tool contracts |
+| Operator inputs | The core contract accepts inline items or artifact-backed datasets; JSONL files on disk are an adapter/runtime convention |
+| Supporting docs | `design-decisions-addendum.md` and `operator-level-recursion.md` are supporting references, not competing authorities |
+| Redirect doc | `source-of-truth.md` exists only as a compatibility redirect to this HLD |
+
+### 1.8 Update and Review Policy
+
+When reviewing or changing architecture:
+
+1. Start with this document.
+2. Use the addendum to understand rationale and prior clarifications.
+3. Use `LCM.pdf` to evaluate conceptual alignment, not to silently override
+   LedgerMind-specific decisions.
+4. Update this document first when contracts or invariants change.
+
+### 1.9 Reference Implementation
 
 This design is informed by the Volt codebase (`Martian-Engineering/volt`), specifically the `packages/voltcode/src/session/lcm/` module. Key patterns adopted and adapted:
 
@@ -105,7 +170,7 @@ All source code dependencies point **inward**. Inner layers define abstractions;
 ```
 ┌─────────────────────────────────────────────────┐
 │                Infrastructure                    │
-│  (PostgreSQL, SQLite, filesystem, job runners)   │
+│ (PostgreSQL, filesystem, host runtimes, workers) │
 │  ┌─────────────────────────────────────────────┐ │
 │  │            Interface Adapters               │ │
 │  │  (tool mappers, framework wrappers, Zod)    │ │
@@ -141,6 +206,27 @@ All source code dependencies point **inward**. Inner layers define abstractions;
 - ✅ Zod schemas live at adapter boundaries only, not in domain
 - ✅ Content hashing is an injected primitive, not a hardcoded implementation
 
+### 3.4 Canonical Invariants
+
+The following invariants are mandatory:
+
+- **Immutable ledger:** ledger events are append-only; no per-event mutation or
+  delete API exists
+- **Deterministic IDs:** content-addressed IDs use canonical SHA-256 rules and
+  exclude timestamps from hash inputs
+- **Active context is rebuildable:** context is a projection derived from the
+  ledger and summary DAG, never the source of truth
+- **Optimistic context versioning:** context replacements must use
+  `context_versions.version` and fail on stale writes
+- **Three-level compaction escalation:** compaction always escalates
+  `normal -> aggressive -> deterministic fallback` and must terminate
+- **Artifact propagation:** artifact IDs referenced by source messages or source
+  summaries are preserved through every compaction round
+- **DAG integrity:** the eight integrity checks in Section 11.3 are part of the
+  core contract
+- **Clean Architecture boundaries:** dependency direction remains
+  `domain <- application <- adapters <- infrastructure <- sdk`
+
 ---
 
 ## 4. System Context (C4 Level 1)
@@ -165,9 +251,9 @@ All source code dependencies point **inward**. Inner layers define abstractions;
               ┌────────┘    │    └────────┐
               ▼             ▼             ▼
       ┌──────────┐  ┌──────────┐  ┌──────────┐
-      │ Database │  │   LLM    │  │   File   │
-      │ (PG/     │  │ Provider │  │  System  │
-      │  SQLite) │  │(for sums)│  │(artifacts│
+      │ Database │  │ Runtime /│  │   File   │
+      │  (PG)    │  │   LLM    │  │  System  │
+      │          │  │ Executors│  │(artifacts│
       └──────────┘  └──────────┘  └──────────┘
 ```
 
@@ -216,10 +302,11 @@ All source code dependencies point **inward**. Inner layers define abstractions;
 **Responsibility:** Map between external representations and application DTOs. Validation at boundaries. Framework-specific tool wrappers.
 
 **Contains:**
-- Zod schemas for validation
-- Framework tool adapters (Vercel AI SDK, LangChain, OpenAI Agents SDK)
-- REST/HTTP mappers (Phase 3)
+- Tool adapters and catalogs (`memory.recall` / `memory.grep` surfaces)
+- Framework-specific wrappers (currently Vercel AI SDK)
+- MCP/server-facing mapping layers
 - DB row ↔ DTO mappers
+- REST/HTTP mappers (Phase 3)
 
 ### 5.4 Infrastructure Layer
 
@@ -227,10 +314,9 @@ All source code dependencies point **inward**. Inner layers define abstractions;
 
 **Contains:**
 - PostgreSQL adapter (SQL, migrations, connection pooling)
-- SQLite adapter (embedded alternative)
-- Tokenizer bindings (tiktoken, provider-specific)
+- Filesystem bindings
+- Runtime executor bindings for operator workers
 - SHA-256 hashing implementation
-- Job queue implementation
 - Observability wiring (metrics, structured logging)
 
 ---
@@ -405,6 +491,22 @@ type MimeType = string & { readonly __brand: "MimeType" };
 // Timestamp
 type Timestamp = Date & { readonly __brand: "Timestamp" };
 ```
+
+#### Canonical Identity Rules
+
+All content-addressed IDs use **SHA-256 over a canonical UTF-8 JSON byte
+string** with lexicographically sorted keys, no extra whitespace, standard JSON
+number formatting, and no timestamps in the hash input. `undefined` values are
+omitted before hashing.
+
+| Entity | Prefix | Hashed Fields | Excluded |
+|---|---|---|---|
+| **LedgerEvent** | `evt` | `{ content, conversationId, role, sequence }` | `occurredAt`, `metadata` |
+| **SummaryNode** | `sum` | `{ content, conversationId, kind }` | `createdAt`, `tokenCount`, `artifactIds` |
+| **Artifact** | `file` | `{ contentHash }` where `contentHash = SHA-256(raw bytes)` | `originalPath`, `mimeType`, `tokenCount` |
+
+These rules guarantee "same content -> same ID across runs" for the canonical
+entity inputs above.
 
 ### 6.3 Domain Events
 
@@ -653,9 +755,19 @@ interface GrepInput {
   scope?: SummaryNodeId;                   // optional DAG scope
 }
 interface GrepOutput {
-  matches: GrepMatch[];                    // grouped by covering summary
+  matches: GrepMatch[];                    // flat ordered matches
 }
 ```
+
+**Current implementation contract:** the engine returns a flat ordered match
+list with no pagination fields. When a `scope` is provided, current storage
+adapters annotate each match with `coveringSummaryId = scope`. Unscoped grep
+does not currently guarantee coverage grouping by the summary node that covers a
+match.
+
+**Tool exposure note:** the core use case is `grep()`. The current MCP catalog
+surfaces this capability as `memory.recall`, while the Vercel adapter surfaces
+it as `memory.grep`.
 
 #### DescribeUseCase
 
@@ -665,26 +777,40 @@ interface DescribeInput {
 }
 interface DescribeOutput {
   kind: "summary" | "artifact";
-  metadata: Record<string, unknown>;
+  metadata: Record<string, unknown>;       // summary: { content }; artifact: { originalPath?, explorerUsed? }
   tokenCount: TokenCount;
   parentIds?: SummaryNodeId[];
   explorationSummary?: string;
+  planningSignals?: DescribeSummaryPlanningSignals | DescribeArtifactPlanningSignals;
 }
 ```
+
+**Current implementation contract:** summary metadata includes `content`.
+Artifact metadata includes `originalPath` and `explorerUsed` when available.
+The current code does not yet include `SummaryNode.kind` or `Artifact.mimeType`
+inside `metadata`; callers that need richer planning data should use
+`planningSignals`, `parentIds`, and `explorationSummary` where present.
 
 #### ExpandUseCase (Guarded)
 
 ```typescript
 interface ExpandInput {
   summaryId: SummaryNodeId;
-  callerContext: CallerContext;             // includes isSubAgent flag
+  callerContext: CallerContext;             // runtime-authenticated caller context, not user-asserted tool input
 }
 interface ExpandOutput {
   messages: LedgerEvent[];                 // original messages under the summary
 }
 ```
 
-**Authorization gate:** Expand is restricted to sub-agent callers via `AuthorizationPort`. This prevents uncontrolled context expansion in the main agent loop — a safety pattern from Volt.
+**Current implementation contract:** `expand()` is restricted to callers that
+pass `AuthorizationPort.canExpand(callerContext)`. The use case then verifies
+that the caller conversation exists, that it is itself a child conversation, and
+that the stored `parentId` matches `callerContext.parentConversationId`.
+
+The expanded summary must currently belong to the caller conversation itself.
+Direct parent-summary expansion is not implemented in the current application
+layer, even though child lineage is still validated before expansion.
 
 #### CheckIntegrityUseCase
 
@@ -732,7 +858,7 @@ interface ExploreArtifactOutput {
 interface LLMMapInput {
   conversationId: ConversationId;
   prompt: string;
-  outputSchema: JsonSchema;
+  outputSchema: Readonly<Record<string, unknown>>;
   concurrencyLimit: number;
   retryPolicy: { maxRetries: number; retryBackoffSeconds: number };
   idempotencyKey?: string;
@@ -756,9 +882,98 @@ interface LLMMapOutput {
 
 Zero-item submissions are valid and finalize immediately to an empty JSONL output artifact.
 
+The core LedgerMind contract accepts either inline `items` or an
+`inputArtifactId` that points at a stored dataset. JSONL input and output files
+are valid adapter/runtime conventions, but they are not the only canonical
+representation at the engine layer.
+
 #### AgenticMapUseCase
 
-`agenticMap` follows the same durable submit/inspect contract as `llmMap`, but each task executes inside a child conversation. Child assignment and bootstrap state are persisted so retries reuse the same child conversation rather than creating duplicates.
+```typescript
+interface AgenticMapInput {
+  conversationId: ConversationId;
+  taskPrompt: string;
+  delegatedScope: {
+    messageIds?: readonly string[];
+    summaryIds?: readonly string[];
+    artifactIds?: readonly ArtifactId[];
+    note?: string;
+  };
+  keptWork: {
+    description: string;
+    expectedOutput: string;
+  };
+  outputSchema: Readonly<Record<string, unknown>>;
+  concurrencyLimit: number;
+  retryPolicy: { maxRetries: number; retryBackoffSeconds: number };
+  idempotencyKey?: string;
+  items?: unknown[];
+  inputArtifactId?: ArtifactId;
+}
+interface AgenticMapOutput {
+  runId: string;
+  status: OperatorRunStatus;
+  inputArtifactId?: ArtifactId;
+}
+```
+
+`agenticMap` follows the same durable submit/inspect contract as `llmMap`, but
+each task executes inside a child conversation.
+
+**Current implementation rules:**
+1. `delegatedScope` is required and must include at least one delegated
+   reference or a note.
+2. `keptWork.description` and `keptWork.expectedOutput` are required.
+3. Child-originated recursive `agenticMap()` submissions still require explicit
+   `delegatedScope` and `keptWork`.
+4. Each operator task maps to at most one child conversation.
+5. Child assignment and bootstrap state are persisted so retries reuse the same
+   child conversation rather than creating duplicates.
+
+**Current repo adaptation of the paper:** the codebase does not currently expose
+standalone `Task()` / `Tasks()` APIs. Recursive delegation is represented
+through child-originated `agenticMap()` calls with explicit bounded scope.
+
+#### GetOperatorRunUseCase
+
+```typescript
+type OperatorRunStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "completed_with_failures"
+  | "failed";
+
+interface GetOperatorRunInput {
+  runId: string;
+}
+
+interface GetOperatorRunOutput {
+  runId: string;
+  conversationId: ConversationId;
+  operatorKind: "llmMap" | "agenticMap";
+  status: OperatorRunStatus;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  completedAt?: Timestamp;
+  inputArtifactId?: ArtifactId;
+  outputArtifactId?: ArtifactId;
+  taskCount: number;
+  succeededTaskCount: number;
+  failedTaskCount: number;
+  retryableFailureTaskCount: number;
+  runningTaskCount: number;
+  pendingTaskCount: number;
+  terminalFailureSummary?: OperatorFailureMetadata;
+  inlineResults?: readonly OperatorResultEntry[];
+  tasks: readonly OperatorTaskInspection[];
+}
+```
+
+`getOperatorRun()` is the current canonical inspection API for durable operator
+state. Final ordered results are only inlined when the output artifact fits
+under the configured inline-results ceiling; otherwise callers are expected to
+follow `outputArtifactId`.
 
 ---
 
@@ -965,10 +1180,14 @@ interface AuthorizationPort {
 
 interface CallerContext {
   conversationId: ConversationId;
-  isSubAgent: boolean;
-  parentConversationId?: ConversationId;
+  isSubAgent: boolean;                     // derived from trusted runtime/session state
+  parentConversationId?: ConversationId;  // direct parent lineage for child conversations
 }
 ```
+
+**Rule:** framework adapters, MCP bridges, and tool wrappers must overwrite or
+derive `CallerContext` from trusted runtime metadata. They must never treat
+caller-supplied sub-agent identity as authoritative.
 
 #### Clock Port (Testability)
 
@@ -986,7 +1205,21 @@ interface ClockPort {
 
 ### 9.1 Storage Adapters
 
-#### PostgreSQL Adapter (Primary)
+#### In-Memory Adapters
+
+| Port | Implementation Notes |
+|------|---------------------|
+| `LedgerAppendPort` | In-memory append-only collections keyed by conversation |
+| `LedgerReadPort` | Deterministic regex/keyword traversal over stored events |
+| `ContextProjectionPort` | Ordered in-memory context projection with version tracking |
+| `SummaryDagPort` | In-memory DAG edges plus recursive expansion |
+| `ArtifactStorePort` | In-memory metadata/content store |
+| `OperatorExecutionPort` | In-memory durable run/task state for tests and local execution |
+
+These adapters live in `packages/adapters/src/storage/in-memory/` and are the
+default fake/embedded runtime used by tests and the in-memory SDK preset.
+
+#### PostgreSQL Adapter (Persistent)
 
 | Port | Implementation Notes |
 |------|---------------------|
@@ -995,6 +1228,7 @@ interface ClockPort {
 | `ContextProjectionPort` | `context_items` + `context_versions` for ordered positions and optimistic concurrency |
 | `SummaryDagPort` | `summary_nodes` + `summary_edges` tables; recursive CTE for `expandToMessages()` |
 | `ArtifactStorePort` | `artifacts` table with `path`, `inline_text`, `inline_binary` variants |
+| `OperatorExecutionPort` | `operator_runs` + `operator_tasks` tables for durable submit/inspect workflows |
 | `UnitOfWorkPort` | PostgreSQL transaction with `BEGIN`/`COMMIT`/`ROLLBACK` |
 
 **Schema enforcement:**
@@ -1003,26 +1237,23 @@ interface ClockPort {
 - `UNIQUE (conversation_id, seq)` enforces monotonic ordering
 - `CHECK` constraint on `context_items` ensures exactly one ref type
 
-#### SQLite Adapter (Embedded)
-
-Compatible schema subset. Key differences documented:
-- FTS via SQLite FTS5 extension (different syntax from PostgreSQL `tsvector`)
-- Recursive CTE support available but performance differs at scale
-- No `tsvector` — use FTS5 virtual tables instead
-- Single-writer constraint (WAL mode recommended)
+**Current scope note:** SQLite is not implemented in the current repo. The
+active persistence backends are in-memory and PostgreSQL.
 
 ### 9.2 LLM Provider Adapters
 
-Implement `SummarizerPort`:
+Current repo implementations:
 
 | Adapter | Notes |
 |---------|-------|
-| **OpenAI** | `ChatCompletion.create()` with system prompt for summarization |
-| **Anthropic** | `messages.create()` with summarization instructions |
-| **Vercel AI SDK** | `generateText()` wrapper |
-| **Generic** | Any provider exposing a chat completion API |
+| **DeterministicSummarizerAdapter** | Test/local summarizer that preserves contract shape without provider calls |
+| **StructuredGenerationPort** | Host-injected runtime executor used by operator workers |
+| **SubAgentExecutorPort** | Host-injected child-session executor used by `agenticMap()` |
 
-Each adapter handles retry/backoff internally. Deterministic fallback (Level 3) is in the application layer — no LLM call.
+Deterministic fallback (Level 3) remains in the application layer — no LLM
+call. Provider-backed summarizers and structured-generation runtimes are
+expected to be supplied by host environments rather than hardcoded into the
+core repo today.
 
 ### 9.3 Framework Tool Adapters
 
@@ -1030,10 +1261,12 @@ Implement `ToolProviderPort`:
 
 | Framework | Tool Mapping |
 |-----------|-------------|
-| **Vercel AI SDK** | `tool()` definitions for `memory.grep`, `memory.describe`, `memory.expand` |
-| **OpenAI Agents SDK** | Function schemas with JSON Schema parameters |
-| **LangChain** | `StructuredTool` subclass or `DynamicStructuredTool` |
-| **Generic** | Plain objects with `{ name, description, parameters, execute }` |
+| **Vercel AI SDK** | `tool()` definitions for `memory.grep`, `memory.describe`, `memory.expand`, `memory.llmMap`, `memory.agenticMap`, `memory.getOperatorRun` |
+| **Canonical Generic Catalog** | Plain tool definitions for `memory.recall`, `memory.describe`, `memory.expand` |
+| **MCP Server Wrapper** | Exposes the canonical generic catalog over MCP transport |
+
+**Current scope note:** OpenAI Agents SDK and LangChain tool adapters are not
+implemented in the current repo.
 
 ### 9.4 Explorer Plugin Adapters
 
@@ -1143,70 +1376,65 @@ packages/
 │   ├── package.json
 │   └── src/
 │       ├── storage/
-│       │   ├── postgres/
-│       │   │   ├── pg-ledger.adapter.ts
-│       │   │   ├── pg-context.adapter.ts
-│       │   │   ├── pg-summary-dag.adapter.ts
-│       │   │   ├── pg-artifact.adapter.ts
-│       │   │   ├── pg-conversation.adapter.ts
-│       │   │   ├── pg-unit-of-work.adapter.ts
-│       │   │   └── mappers/
-│       │   │       └── *.ts               # Row ↔ DTO ↔ Domain mappers
-│       │   └── sqlite/
-│       │       └── ...                    # Same structure for SQLite
+│       │   └── in-memory/
+│       │       ├── in-memory-ledger-store.ts
+│       │       ├── in-memory-context-projection.ts
+│       │       ├── in-memory-summary-dag.ts
+│       │       ├── in-memory-artifact-store.ts
+│       │       ├── in-memory-conversation-store.ts
+│       │       ├── in-memory-operator-execution-store.ts
+│       │       └── in-memory-unit-of-work.ts
 │       ├── llm/
-│       │   ├── openai-summarizer.adapter.ts
-│       │   ├── anthropic-summarizer.adapter.ts
-│       │   └── vercel-ai-summarizer.adapter.ts
+│       │   └── deterministic-summarizer.adapter.ts
 │       ├── tokenizer/
-│       │   ├── tiktoken.adapter.ts
-│       │   └── simple-estimator.adapter.ts
+│       │   ├── simple-tokenizer.adapter.ts
+│       │   ├── simple-estimator.adapter.ts
+│       │   ├── tiktoken-tokenizer.adapter.ts
+│       │   └── validating-tokenizer.adapter.ts
 │       ├── tools/
-│       │   ├── vercel-ai-tools.adapter.ts
-│       │   ├── openai-agents-tools.adapter.ts
-│       │   ├── langchain-tools.adapter.ts
-│       │   └── generic-tools.adapter.ts
+│       │   ├── vercel-ai-memory-tools.adapter.ts
+│       │   └── canonical-memory-tool-catalog.ts
+│       ├── auth/
+│       │   └── sub-agent-authorization.adapter.ts
 │       ├── explorers/
-│       │   ├── registry.ts
+│       │   ├── explorer-registry.ts
+│       │   ├── default-explorer-registry.ts
 │       │   ├── python-explorer.ts
 │       │   ├── typescript-explorer.ts
 │       │   ├── json-explorer.ts
-│       │   ├── csv-explorer.ts
-│       │   └── ...                        # 30+ explorer implementations
+│       │   ├── markdown-explorer.ts
+│       │   └── fallback-explorer.ts
 │       ├── jobs/
-│       │   ├── in-memory-queue.adapter.ts
-│       │   └── pg-boss-queue.adapter.ts
-│       └── validation/
-│           └── schemas/                   # Zod schemas (boundary validation)
-│               └── *.ts
+│       │   └── in-memory-job-queue.adapter.ts
+│       └── testing/
+│           ├── fixed-clock.ts
+│           ├── deterministic-summarizer.ts
+│           └── simple-tokenizer.ts
 │
 ├── infrastructure/                  # Depends on: adapters, application
 │   ├── package.json
 │   └── src/
-│       ├── sql/
-│       │   ├── postgres/
-│       │   │   └── migrations/
-│       │   │       ├── 001_initial.sql
-│       │   │       └── ...
-│       │   └── sqlite/
-│       │       └── migrations/
-│       │           └── ...
-│       ├── crypto/
-│       │   └── sha256.ts
-│       ├── observability/
-│       │   ├── metrics.ts
-│       │   └── structured-logger.ts
-│       └── config/
-│           └── env.ts
+│       ├── postgres/
+│       │   ├── pg-ledger-store.ts
+│       │   ├── pg-context-projection.ts
+│       │   ├── pg-summary-dag.ts
+│       │   ├── pg-artifact-store.ts
+│       │   ├── pg-conversation-store.ts
+│       │   ├── pg-operator-execution-store.ts
+│       │   ├── pg-unit-of-work.ts
+│       │   └── __tests__/
+│       ├── config/
+│       │   └── create-pg-pool.ts
+│       └── filesystem/
+│           └── node-file-reader.ts
 │
 └── sdk/                             # Public API package
     ├── package.json                 # { "dependencies": all internal packages }
     └── src/
         ├── index.ts                 # MemoryEngine factory + re-exports
-        ├── create-engine.ts
         └── presets/
-            ├── postgres.ts          # Pre-wired PostgreSQL setup
-            └── sqlite.ts            # Pre-wired SQLite setup
+            ├── in-memory.ts
+            └── postgres.ts
 ```
 
 ### Dependency Rule Enforcement
@@ -1339,6 +1567,21 @@ DB Row → Adapter Mapper → Application DTO → Domain Entity
 
 **Rule:** Domain entities never see SQL row shapes. Adapters perform all mapping.
 
+### 11.3 Canonical Integrity Checks
+
+The summary DAG integrity contract consists of these eight checks:
+
+| # | Check | Requirement |
+|---|---|---|
+| 1 | **No orphan edges** | Every summary edge points to an existing message or summary |
+| 2 | **No orphan context refs** | Every context item points to an existing message or summary |
+| 3 | **Acyclic DAG** | Recursive traversal never revisits the same summary node |
+| 4 | **Leaf covers >= 1 message** | Every leaf summary has at least one message edge |
+| 5 | **Condensed covers >= 1 summary** | Every condensed summary has at least one parent-summary edge |
+| 6 | **Contiguous context positions** | Context positions form `[0, 1, 2, ..., N-1]` with no gaps |
+| 7 | **Monotonic ledger sequence** | Conversation-local ledger sequences are strictly increasing with no gaps |
+| 8 | **Artifact ID propagation** | Summary `artifact_ids` preserve the union of source artifact references |
+
 ---
 
 ## 12. Compaction & Retrieval Algorithms
@@ -1396,10 +1639,14 @@ function runCompaction(conversationId, trigger):
 
 ### 12.3 Candidate Selection
 
-1. Exclude pinned items (system prompt, explicit pins)
+1. Exclude pinned items (system prompt, tail window, explicit pins)
 2. Sort remaining by position (oldest first)
-3. Build a contiguous oldest block up to `blockTokenTargetFraction × availableBudget`
+3. Build a **contiguous oldest non-pinned block** up to `blockTokenTargetFraction × availableBudget`
 4. Enforce `minBlockSize` (default: 2); if fewer candidates remain, skip compaction this round
+
+A compaction block is therefore defined as the oldest contiguous run of
+non-pinned context items that satisfies the minimum block size and token target
+rules. The engine never compacts a single item in isolation.
 
 ### 12.4 Condensation (Multi-Summary Compaction)
 
@@ -1427,6 +1674,18 @@ JOIN walk w ON sme.summary_id = w.id
 JOIN ledger_events le ON le.id = sme.message_id
 ORDER BY le.seq;
 ```
+
+### 12.6 Deterministic Fallback Contract
+
+Level 3 fallback is **head-only truncation** with no LLM call:
+
+- the maximum output is 512 tokens
+- the output appends a marker instructing the caller to use
+  `memory.expand(summary_id)` for full content
+- the engine trims to a word boundary and re-checks token count until the
+  result is within the cap
+- this level is always accepted, which gives the compaction loop a hard
+  termination guarantee
 
 ---
 
@@ -1538,7 +1797,7 @@ interface ExplorerConformanceTest {
 |-------|---------|
 | `CompactionFailedToConvergeError` | Hard compaction exceeded MAX_ROUNDS without reaching budget |
 | `StaleContextError` | `ContextProjectionPort.replaceContextItems()` expected version mismatch during concurrent mutation |
-| `UnauthorizedExpandError` | Non-sub-agent attempted `expand` |
+| `UnauthorizedExpandError` | Untrusted or invalid-lineage caller attempted `expand` |
 | `IdempotencyConflictError` | Duplicate idempotency key with different content |
 | `ConversationNotFoundError` | Referenced conversation doesn't exist |
 | `ArtifactNotFoundError` | Referenced artifact doesn't exist |
@@ -1570,7 +1829,7 @@ interface ExplorerConformanceTest {
                     ┌───────┐
                     │  E2E  │  Golden transcript → deterministic DAG
                    ┌┴───────┴┐
-                   │ Contract │  Same suite runs against PG + SQLite
+                   │ Contract │  Same suite runs against PG + in-memory
                   ┌┴─────────┴┐
                   │ Application│  Use cases with in-memory fake ports
                  ┌┴───────────┴┐
@@ -1592,13 +1851,14 @@ interface ExplorerConformanceTest {
   - **Convergence:** Hard compaction always brings context under budget
   - **Escalation correctness:** Level 1 → 2 → 3 triggered in correct order
   - **Idempotency:** Duplicate append with same key is no-op
-  - **Authorization gating:** Expand fails for non-sub-agent callers
+  - **Authorization gating:** Expand fails for self-attested or invalid-lineage callers
+  - **Current expand behavior:** Valid child lineage is required, but expansion is still limited to summaries owned by the caller conversation
   - **Artifact ID propagation:** File IDs survive arbitrary compaction rounds
   - **DAG integrity:** No cycles after any sequence of compactions
 
 ### 16.4 Adapter / Contract Tests
 
-- **Storage contract tests:** Same test suite runs against PostgreSQL AND SQLite adapters
+- **Storage contract tests:** Same test suite runs against PostgreSQL and in-memory adapters
   - Verify: append-only invariant, FTS behavior, recursive CTE expansion, idempotency
 - **Explorer conformance tests:** Golden inputs → expected output structure for each explorer
 - **Summarizer adapter tests:** Verify retry behavior, token counting, artifact ID preservation
@@ -1664,12 +1924,19 @@ Every compaction creates traceable domain events:
 
 | Tool | Access Level | Enforcement |
 |------|-------------|-------------|
-| `memory.grep` | All callers | No restriction |
+| `memory.recall` (MCP) / `memory.grep` (Vercel) | All callers | No restriction |
 | `memory.describe` | All callers | No restriction |
-| `memory.expand` | Sub-agents only | `AuthorizationPort.canExpand()` check |
-| `memory.read` (artifact content) | Sub-agents only | `AuthorizationPort.canReadArtifact()` check |
+| `memory.expand` | Sub-agents only | `AuthorizationPort.canExpand()` + trusted runtime/session binding |
+| `memory.llmMap` / `memory.agenticMap` | Bound conversation callers | Conversation ID is derived from runtime binding; application layer validates operator inputs |
+| `memory.getOperatorRun` | Bound conversation callers | Tool adapter rejects runs owned by a different bound conversation |
 
 **Rationale (from Volt):** `expand` and full artifact reads can flood the active context with unbounded content. Restricting to sub-agents ensures the main agent loop remains within budget.
+
+**Canonical enforcement detail:** a tool payload may include caller context for
+transport convenience, but sub-agent identity is not self-attested. Runtimes
+must derive or overwrite `isSubAgent` from trusted session metadata. The current
+application layer validates child lineage before expansion, but expansion itself
+is still limited to summaries owned by the caller conversation.
 
 ### 18.2 Data Boundaries
 
@@ -1695,14 +1962,15 @@ Every compaction creates traceable domain events:
 | Domain model + value objects | `domain` | Pure TypeScript, zero deps |
 | Port interfaces | `application/ports` | All driven + driving ports |
 | Core use cases | `application/use-cases` | Append, Materialize, Compaction, Tools |
-| PostgreSQL adapter | `adapters/storage/postgres` | Full schema + migrations |
+| PostgreSQL adapter | `infrastructure/postgres` | Full schema + migrations |
 | Basic tokenizer | `adapters/tokenizer` | Simple estimator + tiktoken |
 | 5 core explorers | `adapters/explorers` | TS, Python, JSON, Markdown, Fallback |
 | SDK entrypoint | `sdk` | `createMemoryEngine()` factory |
-| Vercel AI SDK adapter | `adapters/tools/vercel` | First framework integration |
+| Vercel AI SDK adapter | `adapters/tools` | First framework integration |
+| Operator recursion | `application/use-cases` + storage | Durable submit/inspect API with child bootstrap reuse |
 | Golden test suite | All packages | Deterministic DAG evolution tests |
 
-**Non-goals:** server mode, multi-tenant, vector DB, UI
+**Non-goals:** HTTP server mode, multi-tenant, vector DB, UI
 
 ### Phase 2 — Ecosystem + Hardening
 
@@ -1710,11 +1978,9 @@ Every compaction creates traceable domain events:
 
 | Deliverable | Notes |
 |-------------|-------|
-| LangChain adapter | Context provider pattern |
-| OpenAI Agents SDK adapter | Tool bundle pattern |
 | 25+ more explorers | Full type coverage from Volt |
-| SQLite adapter | Embedded alternative for local dev |
-| Operator recursion (LLM-Map, Agentic-Map) | Durable submit/inspect API, child bootstrap reuse, polling-first worker, schema validation |
+| MCP hardening | Align session-bound caller derivation and tool naming across adapters |
+| Additional framework adapters | OpenAI Agents SDK, LangChain, or similar host integrations |
 | Observation masking | Rule-based pre-summarization filtering |
 | Composite retrieval scoring | Recency + DAG relevance + optional semantic |
 | Backpressure / job queue | Optional wake-up hints via `subscribe(type, handler)`; polling remains the correctness path |
@@ -1735,7 +2001,7 @@ Every compaction creates traceable domain events:
 
 ## Appendix A: Integration Code Examples
 
-### A.1 Vercel AI SDK (Pattern A: Drop-in Middleware)
+### A.1 Vercel AI SDK
 
 ```typescript
 import { createMemoryEngine } from "@ledgermind/sdk";
@@ -1761,7 +2027,15 @@ const result = await streamText({
     ...ctx.modelMessages,
     ...incomingMessages,
   ],
-  tools: { ...appTools, ...createVercelMemoryTools(engine) },
+  tools: {
+    ...appTools,
+    ...createVercelMemoryTools(engine, {
+      getCallerContext: () => ({
+        conversationId,
+        isSubAgent: false,
+      }),
+    }),
+  },
 });
 
 await engine.append({
@@ -1770,25 +2044,29 @@ await engine.append({
 });
 ```
 
-### A.2 LangChain (Pattern C: Context Provider)
+### A.2 MCP Server
 
 ```typescript
-import { createMemoryEngine } from "@ledgermind/sdk";
-import { LedgerMindRetriever } from "@ledgermind/adapters/tools/langchain";
+import { createLedgermindMcpServer } from "@ledgermind/mcp-server";
 
-const engine = await createMemoryEngine({ storage: "postgres", ... });
-const retriever = new LedgerMindRetriever(engine);
-
-const context = await retriever.getRelevantDocuments(conversationId, {
-  budgetTokens: 16_000,
+const runtime = createLedgermindMcpServer({
+  config: {
+    storage: { type: "in-memory" },
+    enableWriteTools: false,
+    readOnly: true,
+  },
 });
-// Returns: Document[] with summaries + recent messages
+
+// Exposes memory.recall, memory.describe, memory.expand over MCP transport.
 ```
 
 ### A.3 Custom Agent (Direct API)
 
 ```typescript
-const engine = await createMemoryEngine({ storage: "sqlite", ... });
+const engine = createMemoryEngine({
+  storage: { type: "in-memory" },
+  summarizer: { type: "deterministic" },
+});
 
 // Append events
 await engine.append({ conversationId, events });
@@ -1814,9 +2092,9 @@ const desc = await engine.describe({ id: "sum_abc123def456" });
         ┌────────────────┼────────────────┐
         ▼                ▼                ▼
 ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│  adapters/   │ │  adapters/   │ │  adapters/   │
-│  storage/pg  │ │  llm/openai  │ │  tools/      │
-│              │ │              │ │  vercel      │
+│infrastructure│ │  adapters/   │ │  adapters/   │
+│ /postgres    │ │     llm      │ │    tools     │
+│              │ │deterministic │ │   + MCP      │
 └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
        │                │                │
        └────────────────┼────────────────┘

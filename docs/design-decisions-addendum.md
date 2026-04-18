@@ -5,6 +5,10 @@
 >
 > This document resolves ambiguities and underspecified areas in the
 > High-Level Design document that would block Phase 1 implementation.
+>
+> Note: [docs/high-level-design.md](./high-level-design.md) is the canonical
+> implementation contract for this repo. This document remains a supporting
+> record of resolved decisions and rationale.
 
 ---
 

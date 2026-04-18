@@ -82,9 +82,9 @@ Example configs live under `examples/claude-code/` and `examples/ampcode/`.
 
 ## Key docs
 
-- `docs/high-level-design.md` — architecture blueprint
+- `docs/high-level-design.md` — canonical design contract and architecture blueprint
 - `docs/operator-level-recursion.md` — durable operator API, worker flow, and inspection guide
-- `docs/design-decisions-addendum.md` — implementation decisions and invariants
+- `docs/design-decisions-addendum.md` — supporting design decisions and rationale
 - `docs/testing-strategy.md` — test strategy and quality gates
 - `docs/implementation-roadmap.md` — delivery roadmap and sprint sequencing
 - `docs/agent-integration-architecture.md` — MCP-first agent integration ADR
