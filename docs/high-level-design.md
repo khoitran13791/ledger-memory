@@ -673,6 +673,14 @@ interface MaterializeContextOutput {
   artifactReferences: ArtifactReference[];
   budgetUsed: TokenCount;
 }
+
+interface ArtifactReference {
+  id: ArtifactId;
+  mimeType: MimeType;
+  tokenCount: TokenCount;
+  originalPath?: string;                 // populated for path-backed artifacts
+  explorationSummary?: string;           // populated when exploration summary exists
+}
 ```
 
 **Steps:**
@@ -685,6 +693,12 @@ interface MaterializeContextOutput {
 7. Emit `ContextMaterialized` event
 
 **Guarantee:** Output `budgetUsed` ≤ input `budgetTokens - overheadTokens` OR returns `BudgetExceededError`.
+
+**Current implementation contract:** `artifactReferences` includes artifact
+IDs plus transport-safe preview metadata (`mimeType`, `tokenCount`,
+`originalPath?`, `explorationSummary?`). `systemPreamble` renders the same data
+as human-readable tool hints (`file_id (/path) - preview teaser`) so callers do
+not need a separate `describe()` call just to discover basic artifact previews.
 
 ### 7.3 RunCompaction (Core Engine)
 
@@ -798,8 +812,10 @@ interface DescribeOutput {
 **Current implementation contract:** summary metadata includes `content`.
 Artifact metadata includes `originalPath` and `explorerUsed` when available.
 The current code does not yet include `SummaryNode.kind` or `Artifact.mimeType`
-inside `metadata`; callers that need richer planning data should use
+inside `metadata`; callers that need deeper planning data should use
 `planningSignals`, `parentIds`, and `explorationSummary` where present.
+`materializeContext()` already surfaces first-pass artifact preview fields via
+`artifactReferences` and `systemPreamble`.
 
 #### ExpandUseCase (Guarded)
 
@@ -859,6 +875,12 @@ interface ExploreArtifactOutput {
   tokenCount: TokenCount;
 }
 ```
+
+**Current implementation contract:** `storeArtifact()` performs a first-touch
+exploration pass automatically when the write wins insertion and readable bytes
+are available (inline text/binary and readable path-backed sources). Explicit
+`exploreArtifact()` remains available for re-exploration and explorer-hint
+control.
 
 ### 7.6 Operator-Level Recursion
 

@@ -453,6 +453,35 @@ describe('SDK presets', () => {
 });
 
 describe('createMemoryEngine artifact and explorer integration', () => {
+  it('auto-explores readable artifacts on store so describe has exploration summary without explicit explore', async () => {
+    const conversation = createExistingConversation();
+    vi.spyOn(InMemoryConversationStore.prototype, 'get').mockResolvedValue(conversation);
+
+    const engine = createMemoryEngine(baseConfig);
+
+    const stored = await engine.storeArtifact({
+      conversationId,
+      source: {
+        kind: 'text',
+        content: '{"auth":{"provider":"jwt"},"tokenLimit":128000}',
+      },
+      mimeType: createMimeType('application/json'),
+    });
+
+    const described = await engine.describe({
+      id: stored.artifactId,
+    });
+
+    expect(described.kind).toBe('artifact');
+    expect(described.metadata).toEqual({ explorerUsed: 'json-explorer' });
+    expect(described.planningSignals).toMatchObject({
+      explorerUsed: 'json-explorer',
+      hasExplorationSummary: true,
+    });
+    expect(described.explorationSummary).toBeTypeOf('string');
+    expect(described.explorationSummary?.length).toBeGreaterThan(0);
+  });
+
   it('wires fileReader for in-memory path artifacts and enables path explore round-trip', async () => {
     const conversation = createExistingConversation();
     vi.spyOn(InMemoryConversationStore.prototype, 'get').mockResolvedValue(conversation);

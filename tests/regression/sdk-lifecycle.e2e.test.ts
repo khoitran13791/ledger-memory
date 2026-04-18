@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { InMemoryConversationStore } from '@ledgermind/adapters';
@@ -7,6 +11,7 @@ import {
   createConversation,
   createConversationConfig,
   createConversationId,
+  type EventMetadata,
   createMimeType,
   createTokenCount,
   type MessageRole,
@@ -69,11 +74,13 @@ const createEvent = (
   role: MessageRole,
   content: string,
   tokenCount: number,
+  metadata?: EventMetadata,
 ) => {
   return {
     role,
     content,
     tokenCount: createTokenCount(tokenCount),
+    ...(metadata === undefined ? {} : { metadata }),
   };
 };
 
@@ -351,6 +358,81 @@ describe('sdk lifecycle e2e', () => {
       evidenceIds: [],
     });
     expect(described.explorationSummary).toBe(explored.summary);
+  });
+
+  it('auto-explores stored path artifacts and advertises preview metadata in materialized context', async () => {
+    const { engine, conversationId } = createHarness({
+      suffix: 'artifact_materialize_preview',
+      contextWindow: 256,
+      softThreshold: 0.6,
+      hardThreshold: 0.9,
+    });
+    const tempDir = await mkdtemp(join(tmpdir(), 'ledgermind-sdk-e2e-'));
+    const artifactPath = join(tempDir, 'rollout-notes.txt');
+
+    try {
+      await writeFile(
+        artifactPath,
+        'rollout checklist\nstage alpha complete\nstage beta pending',
+        'utf8',
+      );
+
+      const stored = await engine.storeArtifact({
+        conversationId,
+        source: { kind: 'path', path: artifactPath },
+        mimeType: createMimeType('text/plain'),
+      });
+
+      const described = await engine.describe({
+        id: stored.artifactId,
+      });
+
+      expect(described.kind).toBe('artifact');
+      expect(described.explorationSummary).toBeTypeOf('string');
+      expect(described.explorationSummary?.length).toBeGreaterThan(0);
+      expect(described.explorationSummary).toContain('Fallback exploration for');
+
+      await engine.append({
+        conversationId,
+        events: [
+          createEvent('system', 'You are a deployment runbook assistant.', 15),
+          createEvent('user', 'Track rollout guardrails before merge.', 18),
+          createEvent(
+            'tool',
+            'Attached rollout artifact with stage checkpoints.',
+            18,
+            { artifactIds: [stored.artifactId] },
+          ),
+          createEvent('assistant', 'Guardrails captured and queued for compaction.', 18),
+          createEvent('user', 'Remember to carry artifact previews into context.', 18),
+          createEvent('assistant', 'Will include path and preview teaser in memory context.', 18),
+        ],
+      });
+
+      await engine.runCompaction({
+        conversationId,
+        trigger: 'soft',
+        targetTokens: createTokenCount(90),
+      });
+
+      const context = await engine.materializeContext({
+        conversationId,
+        budgetTokens: 220,
+        overheadTokens: 20,
+      });
+
+      expect(context.artifactReferences).toContainEqual(
+        expect.objectContaining({
+          id: stored.artifactId,
+          originalPath: artifactPath,
+          explorationSummary: expect.any(String),
+        }),
+      );
+      expect(context.systemPreamble).toContain(`${stored.artifactId} (${artifactPath}) - `);
+      expect(context.systemPreamble).toContain('Fallback exploration for');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('keeps append idempotency stable at SDK level for repeated same-key payloads', async () => {

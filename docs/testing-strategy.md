@@ -103,12 +103,12 @@ summaries. Good summaries can mask structural bugs.
 | Use Case | Key Assertions |
 |----------|---------------|
 | **append()** | Monotonic seq assigned; idempotency key dedup; events persisted verbatim; `LedgerEventAppended` emitted; soft threshold check triggers compaction scheduling |
-| **materializeContext()** | Output ≤ budget; pinned items always included; hard threshold triggers blocking compaction; `ContextMaterialized` emitted with correct counts |
+| **materializeContext()** | Output ≤ budget; pinned items always included; hard threshold triggers blocking compaction; artifact references include optional `originalPath`/`explorationSummary` preview metadata; system preamble advertises artifact preview teasers; `ContextMaterialized` emitted with correct counts |
 | **runCompaction()** | Escalation L1→L2→L3 on non-shrinking output; DAG edges created correctly; artifact IDs propagated; convergence within maxRounds; `SummaryNodeCreated` emitted per round |
 | **grep()** | Regex matches across ledger; scoped to DAG subtree when `scope` provided |
 | **describe()** | Returns correct metadata for summary nodes and artifacts |
 | **expand()** | Returns original messages from DAG walk; respects authorization gate |
-| **storeArtifact()** | Content-addressed ID; stores inline/path variants |
+| **storeArtifact()** | Content-addressed ID; stores inline/path variants; auto-explores readable artifacts on first insert win |
 | **exploreArtifact()** | Dispatches to correct explorer; respects maxTokens |
 
 ### 2.3 Adapter Layer Tests (~10-15%)
@@ -139,13 +139,15 @@ it("full lifecycle: append → compact → materialize → grep → expand", asy
   // Append a conversation
   await engine.append({ conversationId, events: transcript });
 
-  // Store and explore an artifact
+  // Store artifact (first touch auto-explores when readable)
   const { artifactId } = await engine.storeArtifact({ conversationId, source: { kind: "text", content: largeJson } });
-  const exploration = await engine.exploreArtifact({ artifactId });
+  const described = await engine.describe({ id: artifactId });
+  expect(described.explorationSummary?.length ?? 0).toBeGreaterThan(0);
 
   // Materialize under tight budget (forces compaction)
   const ctx = await engine.materializeContext({ conversationId, budgetTokens: 2000, overheadTokens: 200 });
   expect(ctx.budgetUsed.value).toBeLessThanOrEqual(1800);
+  expect(ctx.artifactReferences.some((artifact) => artifact.explorationSummary !== undefined)).toBe(true);
 
   // Grep finds content from compacted history
   const grepResult = await engine.grep({ conversationId, pattern: "specific-term", limit: 10 });
