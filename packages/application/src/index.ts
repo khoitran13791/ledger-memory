@@ -62,6 +62,7 @@ export type {
   ToolDefinition,
   ToolPolicyMetadata,
   ToolProviderPort,
+  ToolRuntimeContextProvider,
 } from './ports/driving/tool-provider.port';
 
 export type { ArtifactStorePort } from './ports/driven/persistence/artifact-store.port';

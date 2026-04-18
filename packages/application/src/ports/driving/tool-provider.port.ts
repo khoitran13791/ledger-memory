@@ -1,3 +1,5 @@
+import type { CallerContext } from '../driven/auth/authorization.port';
+
 import type { MemoryEngine } from './memory-engine.port';
 
 export type ToolAccessLevel = 'read' | 'write' | 'privileged';
@@ -22,6 +24,10 @@ export interface ToolDefinition {
   execute(input: unknown): Promise<unknown>;
 }
 
+export interface ToolRuntimeContextProvider {
+  getCallerContext(): CallerContext;
+}
+
 export interface ToolProviderPort {
-  createTools(engine: MemoryEngine): ToolDefinition[];
+  createTools(engine: MemoryEngine, runtime: ToolRuntimeContextProvider): ToolDefinition[];
 }

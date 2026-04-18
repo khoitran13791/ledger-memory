@@ -2,6 +2,8 @@ export interface ToolReferences {
   readonly summaryIds?: readonly string[];
   readonly artifactIds?: readonly string[];
   readonly eventIds?: readonly string[];
+  readonly conversationIds?: readonly string[];
+  readonly operatorRunIds?: readonly string[];
 }
 
 export interface ToolSuccessEnvelope<TData = Record<string, unknown>> {

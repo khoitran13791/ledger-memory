@@ -4,14 +4,22 @@ import {
   ArtifactNotFoundError,
   ConversationNotFoundError,
   InvalidReferenceError,
-  UnauthorizedExpandError,
+  type CallerContext,
+  type AgenticMapInput,
+  type AgenticMapOutput,
   type DescribeInput,
   type DescribeOutput,
   type ExpandInput,
   type ExpandOutput,
+  type GetOperatorRunInput,
+  type GetOperatorRunOutput,
   type GrepInput,
   type GrepOutput,
+  type LLMMapInput,
+  type LLMMapOutput,
   type MemoryEngine,
+  type ToolRuntimeContextProvider,
+  UnauthorizedExpandError,
 } from '@ledgermind/application';
 import {
   createArtifactId,
@@ -19,6 +27,7 @@ import {
   createEventId,
   createSequenceNumber,
   createSummaryNodeId,
+  createTimestamp,
   createTokenCount,
 } from '@ledgermind/domain';
 
@@ -29,13 +38,29 @@ import {
 } from '../vercel-ai-memory-tools.adapter';
 import { createCanonicalMemoryToolCatalog } from '../canonical-memory-tool-catalog';
 
-type MinimalMemoryEngine = Pick<MemoryEngine, 'grep' | 'describe' | 'expand'>;
+type MinimalMemoryEngine = Pick<
+  MemoryEngine,
+  'grep' | 'describe' | 'expand' | 'llmMap' | 'agenticMap' | 'getOperatorRun'
+>;
+
+const runtimeCallerContext: CallerContext = {
+  conversationId: createConversationId('conv_runtime'),
+  isSubAgent: true,
+  parentConversationId: createConversationId('conv_parent'),
+};
+
+const runtime: ToolRuntimeContextProvider = {
+  getCallerContext: () => runtimeCallerContext,
+};
 
 const createMinimalEngine = (): {
   readonly engine: MinimalMemoryEngine;
   readonly grep: ReturnType<typeof vi.fn<(input: GrepInput) => Promise<GrepOutput>>>;
   readonly describe: ReturnType<typeof vi.fn<(input: DescribeInput) => Promise<DescribeOutput>>>;
   readonly expand: ReturnType<typeof vi.fn<(input: ExpandInput) => Promise<ExpandOutput>>>;
+  readonly llmMap: ReturnType<typeof vi.fn<(input: LLMMapInput) => Promise<LLMMapOutput>>>;
+  readonly agenticMap: ReturnType<typeof vi.fn<(input: AgenticMapInput) => Promise<AgenticMapOutput>>>;
+  readonly getOperatorRun: ReturnType<typeof vi.fn<(input: GetOperatorRunInput) => Promise<GetOperatorRunOutput>>>;
 } => {
   const grep = vi.fn(async (_input: GrepInput): Promise<GrepOutput> => {
     void _input;
@@ -60,15 +85,56 @@ const createMinimalEngine = (): {
     };
   });
 
+  const llmMap = vi.fn(async (_input: LLMMapInput): Promise<LLMMapOutput> => {
+    void _input;
+    return {
+      runId: 'run_llm_001',
+      status: 'pending',
+    };
+  });
+
+  const agenticMap = vi.fn(async (_input: AgenticMapInput): Promise<AgenticMapOutput> => {
+    void _input;
+    return {
+      runId: 'run_agent_001',
+      status: 'running',
+    };
+  });
+
+  const getOperatorRun = vi.fn(async (_input: GetOperatorRunInput): Promise<GetOperatorRunOutput> => {
+    void _input;
+    return {
+      runId: 'run_agent_001',
+      conversationId: runtimeCallerContext.conversationId,
+      operatorKind: 'agenticMap',
+      status: 'completed',
+      createdAt: createTimestamp(new Date('2026-04-13T00:00:00.000Z')),
+      updatedAt: createTimestamp(new Date('2026-04-13T00:00:01.000Z')),
+      taskCount: 0,
+      succeededTaskCount: 0,
+      failedTaskCount: 0,
+      retryableFailureTaskCount: 0,
+      runningTaskCount: 0,
+      pendingTaskCount: 0,
+      tasks: [],
+    };
+  });
+
   return {
     engine: {
       grep,
       describe,
       expand,
+      llmMap,
+      agenticMap,
+      getOperatorRun,
     },
     grep,
     describe,
     expand,
+    llmMap,
+    agenticMap,
+    getOperatorRun,
   };
 };
 
@@ -105,7 +171,9 @@ const assertReferencesShape = (value: unknown): void => {
 
   const references = value as Record<string, unknown>;
   const keys = Object.keys(references);
-  expect(keys.every((key) => ['summaryIds', 'artifactIds', 'eventIds'].includes(key))).toBe(true);
+  expect(
+    keys.every((key) => ['summaryIds', 'artifactIds', 'eventIds', 'conversationIds', 'operatorRunIds'].includes(key)),
+  ).toBe(true);
 
   if ('summaryIds' in references) {
     assertStringArray(references.summaryIds);
@@ -117,6 +185,14 @@ const assertReferencesShape = (value: unknown): void => {
 
   if ('eventIds' in references) {
     assertStringArray(references.eventIds);
+  }
+
+  if ('conversationIds' in references) {
+    assertStringArray(references.conversationIds);
+  }
+
+  if ('operatorRunIds' in references) {
+    assertStringArray(references.operatorRunIds);
   }
 };
 
@@ -196,55 +272,68 @@ describe('createVercelMemoryTools', () => {
   it('returns a Vercel AI SDK-native tool bundle object', () => {
     const { engine } = createMinimalEngine();
 
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     expect(Array.isArray(tools)).toBe(false);
     expect(Object.keys(tools).sort()).toEqual([
+      'memory.agenticMap',
       'memory.describe',
       'memory.expand',
-      'memory.recall',
+      'memory.getOperatorRun',
+      'memory.grep',
+      'memory.llmMap',
     ]);
   });
 
   it('fails fast when engine is missing or invalid', () => {
-    expect(() => createVercelMemoryTools(undefined as unknown as MemoryEngine)).toThrow(TypeError);
-    expect(() => createVercelMemoryTools(null as unknown as MemoryEngine)).toThrow(TypeError);
-    expect(() => createVercelMemoryTools({} as MemoryEngine)).toThrow(TypeError);
+    expect(() => createVercelMemoryTools(undefined as unknown as MemoryEngine, runtime)).toThrow(TypeError);
+    expect(() => createVercelMemoryTools(null as unknown as MemoryEngine, runtime)).toThrow(TypeError);
+    expect(() => createVercelMemoryTools({} as MemoryEngine, runtime)).toThrow(TypeError);
+    expect(() => createVercelMemoryTools(createMinimalEngine().engine as MemoryEngine, undefined as never)).toThrow(TypeError);
 
     expect(() =>
-      createVercelMemoryTools({
-        grep: async (): Promise<GrepOutput> => ({ matches: [] }),
-        describe: async (): Promise<DescribeOutput> => ({
-          kind: 'summary',
-          metadata: {},
-          tokenCount: createTokenCount(1),
-        }),
-      } as unknown as MemoryEngine),
+      createVercelMemoryTools(
+        {
+          grep: async (): Promise<GrepOutput> => ({ matches: [] }),
+          describe: async (): Promise<DescribeOutput> => ({
+            kind: 'summary',
+            metadata: {},
+            tokenCount: createTokenCount(1),
+          }),
+        } as unknown as MemoryEngine,
+        runtime,
+      ),
     ).toThrow(TypeError);
 
     expect(() =>
-      createVercelMemoryTools({
-        grep: 'not-a-function',
-        describe: async (): Promise<DescribeOutput> => ({
-          kind: 'summary',
-          metadata: {},
-          tokenCount: createTokenCount(1),
-        }),
-        expand: async (): Promise<ExpandOutput> => ({ messages: [] }),
-      } as unknown as MemoryEngine),
+      createVercelMemoryTools(
+        {
+          grep: 'not-a-function',
+          describe: async (): Promise<DescribeOutput> => ({
+            kind: 'summary',
+            metadata: {},
+            tokenCount: createTokenCount(1),
+          }),
+          expand: async (): Promise<ExpandOutput> => ({ messages: [] }),
+        } as unknown as MemoryEngine,
+        runtime,
+      ),
     ).toThrow(TypeError);
   });
 
   it('returns stable callable definitions for recall, describe, and expand', () => {
     const { engine } = createMinimalEngine();
 
-    const first = createVercelMemoryTools(engine as MemoryEngine);
-    const second = createVercelMemoryTools(engine as MemoryEngine);
+    const first = createVercelMemoryTools(engine as MemoryEngine, runtime);
+    const second = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     expect(Object.keys(first).sort()).toEqual([
+      'memory.agenticMap',
       'memory.describe',
       'memory.expand',
-      'memory.recall',
+      'memory.getOperatorRun',
+      'memory.grep',
+      'memory.llmMap',
     ]);
     expect(Object.keys(second).sort()).toEqual(Object.keys(first).sort());
 
@@ -259,18 +348,18 @@ describe('createVercelMemoryTools', () => {
   it('exposes stable Vercel alias helper', () => {
     const { engine } = createMinimalEngine();
 
-    const canonical = createVercelMemoryTools(engine as MemoryEngine);
-    const alias = createVercelTools(engine as MemoryEngine);
+    const canonical = createVercelMemoryTools(engine as MemoryEngine, runtime);
+    const alias = createVercelTools(engine as MemoryEngine, runtime);
 
     expect(Object.keys(alias).sort()).toEqual(Object.keys(canonical).sort());
   });
 
   it('returns canonical success envelope for recall execution', async () => {
     const { engine, grep } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
-    const recallTool = getToolSetTool(tools, 'memory.recall');
-    const result = await recallTool.execute({
+    const grepTool = getToolSetTool(tools, 'memory.grep');
+    const result = await grepTool.execute({
       conversationId: 'conv_1',
       query: 'alpha',
       scope: 'sum_scope_1',
@@ -278,7 +367,7 @@ describe('createVercelMemoryTools', () => {
 
     expect(grep).toHaveBeenCalledTimes(1);
     expect(grep).toHaveBeenCalledWith({
-      conversationId: 'conv_1',
+      conversationId: runtimeCallerContext.conversationId,
       pattern: 'alpha',
       scope: 'sum_scope_1',
     });
@@ -286,13 +375,14 @@ describe('createVercelMemoryTools', () => {
     const envelope = assertSuccessEnvelope(result, { matches: [] });
     expect(envelope.references).toEqual({
       summaryIds: ['sum_scope_1'],
+      conversationIds: ['conv_runtime'],
     });
     expect(envelope.meta).toBeUndefined();
   });
 
   it('preserves recall match event identifiers when available', async () => {
     const { engine, grep } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     grep.mockResolvedValueOnce({
       matches: [
@@ -309,8 +399,8 @@ describe('createVercelMemoryTools', () => {
       ],
     });
 
-    const recallTool = getToolSetTool(tools, 'memory.recall');
-    const result = await recallTool.execute({
+    const grepTool = getToolSetTool(tools, 'memory.grep');
+    const result = await grepTool.execute({
       conversationId: 'conv_1',
       query: 'alpha',
     });
@@ -331,13 +421,14 @@ describe('createVercelMemoryTools', () => {
     });
     expect(envelope.references).toEqual({
       eventIds: ['evt_100', 'evt_101'],
+      conversationIds: ['conv_runtime'],
     });
     expect(grep).toHaveBeenCalledTimes(1);
   });
 
   it('returns canonical success envelope for describe execution', async () => {
     const { engine, describe } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     const describeTool = getToolSetTool(tools, 'memory.describe');
     const result = await describeTool.execute({ id: 'sum_123' });
@@ -358,7 +449,7 @@ describe('createVercelMemoryTools', () => {
 
   it('derives artifact references for artifact describe results', async () => {
     const { engine, describe } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     describe.mockResolvedValueOnce({
       kind: 'artifact',
@@ -381,7 +472,7 @@ describe('createVercelMemoryTools', () => {
 
   it('preserves summary, artifact, and event references when recall output provides them', async () => {
     const { engine, grep } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     const grepOutputWithReferences = {
       matches: [],
@@ -394,8 +485,8 @@ describe('createVercelMemoryTools', () => {
 
     grep.mockResolvedValueOnce(grepOutputWithReferences);
 
-    const recallTool = getToolSetTool(tools, 'memory.recall');
-    const result = await recallTool.execute({
+    const grepTool = getToolSetTool(tools, 'memory.grep');
+    const result = await grepTool.execute({
       conversationId: 'conv_1',
       query: 'alpha',
       scope: 'sum_scope_1',
@@ -403,7 +494,7 @@ describe('createVercelMemoryTools', () => {
 
     expect(grep).toHaveBeenCalledTimes(1);
     expect(grep).toHaveBeenCalledWith({
-      conversationId: 'conv_1',
+      conversationId: runtimeCallerContext.conversationId,
       pattern: 'alpha',
       scope: 'sum_scope_1',
     });
@@ -413,13 +504,14 @@ describe('createVercelMemoryTools', () => {
       summaryIds: ['sum_scope_1'],
       artifactIds: ['file_1'],
       eventIds: ['evt_1'],
+      conversationIds: ['conv_runtime'],
     });
     expect(envelope.meta).toBeUndefined();
   });
 
   it('preserves summary, artifact, and event references when describe output provides them', async () => {
     const { engine, describe } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     const describeOutputWithReferences = {
       kind: 'summary',
@@ -451,14 +543,14 @@ describe('createVercelMemoryTools', () => {
 
   it('returns canonical success envelope for expand execution', async () => {
     const { engine, expand } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     const expandTool = getToolSetTool(tools, 'memory.expand');
     const result = await expandTool.execute({
       summaryId: 'sum_leaf_1',
       callerContext: {
         conversationId: 'conv_2',
-        isSubAgent: true,
+        isSubAgent: false,
         parentConversationId: 'conv_parent_1',
       },
     });
@@ -466,35 +558,23 @@ describe('createVercelMemoryTools', () => {
     expect(expand).toHaveBeenCalledTimes(1);
     expect(expand).toHaveBeenCalledWith({
       summaryId: 'sum_leaf_1',
-      callerContext: {
-        conversationId: 'conv_2',
-        isSubAgent: true,
-        parentConversationId: 'conv_parent_1',
-      },
+      callerContext: runtimeCallerContext,
     });
 
     const envelope = assertSuccessEnvelope(result, { messages: [] });
     expect(envelope.references).toEqual({
       summaryIds: ['sum_leaf_1'],
+      conversationIds: ['conv_runtime'],
     });
     expect(envelope.meta).toBeUndefined();
   });
 
-  it.each([
-    ['missing callerContext', { summaryId: 'sum_leaf_1' }],
-    ['non-object callerContext', { summaryId: 'sum_leaf_1', callerContext: 'invalid' }],
-    ['missing conversationId', { summaryId: 'sum_leaf_1', callerContext: { isSubAgent: true } }],
-    ['missing isSubAgent', { summaryId: 'sum_leaf_1', callerContext: { conversationId: 'conv_2' } }],
-    [
-      'non-boolean isSubAgent',
-      { summaryId: 'sum_leaf_1', callerContext: { conversationId: 'conv_2', isSubAgent: 'true' } },
-    ],
-  ])('returns TOOL_EXECUTION_FAILED when expand caller context is invalid: %s', async (_case, payload) => {
+  it('returns TOOL_EXECUTION_FAILED when expand input is missing summaryId', async () => {
     const { engine, expand } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     const expandTool = getToolSetTool(tools, 'memory.expand');
-    const result = await expandTool.execute(payload);
+    const result = await expandTool.execute({});
 
     const envelope = assertErrorEnvelope(result, 'TOOL_EXECUTION_FAILED');
     expect((envelope.error as Record<string, unknown>).message).toContain('memory.expand');
@@ -503,7 +583,7 @@ describe('createVercelMemoryTools', () => {
 
   it('preserves expanded event identifiers in success payload', async () => {
     const { engine, expand } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     const expandOutput = {
       messages: [
@@ -529,12 +609,13 @@ describe('createVercelMemoryTools', () => {
     expect(envelope.references).toEqual({
       summaryIds: ['sum_leaf_1'],
       eventIds: ['evt_expand_1', 'evt_expand_2'],
+      conversationIds: ['conv_runtime'],
     });
   });
 
   it('preserves summary, artifact, and event references when expand output provides them', async () => {
     const { engine, expand } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     const expandOutputWithReferences = {
       messages: [{ id: 'evt_expand_1', content: 'first' }],
@@ -561,12 +642,13 @@ describe('createVercelMemoryTools', () => {
       summaryIds: ['sum_leaf_1'],
       artifactIds: ['file_1'],
       eventIds: ['evt_expand_1'],
+      conversationIds: ['conv_runtime'],
     });
   });
 
   it('derives artifact references from expand message metadata', async () => {
     const { engine, expand } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     const expandOutput = {
       messages: [
@@ -596,12 +678,13 @@ describe('createVercelMemoryTools', () => {
       summaryIds: ['sum_leaf_2'],
       artifactIds: ['file_7', 'file_8', 'file_9'],
       eventIds: ['evt_expand_3'],
+      conversationIds: ['conv_runtime'],
     });
   });
 
   it('maps UnauthorizedExpandError to UNAUTHORIZED_EXPAND envelope', async () => {
     const { engine, expand } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     expand.mockRejectedValueOnce(
       new UnauthorizedExpandError(createConversationId('conv_denied'), createSummaryNodeId('sum_denied')),
@@ -627,12 +710,12 @@ describe('createVercelMemoryTools', () => {
 
   it('maps InvalidReferenceError to INVALID_REFERENCE envelope', async () => {
     const { engine, grep } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     grep.mockRejectedValueOnce(new InvalidReferenceError('summary_scope', 'sum_missing'));
 
-    const recallTool = getToolSetTool(tools, 'memory.recall');
-    const result = await recallTool.execute({
+    const grepTool = getToolSetTool(tools, 'memory.grep');
+    const result = await grepTool.execute({
       conversationId: 'conv_1',
       query: 'alpha',
       scope: 'sum_missing',
@@ -647,7 +730,7 @@ describe('createVercelMemoryTools', () => {
 
   it('maps invalid artifact reference to INVALID_REFERENCE envelope', async () => {
     const { engine, describe } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     describe.mockRejectedValueOnce(new InvalidReferenceError('artifact', 'file_missing'));
 
@@ -663,7 +746,7 @@ describe('createVercelMemoryTools', () => {
 
   it('maps ArtifactNotFoundError to ARTIFACT_NOT_FOUND envelope', async () => {
     const { engine, describe } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     describe.mockRejectedValueOnce(new ArtifactNotFoundError(createArtifactId('file_missing')));
 
@@ -678,12 +761,12 @@ describe('createVercelMemoryTools', () => {
 
   it('maps ConversationNotFoundError to CONVERSATION_NOT_FOUND envelope', async () => {
     const { engine, grep } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     grep.mockRejectedValueOnce(new ConversationNotFoundError(createConversationId('conv_missing')));
 
-    const recallTool = getToolSetTool(tools, 'memory.recall');
-    const result = await recallTool.execute({
+    const grepTool = getToolSetTool(tools, 'memory.grep');
+    const result = await grepTool.execute({
       conversationId: 'conv_missing',
       query: 'alpha',
     });
@@ -694,9 +777,38 @@ describe('createVercelMemoryTools', () => {
     });
   });
 
+  it('rejects getOperatorRun inspection for runs owned by a different runtime conversation', async () => {
+    const { engine, getOperatorRun } = createMinimalEngine();
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
+
+    getOperatorRun.mockResolvedValueOnce({
+      runId: 'run_foreign_001',
+      conversationId: createConversationId('conv_foreign_owner'),
+      operatorKind: 'agenticMap',
+      status: 'completed',
+      createdAt: createTimestamp(new Date('2026-04-13T00:00:00.000Z')),
+      updatedAt: createTimestamp(new Date('2026-04-13T00:00:01.000Z')),
+      taskCount: 0,
+      succeededTaskCount: 0,
+      failedTaskCount: 0,
+      retryableFailureTaskCount: 0,
+      runningTaskCount: 0,
+      pendingTaskCount: 0,
+      tasks: [],
+    });
+
+    const getOperatorRunTool = getToolSetTool(tools, 'memory.getOperatorRun');
+    const result = await getOperatorRunTool.execute({ runId: 'run_foreign_001' });
+
+    const envelope = assertErrorEnvelope(result, 'TOOL_EXECUTION_FAILED');
+    expect((envelope.error as Record<string, unknown>).message).toBe(
+      'Operator run does not belong to the bound runtime conversation.',
+    );
+  });
+
   it('maps unknown errors to TOOL_EXECUTION_FAILED envelope', async () => {
     const { engine, describe } = createMinimalEngine();
-    const tools = createVercelMemoryTools(engine as MemoryEngine);
+    const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     describe.mockRejectedValueOnce(new Error('unexpected failure'));
 
@@ -709,12 +821,11 @@ describe('createVercelMemoryTools', () => {
 });
 
 describe('VercelAiMemoryToolsAdapter', () => {
-  it('exposes the same canonical tool names and policy metadata as the shared catalog', () => {
+  it('exposes the runtime-bound tool names and policy metadata', () => {
     const { engine } = createMinimalEngine();
     const adapter = new VercelAiMemoryToolsAdapter();
 
-    const catalog = createCanonicalMemoryToolCatalog(engine as MemoryEngine);
-    const tools = adapter.createTools(engine as MemoryEngine);
+    const tools = adapter.createTools(engine as MemoryEngine, runtime);
 
     expect(
       tools.map((tool) => ({
@@ -724,27 +835,65 @@ describe('VercelAiMemoryToolsAdapter', () => {
         subAgentOnly: tool.subAgentOnly,
         idempotent: tool.idempotent,
       })),
-    ).toEqual(
-      catalog.map((tool) => ({
-        name: tool.name,
-        access: tool.access,
-        requiresApproval: tool.requiresApproval,
-        subAgentOnly: tool.subAgentOnly,
-        idempotent: tool.idempotent,
-      })),
-    );
+    ).toEqual([
+      {
+        name: 'memory.grep',
+        access: 'read',
+        requiresApproval: false,
+        subAgentOnly: false,
+        idempotent: true,
+      },
+      {
+        name: 'memory.describe',
+        access: 'read',
+        requiresApproval: false,
+        subAgentOnly: false,
+        idempotent: true,
+      },
+      {
+        name: 'memory.expand',
+        access: 'privileged',
+        requiresApproval: true,
+        subAgentOnly: true,
+        idempotent: true,
+      },
+      {
+        name: 'memory.llmMap',
+        access: 'write',
+        requiresApproval: true,
+        subAgentOnly: false,
+        idempotent: false,
+      },
+      {
+        name: 'memory.agenticMap',
+        access: 'write',
+        requiresApproval: true,
+        subAgentOnly: false,
+        idempotent: false,
+      },
+      {
+        name: 'memory.getOperatorRun',
+        access: 'read',
+        requiresApproval: false,
+        subAgentOnly: false,
+        idempotent: true,
+      },
+    ]);
   });
 
   it('creates the same required memory tools via ToolProviderPort', () => {
     const { engine } = createMinimalEngine();
     const adapter = new VercelAiMemoryToolsAdapter();
 
-    const tools = adapter.createTools(engine as MemoryEngine);
+    const tools = adapter.createTools(engine as MemoryEngine, runtime);
 
     expect(tools.map((tool) => tool.name)).toEqual([
-      'memory.recall',
+      'memory.grep',
       'memory.describe',
       'memory.expand',
+      'memory.llmMap',
+      'memory.agenticMap',
+      'memory.getOperatorRun',
     ]);
   });
 });

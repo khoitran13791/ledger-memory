@@ -73,7 +73,22 @@ const toErrorPayload = (error: unknown): ToolErrorPayload => {
         };
   }
 
-  if (error instanceof ApplicationError || error instanceof InvariantViolationError) {
+  if (error instanceof ApplicationError) {
+    const details = toErrorDetails(error);
+
+    return details === undefined
+      ? {
+          code: error.code,
+          message: error.message,
+        }
+      : {
+          code: error.code,
+          message: error.message,
+          details,
+        };
+  }
+
+  if (error instanceof InvariantViolationError) {
     const details = toErrorDetails(error);
 
     return details === undefined
