@@ -36,7 +36,6 @@ import {
   createVercelTools,
   VercelAiMemoryToolsAdapter,
 } from '../vercel-ai-memory-tools.adapter';
-import { createCanonicalMemoryToolCatalog } from '../canonical-memory-tool-catalog';
 
 type MinimalMemoryEngine = Pick<
   MemoryEngine,

@@ -15,15 +15,30 @@ import { createInMemoryMemoryEngine } from '@ledgermind/sdk';
 
 interface HarnessConfig {
   readonly suffix: string;
+  readonly parentSuffix?: string;
   readonly contextWindow: number;
   readonly softThreshold: number;
   readonly hardThreshold: number;
 }
 
 const createHarness = (config: HarnessConfig) => {
+  const parentConversationId = config.parentSuffix
+    ? createConversationId(`conv_e2e_${config.parentSuffix}`)
+    : undefined;
   const conversationId = createConversationId(`conv_e2e_${config.suffix}`);
+  const parentConversation = parentConversationId
+    ? createConversation({
+        id: parentConversationId,
+        config: createConversationConfig({
+          modelName: 'e2e-test-model',
+          contextWindow: createTokenCount(config.contextWindow),
+          thresholds: createCompactionThresholds(config.softThreshold, config.hardThreshold),
+        }),
+      })
+    : null;
   const conversation = createConversation({
     id: conversationId,
+    parentId: parentConversationId ?? null,
     config: createConversationConfig({
       modelName: 'e2e-test-model',
       contextWindow: createTokenCount(config.contextWindow),
@@ -32,11 +47,20 @@ const createHarness = (config: HarnessConfig) => {
   });
 
   vi.spyOn(InMemoryConversationStore.prototype, 'get').mockImplementation(async (id) => {
-    return id === conversationId ? conversation : null;
+    if (id === conversationId) {
+      return conversation;
+    }
+
+    if (parentConversation !== null && id === parentConversationId) {
+      return parentConversation;
+    }
+
+    return null;
   });
 
   return {
     conversationId,
+    parentConversationId,
     engine: createInMemoryMemoryEngine(),
   };
 };
@@ -70,8 +94,9 @@ afterEach(() => {
 
 describe('sdk lifecycle e2e', () => {
   it('executes append → store/explore artifact → compact → materialize → grep → expand → integrity flow end-to-end', async () => {
-    const { engine, conversationId } = createHarness({
+    const { engine, conversationId, parentConversationId } = createHarness({
       suffix: 'full_lifecycle',
+      parentSuffix: 'full_lifecycle_parent',
       contextWindow: 240,
       softThreshold: 0.6,
       hardThreshold: 0.9,
@@ -131,11 +156,17 @@ describe('sdk lifecycle e2e', () => {
     expect(grep.matches.length).toBeGreaterThan(0);
 
     const summaryReference = requireFirstId(context.summaryReferences, 'summary reference');
+    expect(parentConversationId, 'Expected parent conversation for sub-agent expand.').toBeDefined();
+    if (parentConversationId === undefined) {
+      throw new Error('Expected parent conversation for sub-agent expand.');
+    }
+
     const expanded = await engine.expand({
       summaryId: summaryReference.id,
       callerContext: {
         conversationId,
         isSubAgent: true,
+        parentConversationId,
       },
     });
 

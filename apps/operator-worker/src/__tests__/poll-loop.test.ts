@@ -48,13 +48,13 @@ describe('createOperatorWorkerPollLoop', () => {
         }),
     );
 
-    const subscribe = vi.fn(async (_type: string, handler: () => void) => {
-      return {
+    const subscribe = vi
+      .fn<(type: string, handler: () => void) => Promise<{ close(): void }>>()
+      .mockResolvedValue({
         close(): void {
           return;
         },
-      };
-    });
+      });
 
     const loop = createOperatorWorkerPollLoop({
       pollIntervalMs: 100,

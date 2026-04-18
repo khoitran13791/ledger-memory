@@ -17,8 +17,8 @@ import {
   type StoredOperatorRun,
   type StoredOperatorTask,
 } from '@ledgermind/application';
-import { createTimestamp, type ArtifactId, type ConversationId } from '@ledgermind/domain';
 import { InvariantViolationError } from '@ledgermind/domain';
+import type { ArtifactId, ConversationId, createTimestamp } from '@ledgermind/domain';
 
 import { mapPgError } from './errors';
 import { toJsonObject, toTimestamp } from './sql';
@@ -73,16 +73,6 @@ interface OperatorTaskRow {
   readonly result_artifact_id: string | null;
   readonly last_error: unknown;
 }
-
-const parseInteger = (value: number | string, fieldName: string): number => {
-  const parsed = typeof value === 'number' ? value : Number.parseInt(value, 10);
-
-  if (!Number.isSafeInteger(parsed)) {
-    throw new InvariantViolationError(`Invalid ${fieldName} from PostgreSQL row.`);
-  }
-
-  return parsed;
-};
 
 const toRetryPolicy = (value: unknown): RetryPolicy => {
   const object = toJsonObject(value);

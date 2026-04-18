@@ -16,6 +16,8 @@ import type {
   ExploreArtifactOutput,
   GrepInput,
   GrepOutput,
+  LLMMapInput,
+  LLMMapOutput,
   MaterializeContextInput,
   MaterializeContextOutput,
   MemoryEngine,
@@ -23,6 +25,10 @@ import type {
   RunCompactionOutput,
   StoreArtifactInput,
   StoreArtifactOutput,
+  AgenticMapInput,
+  AgenticMapOutput,
+  GetOperatorRunInput,
+  GetOperatorRunOutput,
 } from '@ledgermind/application';
 import { createArtifactId, createTokenCount } from '@ledgermind/domain';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -79,6 +85,21 @@ class RecordingMemoryEngine implements MemoryEngine {
   }
 
   async exploreArtifact(_input: ExploreArtifactInput): Promise<ExploreArtifactOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async llmMap(_input: LLMMapInput): Promise<LLMMapOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async agenticMap(_input: AgenticMapInput): Promise<AgenticMapOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async getOperatorRun(_input: GetOperatorRunInput): Promise<GetOperatorRunOutput> {
     void _input;
     throw new Error('Not implemented in test double.');
   }

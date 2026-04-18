@@ -114,6 +114,23 @@ const createBaseInput = (): AgenticMapInput => ({
   items: [{ title: 'Follow up with finance' }, { title: 'Schedule customer call' }],
 });
 
+const createArtifactBackedInput = (inputArtifactId: Artifact['id']): AgenticMapInput => {
+  const baseInput = createBaseInput();
+
+  return {
+    conversationId: baseInput.conversationId,
+    taskPrompt: baseInput.taskPrompt,
+    delegatedScope: baseInput.delegatedScope,
+    keptWork: baseInput.keptWork,
+    outputSchema: baseInput.outputSchema,
+    concurrencyLimit: baseInput.concurrencyLimit,
+    retryPolicy: baseInput.retryPolicy,
+    ...(baseInput.prompt === undefined ? {} : { prompt: baseInput.prompt }),
+    ...(baseInput.idempotencyKey === undefined ? {} : { idempotencyKey: baseInput.idempotencyKey }),
+    inputArtifactId,
+  };
+};
+
 const createUseCase = (input?: {
   readonly conversations?: readonly ReturnType<typeof createConversationEntity>[];
   readonly artifacts?: readonly { artifact: Artifact; content: string | Uint8Array }[];
@@ -236,14 +253,9 @@ describe('AgenticMapUseCase', () => {
       ],
     });
 
-    const { items: _items, ...artifactBackedInput } = createBaseInput();
-
-    await expect(
-      useCase.execute({
-        ...artifactBackedInput,
-        inputArtifactId: existingArtifactId,
-      }),
-    ).rejects.toThrowError(OperatorInputValidationError);
+    await expect(useCase.execute(createArtifactBackedInput(existingArtifactId))).rejects.toThrowError(
+      OperatorInputValidationError,
+    );
   });
 
   it('rejects artifact-backed datasets that are not one JSON array payload', async () => {
@@ -257,14 +269,9 @@ describe('AgenticMapUseCase', () => {
       ],
     });
 
-    const { items: _items, ...artifactBackedInput } = createBaseInput();
-
-    await expect(
-      useCase.execute({
-        ...artifactBackedInput,
-        inputArtifactId: invalidArtifactId,
-      }),
-    ).rejects.toThrowError(OperatorInputValidationError);
+    await expect(useCase.execute(createArtifactBackedInput(invalidArtifactId))).rejects.toThrowError(
+      OperatorInputValidationError,
+    );
   });
 
   it('completes zero-item submission immediately without creating child conversations and still writes an empty output artifact', async () => {
@@ -334,13 +341,8 @@ describe('AgenticMapUseCase', () => {
       ],
     });
 
-    const { items: _items, ...artifactBackedInput } = createBaseInput();
-
-    await expect(
-      useCase.execute({
-        ...artifactBackedInput,
-        inputArtifactId: invalidArtifactId,
-      }),
-    ).rejects.toThrowError(ArtifactContentUnavailableError);
+    await expect(useCase.execute(createArtifactBackedInput(invalidArtifactId))).rejects.toThrowError(
+      ArtifactContentUnavailableError,
+    );
   });
 });

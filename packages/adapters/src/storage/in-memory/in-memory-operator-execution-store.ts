@@ -50,13 +50,12 @@ const cloneTask = (task: StoredOperatorTaskRecord): StoredOperatorTaskRecord => 
 };
 
 const withoutTaskExecutionFields = (task: StoredOperatorTaskRecord): StoredOperatorTaskRecord => {
-  const {
-    leaseOwner: _leaseOwner,
-    leaseExpiresAt: _leaseExpiresAt,
-    nextRetryAt: _nextRetryAt,
-    terminalFailure: _terminalFailure,
-    ...rest
-  } = task;
+  const { leaseOwner, leaseExpiresAt, nextRetryAt, terminalFailure, ...rest } = task;
+
+  void leaseOwner;
+  void leaseExpiresAt;
+  void nextRetryAt;
+  void terminalFailure;
 
   return rest;
 };

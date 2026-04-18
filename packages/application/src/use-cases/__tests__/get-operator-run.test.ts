@@ -84,6 +84,7 @@ class FakeArtifactStorePort implements ArtifactStorePort {
 
 const createStoredRun = (
   overrides: Partial<StoredOperatorRun> = {},
+  options?: { readonly withoutOutputArtifact?: boolean },
 ): StoredOperatorRun => ({
   runId,
   conversationId,
@@ -98,7 +99,7 @@ const createStoredRun = (
     maxRetries: 0,
     retryBackoffSeconds: 30,
   },
-  ...(overrides.outputArtifactId === undefined ? { outputArtifactId } : {}),
+  ...(options?.withoutOutputArtifact === true ? {} : { outputArtifactId }),
   taskCount: 1,
   succeededTaskCount: 1,
   failedTaskCount: 0,
@@ -252,20 +253,20 @@ describe('GetOperatorRunUseCase', () => {
   });
 
   it('includes task-level child conversation, result artifact, and terminal failure metadata', async () => {
-    const {
-      outputArtifactId: _outputArtifactId,
-      ...runWithoutOutputArtifact
-    } = createStoredRun({
-      status: 'completed_with_failures',
-      failedTaskCount: 1,
-      succeededTaskCount: 0,
-      pendingTaskCount: 0,
-      terminalFailureSummary: {
-        code: 'SCHEMA_INVALID',
-        message: 'invalid output',
-        retryable: false,
+    const runWithoutOutputArtifact = createStoredRun(
+      {
+        status: 'completed_with_failures',
+        failedTaskCount: 1,
+        succeededTaskCount: 0,
+        pendingTaskCount: 0,
+        terminalFailureSummary: {
+          code: 'SCHEMA_INVALID',
+          message: 'invalid output',
+          retryable: false,
+        },
       },
-    });
+      { withoutOutputArtifact: true },
+    );
     const operatorExecution = new FakeOperatorExecutionPort(
       runWithoutOutputArtifact,
       [

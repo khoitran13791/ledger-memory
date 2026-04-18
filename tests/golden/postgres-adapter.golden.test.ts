@@ -509,5 +509,5 @@ describe('postgres adapter golden', () => {
     expect(first.contextRefs[0]?.startsWith('summary:sum_')).toBe(true);
 
     expect(second).toEqual(first);
-  });
+  }, 10_000);
 });

@@ -1,11 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  InMemoryArtifactStore,
-  InMemoryConversationStore,
-  InMemoryLedgerStore,
-  type InMemoryJobQueueAdapter,
-} from '@ledgermind/adapters';
+import { InMemoryArtifactStore, InMemoryConversationStore, InMemoryLedgerStore } from '@ledgermind/adapters';
 import {
   createCompactionThresholds,
   createConversation,
@@ -46,7 +41,6 @@ describe('operator recursion e2e', () => {
     let nextConversationOrdinal = 1;
 
     const originalGet = InMemoryConversationStore.prototype.get;
-    const originalCreate = InMemoryConversationStore.prototype.create;
     const originalAppendEvents = InMemoryLedgerStore.prototype.appendEvents;
     const originalStoreArtifact = InMemoryArtifactStore.prototype.store;
 

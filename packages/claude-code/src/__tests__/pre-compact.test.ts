@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 
 import type {
+  AgenticMapInput,
+  AgenticMapOutput,
   AppendLedgerEventsInput,
   CheckIntegrityInput,
   CheckIntegrityOutput,
@@ -13,8 +15,12 @@ import type {
   ExpandOutput,
   ExploreArtifactInput,
   ExploreArtifactOutput,
+  GetOperatorRunInput,
+  GetOperatorRunOutput,
   GrepInput,
   GrepOutput,
+  LLMMapInput,
+  LLMMapOutput,
   MaterializeContextInput,
   MaterializeContextOutput,
   MemoryEngine,
@@ -96,6 +102,21 @@ class RecordingMemoryEngine implements MemoryEngine {
   }
 
   async exploreArtifact(_input: ExploreArtifactInput): Promise<ExploreArtifactOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async llmMap(_input: LLMMapInput): Promise<LLMMapOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async agenticMap(_input: AgenticMapInput): Promise<AgenticMapOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async getOperatorRun(_input: GetOperatorRunInput): Promise<GetOperatorRunOutput> {
     void _input;
     throw new Error('Not implemented in test double.');
   }

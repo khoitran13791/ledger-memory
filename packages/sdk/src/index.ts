@@ -555,7 +555,7 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
         throw new Error('Inline operator execution requires operators.structuredGeneration.');
       }
 
-      while (true) {
+      for (;;) {
         const executed = await executeOperatorTaskUseCase.execute();
         if (executed === null) {
           break;
@@ -583,7 +583,7 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
         throw new Error('Inline agenticMap execution requires operators.delegationScopeResolver.');
       }
 
-      while (true) {
+      for (;;) {
         const executed = await executeOperatorTaskUseCase.execute();
         if (executed === null) {
           break;

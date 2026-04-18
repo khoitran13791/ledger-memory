@@ -13,13 +13,8 @@ import {
   type UnitOfWorkPort,
 } from '@ledgermind/application';
 import {
-  DeterministicSummarizerAdapter,
   InMemoryArtifactStore,
-  InMemoryConversationStore,
-  InMemoryContextProjection,
-  InMemoryLedgerStore,
   InMemoryOperatorExecutionStore,
-  InMemorySummaryDag,
   InMemoryUnitOfWork,
   SimpleTokenizerAdapter,
   createInMemoryPersistenceState,
@@ -27,11 +22,7 @@ import {
 import { createIdService, createTimestamp, type HashPort, type IdService } from '@ledgermind/domain';
 import {
   PgArtifactStore,
-  PgConversationStore,
-  PgContextProjection,
-  PgLedgerStore,
   PgOperatorExecutionStore,
-  PgSummaryDag,
   asPgExecutor,
   createPgPool,
   createPgUnitOfWorkFromPool,

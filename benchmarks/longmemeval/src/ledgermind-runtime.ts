@@ -71,15 +71,15 @@ const deterministicHashPort: HashPort = {
 };
 
 const sharedTokenizer = new SimpleTokenizer();
+const benchmarkOccurredAt = createTimestamp(new Date('2026-03-01T00:00:00.000Z'));
 
 const createEngine = (input: {
   readonly deps: RuntimeDeps;
 }): MemoryEngine => {
   const { deps } = input;
   const idService = createIdService(deterministicHashPort);
-  const fixedOccurredAt = createTimestamp(new Date('2026-03-01T00:00:00.000Z'));
   const clock = {
-    now: () => fixedOccurredAt,
+    now: () => benchmarkOccurredAt,
   };
   const summarizer = new DeterministicSummarizer(sharedTokenizer);
 
@@ -146,8 +146,13 @@ const createEngine = (input: {
 
   const expandUseCase = new ExpandUseCase({
     authorization: new SubAgentAuthorizationAdapter(),
+    conversations: deps.conversations,
     summaryDag: deps.summaryDag,
   });
+
+  const createUnsupportedOperatorError = (operatorName: 'llmMap' | 'agenticMap' | 'getOperatorRun'): Error => {
+    return new Error(`LongMemEval benchmark runtime does not support ${operatorName}().`);
+  };
 
   return {
     append: (appendInput) => appendUseCase.execute(appendInput),
@@ -159,6 +164,15 @@ const createEngine = (input: {
     expand: (expandInput) => expandUseCase.execute(expandInput),
     storeArtifact: (storeInput) => storeArtifactUseCase.execute(storeInput),
     exploreArtifact: (exploreInput) => exploreArtifactUseCase.execute(exploreInput),
+    llmMap: async () => {
+      throw createUnsupportedOperatorError('llmMap');
+    },
+    agenticMap: async () => {
+      throw createUnsupportedOperatorError('agenticMap');
+    },
+    getOperatorRun: async () => {
+      throw createUnsupportedOperatorError('getOperatorRun');
+    },
   };
 };
 
@@ -232,7 +246,6 @@ export const createLedgermindRuntime = async (input: {
 
   const conversation = await deps.conversations.create(createRuntimeConfig(input.fairness));
   const engine = createEngine({ deps });
-  const fixedOccurredAt = createTimestamp(new Date('2026-03-01T00:00:00.000Z'));
 
   const appendOutput = await engine.append({
     conversationId: conversation.id,
@@ -251,7 +264,7 @@ export const createLedgermindRuntime = async (input: {
           role: toEventRole(turn.role),
           content,
           tokenCount: sharedTokenizer.countTokens(content),
-          occurredAt: fixedOccurredAt,
+          occurredAt: benchmarkOccurredAt,
           metadata: {
             sourceId: turn.turnId,
             sessionId: session.sessionId,

@@ -16,7 +16,7 @@ import type {
   ToolProviderPort,
   ToolRuntimeContextProvider,
 } from '@ledgermind/application';
-import { createConversationId, createSummaryNodeId } from '@ledgermind/domain';
+import { createSummaryNodeId } from '@ledgermind/domain';
 
 import { toToolErrorEnvelope, toToolSuccessEnvelope } from './error-mapping';
 import type { ToolReferences } from './types';

@@ -1,7 +1,5 @@
 import {
-  createCompactionThresholds,
   createConversation,
-  createConversationConfig,
   createConversationId,
   createSequenceNumber,
   createTimestamp,
@@ -53,13 +51,6 @@ import type { IntegrityReport, SummaryDagPort } from '../../ports/driven/persist
 import type { UnitOfWork, UnitOfWorkPort } from '../../ports/driven/persistence/unit-of-work.port';
 
 const defaultTimestamp = createTimestamp(new Date('2026-04-13T00:00:00.000Z'));
-
-const createDefaultConversationConfig = (): ConversationConfig =>
-  createConversationConfig({
-    modelName: 'gpt-4.1-mini',
-    contextWindow: createTokenCount(8_192),
-    thresholds: createCompactionThresholds(0.6, 0.8),
-  });
 
 const createLookupKey = (conversationId: ConversationId, idempotencyKey: string): string => {
   return `${conversationId}::${idempotencyKey}`;
