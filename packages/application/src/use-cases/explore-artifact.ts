@@ -1,5 +1,3 @@
-import type { Artifact } from '@ledgermind/domain';
-
 import {
   ArtifactContentUnavailableError,
   ArtifactExplorationFailedError,
@@ -9,10 +7,7 @@ import {
 import type { ExplorerRegistryPort } from '../ports/driven/explorer/explorer-registry.port';
 import type { ArtifactStorePort } from '../ports/driven/persistence/artifact-store.port';
 import type { ExploreArtifactInput, ExploreArtifactOutput } from '../ports/driving/memory-engine.port';
-
-const getExplorerPath = (artifact: Artifact): string => {
-  return artifact.originalPath ?? `artifact://${artifact.id}`;
-};
+import { executeArtifactExploration, getArtifactExplorePath, resolveArtifactExplorer } from './artifact-exploration';
 
 export interface ExploreArtifactUseCaseDeps {
   readonly artifactStore: ArtifactStorePort;
@@ -33,32 +28,36 @@ export class ExploreArtifactUseCase {
       throw new ArtifactContentUnavailableError(input.artifactId);
     }
 
-    const path = getExplorerPath(artifact);
-
-    let explorer: ReturnType<ExplorerRegistryPort['resolve']>;
+    const path = getArtifactExplorePath(artifact);
+    let resolved: ReturnType<typeof resolveArtifactExplorer>;
     try {
-      explorer = this.deps.explorerRegistry.resolve(artifact.mimeType, path, input.explorerHints);
+      resolved = resolveArtifactExplorer({
+        artifact,
+        explorerRegistry: this.deps.explorerRegistry,
+        ...(input.explorerHints === undefined ? {} : { explorerHints: input.explorerHints }),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : undefined;
       throw new ExplorerResolutionError(input.artifactId, artifact.mimeType, path, message);
     }
 
-    let result: Awaited<ReturnType<typeof explorer.explore>>;
+    let result: Awaited<ReturnType<typeof executeArtifactExploration>>;
     try {
-      result = await explorer.explore({
+      result = await executeArtifactExploration({
+        artifact,
         content: artifactContent,
-        path,
-        mimeType: artifact.mimeType,
+        path: resolved.path,
+        explorer: resolved.explorer,
       });
     } catch (error) {
       throw new ArtifactExplorationFailedError(input.artifactId, error);
     }
 
     const { summary, metadata, tokenCount } = result;
-    await this.deps.artifactStore.updateExploration(input.artifactId, summary, explorer.name);
+    await this.deps.artifactStore.updateExploration(input.artifactId, summary, result.explorerUsed);
 
     return {
-      explorerUsed: explorer.name,
+      explorerUsed: result.explorerUsed,
       summary,
       metadata,
       tokenCount,

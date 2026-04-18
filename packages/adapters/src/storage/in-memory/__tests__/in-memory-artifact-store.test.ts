@@ -22,7 +22,8 @@ describe('InMemoryArtifactStore', () => {
     const artifact = createArtifactFixture('file_1');
     const content = new Uint8Array([1, 2, 3]);
 
-    await store.store(artifact, content);
+    const inserted = await store.store(artifact, content);
+    expect(inserted).toBe(true);
 
     const metadata = await store.getMetadata(artifact.id);
     expect(metadata?.id).toBe(artifact.id);
@@ -44,8 +45,11 @@ describe('InMemoryArtifactStore', () => {
     const store = new InMemoryArtifactStore(state);
     const artifact = createArtifactFixture('file_2');
 
-    await store.store(artifact, 'first-content');
-    await store.store(artifact, 'second-content');
+    const firstInsert = await store.store(artifact, 'first-content');
+    const duplicateInsert = await store.store(artifact, 'second-content');
+
+    expect(firstInsert).toBe(true);
+    expect(duplicateInsert).toBe(false);
 
     const content = await store.getContent(artifact.id);
     expect(content).toBe('first-content');
@@ -56,7 +60,8 @@ describe('InMemoryArtifactStore', () => {
     const store = new InMemoryArtifactStore(state);
     const artifact = createArtifactFixture('file_3');
 
-    await store.store(artifact, 'artifact-text');
+    const inserted = await store.store(artifact, 'artifact-text');
+    expect(inserted).toBe(true);
     await store.updateExploration(artifact.id, 'exploration summary', 'typescript-explorer');
 
     const updated = await store.getMetadata(artifact.id);

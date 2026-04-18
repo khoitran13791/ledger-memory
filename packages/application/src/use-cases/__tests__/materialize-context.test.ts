@@ -115,14 +115,18 @@ const createTestSummary = (input?: {
 const createTestArtifact = (input?: {
   readonly id?: ArtifactId;
   readonly tokenCount?: number;
+  readonly storageKind?: Artifact['storageKind'];
+  readonly originalPath?: string | null;
+  readonly explorationSummary?: string | null;
 }): Artifact => {
   return createArtifact({
     id: input?.id ?? artifactId,
     conversationId,
-    storageKind: 'inline_text',
+    storageKind: input?.storageKind ?? 'inline_text',
+    ...(input?.originalPath === undefined ? {} : { originalPath: input.originalPath }),
     mimeType: createMimeType('application/json'),
     tokenCount: createTokenCount(input?.tokenCount ?? 20),
-    explorationSummary: null,
+    explorationSummary: input?.explorationSummary ?? null,
     explorerUsed: null,
   });
 };
@@ -276,8 +280,9 @@ class TestSummaryDagPort implements SummaryDagPort {
 class TestArtifactStorePort implements ArtifactStorePort {
   constructor(private readonly state: TestState) {}
 
-  async store(artifact: Artifact): Promise<void> {
+  async store(artifact: Artifact): Promise<boolean> {
     this.state.artifacts.set(artifact.id, artifact);
+    return true;
   }
 
   async getMetadata(id: ArtifactId): Promise<Artifact | null> {
@@ -453,6 +458,167 @@ describe('MaterializeContextUseCase', () => {
     expect(output.trimmedToFit).toBe(false);
     expect(output.droppedMessageCount).toBe(0);
     expect(output.droppedSummaryCount).toBe(0);
+  });
+
+  it('includes artifact preview metadata in references and system preamble', async () => {
+    const summary = createTestSummary({
+      id: createSummaryNodeId('sum_materialize_artifact_preview'),
+      content: '[Summary] compacted-with-artifact-preview',
+      tokenCount: 9,
+      artifactIds: [artifactId],
+    });
+    const artifact = createTestArtifact({
+      storageKind: 'path',
+      originalPath: '/workspace/docs/specs/large-file.md',
+      explorationSummary:
+        'Large-file contract notes describing parser boundaries, token budget assumptions, and fallback behavior when previews are missing from context.',
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({
+          conversationId,
+          position: 0,
+          ref: createSummaryContextItemRef(summary.id),
+        }),
+      ],
+      summaries: [summary],
+      artifacts: [artifact],
+      contextTokenCount: 9,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 30,
+      overheadTokens: 0,
+    });
+
+    expect(output.artifactReferences).toEqual([
+      {
+        id: artifact.id,
+        mimeType: artifact.mimeType,
+        tokenCount: artifact.tokenCount,
+        originalPath: '/workspace/docs/specs/large-file.md',
+        explorationSummary:
+          'Large-file contract notes describing parser boundaries, token budget assumptions, and fallback behavior when previews are missing from context.',
+      },
+    ]);
+    expect(output.systemPreamble).toContain(
+      `Available artifacts: ${artifact.id} (/workspace/docs/specs/large-file.md) - `,
+    );
+    expect(output.systemPreamble).toContain('Large-file contract notes describing parser boundaries');
+  });
+
+  it('renders normalized deterministic teaser for long irregular-whitespace exploration summaries', async () => {
+    const summary = createTestSummary({
+      id: createSummaryNodeId('sum_materialize_artifact_teaser'),
+      content: '[Summary] compacted-with-long-artifact-preview',
+      tokenCount: 9,
+      artifactIds: [artifactId],
+    });
+    const artifact = createTestArtifact({
+      storageKind: 'path',
+      originalPath: '/workspace/docs/specs/teaser-target.md',
+      explorationSummary:
+        '  Alpha   beta\n\ngamma\t delta   epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega 1234567890 repeated    marker   for    truncation   behavior   check  ',
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({
+          conversationId,
+          position: 0,
+          ref: createSummaryContextItemRef(summary.id),
+        }),
+      ],
+      summaries: [summary],
+      artifacts: [artifact],
+      contextTokenCount: 9,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 30,
+      overheadTokens: 0,
+    });
+
+    expect(output.systemPreamble).toContain(
+      `Available artifacts: ${artifact.id} (/workspace/docs/specs/teaser-target.md) - Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega 1234567890 re....`,
+    );
+  });
+
+  it('shows only the first four formatted artifact previews and reports omitted count', async () => {
+    const artifactId1 = createArtifactId('file_materialize_cap_1');
+    const artifactId2 = createArtifactId('file_materialize_cap_2');
+    const artifactId3 = createArtifactId('file_materialize_cap_3');
+    const artifactId4 = createArtifactId('file_materialize_cap_4');
+    const artifactId5 = createArtifactId('file_materialize_cap_5');
+
+    const summary = createTestSummary({
+      id: createSummaryNodeId('sum_materialize_artifact_cap'),
+      content: '[Summary] compacted-with-many-artifacts',
+      tokenCount: 12,
+      artifactIds: [artifactId1, artifactId2, artifactId3, artifactId4, artifactId5],
+    });
+
+    const artifacts = [
+      createTestArtifact({
+        id: artifactId1,
+        storageKind: 'path',
+        originalPath: '/workspace/artifacts/first.md',
+        explorationSummary: 'first artifact preview',
+      }),
+      createTestArtifact({
+        id: artifactId2,
+        storageKind: 'path',
+        originalPath: '/workspace/artifacts/second.md',
+      }),
+      createTestArtifact({
+        id: artifactId3,
+      }),
+      createTestArtifact({
+        id: artifactId4,
+        storageKind: 'path',
+        originalPath: '/workspace/artifacts/fourth.md',
+        explorationSummary: '   \n\t  ',
+      }),
+      createTestArtifact({
+        id: artifactId5,
+        storageKind: 'path',
+        originalPath: '/workspace/artifacts/fifth.md',
+        explorationSummary: 'fifth artifact preview',
+      }),
+    ];
+
+    const state = createState({
+      contextItems: [
+        createContextItem({
+          conversationId,
+          position: 0,
+          ref: createSummaryContextItemRef(summary.id),
+        }),
+      ],
+      summaries: [summary],
+      artifacts,
+      contextTokenCount: 12,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 40,
+      overheadTokens: 0,
+    });
+
+    expect(output.systemPreamble).toContain(
+      'Available artifacts: file_materialize_cap_1 (/workspace/artifacts/first.md) - first artifact preview, file_materialize_cap_2 (/workspace/artifacts/second.md), file_materialize_cap_3, file_materialize_cap_4 (/workspace/artifacts/fourth.md), and 1 more.',
+    );
+    expect(output.systemPreamble).not.toContain('file_materialize_cap_5');
   });
 
   it('triggers soft compaction to fit available budget when below hard threshold', async () => {

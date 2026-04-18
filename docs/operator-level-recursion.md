@@ -125,6 +125,11 @@ Additional rules:
 - child-originated recursive `agenticMap()` calls still need explicit `delegatedScope` and `keptWork`
 - final ordered results are still read through `getOperatorRun()`
 
+Current repo adaptations relative to Appendix C:
+
+- LedgerMind does not currently expose standalone `Task()` / `Tasks()` APIs; nested delegation is represented through child-originated `agenticMap()` calls
+- Appendix C.2's `read_only` control is not yet modeled on `agenticMap()` or the child-execution port, so child mutability remains runtime-owned today
+
 ### Delegated scope
 
 `delegatedScope` is the explicit slice of parent context handed to a child task. It can include:

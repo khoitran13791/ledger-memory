@@ -82,6 +82,7 @@ const createEngine = (input: {
     now: () => benchmarkOccurredAt,
   };
   const summarizer = new DeterministicSummarizer(sharedTokenizer);
+  const explorerRegistry = createDefaultExplorerRegistry(sharedTokenizer);
 
   const runCompactionUseCase = new RunCompactionUseCase({
     unitOfWork: deps.unitOfWork,
@@ -105,11 +106,12 @@ const createEngine = (input: {
     idService,
     hashPort: deterministicHashPort,
     tokenizer: sharedTokenizer,
+    explorerRegistry,
   });
 
   const exploreArtifactUseCase = new ExploreArtifactUseCase({
     artifactStore: deps.artifactStore,
-    explorerRegistry: createDefaultExplorerRegistry(sharedTokenizer),
+    explorerRegistry,
   });
 
   const appendUseCase = new AppendLedgerEventsUseCase({

@@ -943,6 +943,9 @@ each task executes inside a child conversation.
 **Current repo adaptation of the paper:** the codebase does not currently expose
 standalone `Task()` / `Tasks()` APIs. Recursive delegation is represented
 through child-originated `agenticMap()` calls with explicit bounded scope.
+Appendix C.2's `agentic_map(..., read_only, ...)` control is also not yet
+modeled in the repo's child-execution contract; child mutability is currently a
+runtime concern rather than an application-layer operator input.
 
 #### GetOperatorRunUseCase
 

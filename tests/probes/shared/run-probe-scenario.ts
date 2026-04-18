@@ -85,6 +85,7 @@ const createEngine = (input: CreateUseCasesInput): MemoryEngine => {
   const tokenizer = deterministicDeps.tokenizer;
   const summarizer = deterministicDeps.summarizer;
   const clock = deterministicDeps.clock;
+  const explorerRegistry = createDefaultExplorerRegistry(tokenizer);
 
   const runCompactionUseCase = new RunCompactionUseCase({
     unitOfWork: input.unitOfWork,
@@ -141,12 +142,13 @@ const createEngine = (input: CreateUseCasesInput): MemoryEngine => {
     idService: deterministicDeps.idService,
     hashPort: deterministicDeps.hashPort,
     tokenizer,
+    explorerRegistry,
     fileReader: new NodeFileReader(),
   });
 
   const exploreArtifactUseCase = new ExploreArtifactUseCase({
     artifactStore: input.artifactStore,
-    explorerRegistry: createDefaultExplorerRegistry(tokenizer),
+    explorerRegistry,
   });
 
   return {
@@ -316,10 +318,6 @@ export const runProbeScenario = async (input: {
           content: artifact.content,
         },
         ...(artifact.mimeType === undefined ? {} : { mimeType: createMimeType(artifact.mimeType) }),
-      });
-
-      await runtime.engine.exploreArtifact({
-        artifactId: stored.artifactId,
       });
 
       const metadataEventContent = `Artifact reference recorded: ${artifact.path} -> ${stored.artifactId}`;

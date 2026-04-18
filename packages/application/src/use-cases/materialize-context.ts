@@ -146,6 +146,10 @@ const collectArtifactReferences = async (
       id: artifact.id,
       mimeType: artifact.mimeType,
       tokenCount: artifact.tokenCount,
+      ...(artifact.originalPath === null ? {} : { originalPath: artifact.originalPath }),
+      ...(artifact.explorationSummary === null
+        ? {}
+        : { explorationSummary: artifact.explorationSummary }),
     });
   }
 
@@ -153,6 +157,34 @@ const collectArtifactReferences = async (
 };
 
 const MAX_ARTIFACT_IDS_IN_PREAMBLE = 4;
+const MAX_ARTIFACT_SUMMARY_TEASER_CHARS = 140;
+
+const createArtifactSummaryTeaser = (value: string): string => {
+  const normalized = value.trim().replace(/\s+/g, ' ');
+  if (normalized.length <= MAX_ARTIFACT_SUMMARY_TEASER_CHARS) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, MAX_ARTIFACT_SUMMARY_TEASER_CHARS - 3)}...`;
+};
+
+const formatArtifactReferenceForPreamble = (reference: ArtifactReference): string => {
+  const withPath =
+    reference.originalPath === undefined
+      ? reference.id
+      : `${reference.id} (${reference.originalPath})`;
+
+  if (reference.explorationSummary === undefined) {
+    return withPath;
+  }
+
+  const teaser = createArtifactSummaryTeaser(reference.explorationSummary);
+  if (teaser.length === 0) {
+    return withPath;
+  }
+
+  return `${withPath} - ${teaser}`;
+};
 
 const buildSystemPreamble = (
   summaryReferences: readonly SummaryReference[],
@@ -170,15 +202,15 @@ const buildSystemPreamble = (
   }
 
   if (artifactReferences.length > 0) {
-    const visibleIds = artifactReferences
+    const visibleArtifacts = artifactReferences
       .slice(0, MAX_ARTIFACT_IDS_IN_PREAMBLE)
-      .map((ref) => ref.id)
+      .map((reference) => formatArtifactReferenceForPreamble(reference))
       .join(', ');
     const omittedCount = Math.max(0, artifactReferences.length - MAX_ARTIFACT_IDS_IN_PREAMBLE);
     parts.push(
       omittedCount === 0
-        ? `Available artifacts: ${visibleIds}.`
-        : `Available artifacts: ${visibleIds}, and ${omittedCount} more.`,
+        ? `Available artifacts: ${visibleArtifacts}.`
+        : `Available artifacts: ${visibleArtifacts}, and ${omittedCount} more.`,
     );
   }
 

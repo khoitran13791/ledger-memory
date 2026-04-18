@@ -530,6 +530,7 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
     idService,
     hashPort,
     tokenizer,
+    explorerRegistry,
     fileReader: persistenceDeps.fileReader,
   });
 

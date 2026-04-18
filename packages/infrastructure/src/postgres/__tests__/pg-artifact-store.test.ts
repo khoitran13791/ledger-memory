@@ -38,7 +38,8 @@ describe('PgArtifactStore', () => {
       const artifact = createArtifactFixture(conversationId, 'file_1', 'inline_binary');
       const content = new Uint8Array([1, 2, 3]);
 
-      await artifacts.store(artifact, content);
+      const inserted = await artifacts.store(artifact, content);
+      expect(inserted).toBe(true);
 
       const metadata = await artifacts.getMetadata(artifact.id);
       expect(metadata?.id).toBe(artifact.id);
@@ -79,8 +80,11 @@ describe('PgArtifactStore', () => {
       const { artifacts, conversationId } = harness;
       const artifact = createArtifactFixture(conversationId, 'file_2');
 
-      await artifacts.store(artifact, 'first-content');
-      await artifacts.store(artifact, 'second-content');
+      const firstInsert = await artifacts.store(artifact, 'first-content');
+      const duplicateInsert = await artifacts.store(artifact, 'second-content');
+
+      expect(firstInsert).toBe(true);
+      expect(duplicateInsert).toBe(false);
 
       const content = await artifacts.getContent(artifact.id);
       expect(content).toBe('first-content');
@@ -96,7 +100,8 @@ describe('PgArtifactStore', () => {
       const { artifacts, conversationId } = harness;
       const artifact = createArtifactFixture(conversationId, 'file_3');
 
-      await artifacts.store(artifact, 'artifact-text');
+      const inserted = await artifacts.store(artifact, 'artifact-text');
+      expect(inserted).toBe(true);
       await artifacts.updateExploration(artifact.id, 'exploration summary', 'typescript-explorer');
 
       const updated = await artifacts.getMetadata(artifact.id);
@@ -129,7 +134,8 @@ describe('PgArtifactStore', () => {
       const artifact = createArtifactFixture(conversationId, 'file_path_1', 'path', '/tmp/input.txt');
       const fileBytes = new Uint8Array([7, 8, 9]);
 
-      await artifacts.store(artifact, fileBytes);
+      const inserted = await artifacts.store(artifact, fileBytes);
+      expect(inserted).toBe(true);
 
       const content = await artifacts.getContent(artifact.id);
       expect(content).toEqual(fileBytes);

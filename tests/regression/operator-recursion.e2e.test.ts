@@ -85,7 +85,7 @@ describe('operator recursion e2e', () => {
       if (content !== undefined) {
         artifactContents.set(artifact.id, content);
       }
-      await originalStoreArtifact.call(this, artifact, content);
+      return originalStoreArtifact.call(this, artifact, content);
     });
 
     const nestedRunIds: string[] = [];
