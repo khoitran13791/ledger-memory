@@ -21,6 +21,17 @@ export interface GrepMatch {
   readonly coveringSummaryId?: SummaryNodeId;
 }
 
+export interface RegexSearchPageInput {
+  readonly scope?: SummaryNodeId;
+  readonly offset: number;
+  readonly limit: number;
+}
+
+export interface RegexSearchPageOutput {
+  readonly matches: readonly GrepMatch[];
+  readonly totalMatchCount: number;
+}
+
 export interface LedgerReadPort {
   /**
    * Returns events in ascending sequence order.
@@ -47,6 +58,6 @@ export interface LedgerReadPort {
   regexSearchEvents(
     conversationId: ConversationId,
     pattern: string,
-    scope?: SummaryNodeId,
-  ): Promise<readonly GrepMatch[]>;
+    page: RegexSearchPageInput,
+  ): Promise<RegexSearchPageOutput>;
 }

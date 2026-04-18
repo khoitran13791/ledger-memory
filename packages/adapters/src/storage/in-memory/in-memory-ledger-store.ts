@@ -2,6 +2,8 @@ import type {
   LedgerAppendPort,
   LedgerReadGrepMatch,
   LedgerReadPort,
+  RegexSearchPageInput,
+  RegexSearchPageOutput,
   SequenceRange,
 } from '@ledgermind/application';
 import {
@@ -79,6 +81,31 @@ const collectScopedMessageIds = (
 
   visit(scope);
   return messageIds;
+};
+
+const buildActiveCoverageByEventId = (
+  state: InMemoryPersistenceState,
+  conversationId: ConversationId,
+): ReadonlyMap<EventId, SummaryNodeId> => {
+  const coverage = new Map<EventId, SummaryNodeId>();
+  const contextItems = [...(state.contextItemsByConversation.get(conversationId) ?? [])].sort(
+    (left, right) => left.position - right.position,
+  );
+
+  for (const item of contextItems) {
+    if (item.ref.type !== 'summary') {
+      continue;
+    }
+
+    const coveredMessageIds = collectScopedMessageIds(state, item.ref.summaryId);
+    for (const messageId of coveredMessageIds) {
+      if (!coverage.has(messageId)) {
+        coverage.set(messageId, item.ref.summaryId);
+      }
+    }
+  }
+
+  return coverage;
 };
 
 export class InMemoryLedgerStore implements LedgerAppendPort, LedgerReadPort {
@@ -170,12 +197,13 @@ export class InMemoryLedgerStore implements LedgerAppendPort, LedgerReadPort {
   async regexSearchEvents(
     conversationId: ConversationId,
     pattern: string,
-    scope?: SummaryNodeId,
-  ): Promise<readonly LedgerReadGrepMatch[]> {
+    page: RegexSearchPageInput,
+  ): Promise<RegexSearchPageOutput> {
     const regex = new RegExp(pattern);
     const events = sortEventsBySequence(this.state.ledgerEventsByConversation.get(conversationId) ?? []);
-
-    const scopedMessageIds = scope ? collectScopedMessageIds(this.state, scope) : null;
+    const scopedMessageIds = page.scope ? collectScopedMessageIds(this.state, page.scope) : null;
+    const activeCoverageByEventId =
+      page.scope === undefined ? buildActiveCoverageByEventId(this.state, conversationId) : null;
 
     const matches: LedgerReadGrepMatch[] = [];
 
@@ -190,22 +218,28 @@ export class InMemoryLedgerStore implements LedgerAppendPort, LedgerReadPort {
       }
 
       const result: LedgerReadGrepMatch =
-        scope === undefined
+        page.scope === undefined
           ? {
               eventId: event.id,
               sequence: event.sequence,
               excerpt: createExcerpt(event.content, match.index, match[0]?.length ?? 0),
+              ...(activeCoverageByEventId?.get(event.id) === undefined
+                ? {}
+                : { coveringSummaryId: activeCoverageByEventId.get(event.id)! }),
             }
           : {
               eventId: event.id,
               sequence: event.sequence,
               excerpt: createExcerpt(event.content, match.index, match[0]?.length ?? 0),
-              coveringSummaryId: scope,
+              coveringSummaryId: page.scope,
             };
 
       matches.push(result);
     }
 
-    return matches;
+    return {
+      matches: matches.slice(page.offset, page.offset + page.limit),
+      totalMatchCount: matches.length,
+    };
   }
 }

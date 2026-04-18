@@ -14,6 +14,7 @@ import {
   assertValidMemoryEngine,
   parseCallerContext,
   parseToolInput,
+  readOptionalInteger,
   readOptionalString,
   readRequiredString,
 } from './shared/input-parsers';
@@ -48,6 +49,17 @@ const recallParameters: Readonly<Record<string, unknown>> = {
     scope: {
       type: 'string',
       description: 'Optional summary ID scope for narrowing recall results.',
+    },
+    offset: {
+      type: 'integer',
+      minimum: 0,
+      description: 'Zero-based match offset for pagination.',
+    },
+    limit: {
+      type: 'integer',
+      minimum: 1,
+      maximum: 100,
+      description: 'Maximum number of matches to return in one page.',
     },
   },
   required: ['conversationId', 'query'],
@@ -111,10 +123,15 @@ const createRecallTool = (engine: MemoryEngine): ToolDefinition => ({
       const conversationId = createConversationId(readRequiredString(payload, 'conversationId', TOOL_NAMES.recall));
       const query = readRequiredString(payload, 'query', TOOL_NAMES.recall);
       const scopeRaw = readOptionalString(payload, 'scope', TOOL_NAMES.recall);
+      const offset = readOptionalInteger(payload, 'offset', TOOL_NAMES.recall, { minimum: 0 });
+      const limit = readOptionalInteger(payload, 'limit', TOOL_NAMES.recall, {
+        minimum: 1,
+        maximum: 100,
+      });
       const scope = scopeRaw === undefined ? undefined : createSummaryNodeId(scopeRaw);
 
       const grepInput: GrepInput =
-        scope === undefined
+        scope === undefined && offset === undefined && limit === undefined
           ? {
               conversationId,
               pattern: query,
@@ -122,7 +139,9 @@ const createRecallTool = (engine: MemoryEngine): ToolDefinition => ({
           : {
               conversationId,
               pattern: query,
-              scope,
+              ...(scope === undefined ? {} : { scope }),
+              ...(offset === undefined ? {} : { offset }),
+              ...(limit === undefined ? {} : { limit }),
             };
 
       const output = await engine.grep(grepInput);

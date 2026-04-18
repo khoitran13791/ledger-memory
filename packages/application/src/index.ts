@@ -14,9 +14,11 @@ export type {
   ExploreArtifactInput,
   ExploreArtifactOutput,
   ExplorerHints,
+  GrepGroup,
   GrepInput,
   GrepMatch,
   GrepOutput,
+  GrepPageInfo,
   MaterializeContextInput,
   MaterializeContextOutput,
   MemoryEngine,
@@ -73,6 +75,8 @@ export type { LedgerAppendPort } from './ports/driven/persistence/ledger-append.
 export type {
   GrepMatch as LedgerReadGrepMatch,
   LedgerReadPort,
+  RegexSearchPageInput,
+  RegexSearchPageOutput,
   SequenceRange,
 } from './ports/driven/persistence/ledger-read.port';
 export type {

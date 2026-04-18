@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { InMemoryConversationStore } from '@ledgermind/adapters';
-import { UnauthorizedExpandError } from '@ledgermind/application';
+import { type GrepOutput, UnauthorizedExpandError } from '@ledgermind/application';
 import {
   createCompactionThresholds,
   createConversation,
@@ -88,6 +88,8 @@ const requireFirstId = <T>(values: readonly T[], label: string): T => {
   return first;
 };
 
+const flattenGrepMatches = (output: GrepOutput) => output.groups.flatMap((group) => group.matches);
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -152,8 +154,10 @@ describe('sdk lifecycle e2e', () => {
     const grep = await engine.grep({
       conversationId,
       pattern: 'PostgreSQL',
+      limit: 10,
     });
-    expect(grep.matches.length).toBeGreaterThan(0);
+    expect(flattenGrepMatches(grep).length).toBeGreaterThan(0);
+    expect(grep.page.limit).toBe(10);
 
     const summaryReference = requireFirstId(context.summaryReferences, 'summary reference');
     expect(parentConversationId, 'Expected parent conversation for sub-agent expand.').toBeDefined();
@@ -300,9 +304,12 @@ describe('sdk lifecycle e2e', () => {
     }
 
     const expectedIds = [firstScopedEvent.id, secondScopedEvent.id];
-    expect(unscoped.matches.map((match) => match.eventId)).toEqual(expectedIds);
-    expect(scoped.matches.map((match) => match.eventId)).toEqual(expectedIds);
-    expect(scoped.matches.every((match) => match.coveringSummaryId === summaryId)).toBe(true);
+    const unscopedMatches = flattenGrepMatches(unscoped);
+    const scopedMatches = flattenGrepMatches(scoped);
+
+    expect(unscopedMatches.map((match) => match.eventId)).toEqual(expectedIds);
+    expect(scopedMatches.map((match) => match.eventId)).toEqual(expectedIds);
+    expect(scoped.groups.every((group) => group.coveringSummaryId === summaryId)).toBe(true);
   });
 
   it('round-trips artifact store → explore → describe via SDK integration', async () => {
@@ -371,7 +378,7 @@ describe('sdk lifecycle e2e', () => {
       pattern: 'idempotent payload signature',
     });
 
-    expect(matches.matches).toHaveLength(1);
+    expect(flattenGrepMatches(matches)).toHaveLength(1);
   });
 
   it('enforces expand authorization boundary for non-sub-agent callers', async () => {

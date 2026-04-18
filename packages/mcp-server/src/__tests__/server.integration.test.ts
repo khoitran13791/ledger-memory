@@ -24,7 +24,16 @@ const createMinimalEngine = (): {
 } => {
   const grep = vi.fn(async (input: GrepInput): Promise<GrepOutput> => {
     void input;
-    return { matches: [] };
+    return {
+      groups: [],
+      page: {
+        offset: 0,
+        limit: 25,
+        returnedMatchCount: 0,
+        totalMatchCount: 0,
+        hasMore: false,
+      },
+    };
   });
   const describe = vi.fn(async (input: DescribeInput): Promise<DescribeOutput> => {
     void input;

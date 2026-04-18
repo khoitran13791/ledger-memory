@@ -211,12 +211,19 @@ class TestLedgerReadPort implements LedgerReadPort {
   async regexSearchEvents(
     conversationIdInput: ConversationId,
     pattern: string,
-    scope?: SummaryNode['id'],
+    page?: {
+      readonly scope?: SummaryNode['id'];
+      readonly offset: number;
+      readonly limit: number;
+    },
   ) {
     void conversationIdInput;
     void pattern;
-    void scope;
-    return [];
+    void page;
+    return {
+      matches: [],
+      totalMatchCount: 0,
+    };
   }
 }
 

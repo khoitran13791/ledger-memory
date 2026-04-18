@@ -27,6 +27,9 @@ import type { LocomoBenchmarkConfig } from './config.js';
 import { generatePrediction } from './predictor.js';
 import { clampString, estimateTokens } from './utils.js';
 
+const flattenGrepMatches = (output: Awaited<ReturnType<LedgermindRuntime['engine']['grep']>>) =>
+  output.groups.flatMap((group) => group.matches);
+
 const qaSystemInstructionCategoryAware = (input: { readonly category: number }): string => {
   if (input.category === 5) {
     return 'Answer strictly from the provided conversation context. If the answer is unsupported, reply exactly "Not mentioned in the conversation". Output only a short phrase.';
@@ -1214,7 +1217,9 @@ const runLedgermindToolLoop = async (input: {
 
       let addedCount = 0;
       let addedTokenCount = 0;
-      for (const match of grepOutput.matches) {
+      const grepMatches = flattenGrepMatches(grepOutput);
+
+      for (const match of grepMatches) {
         if (addedTokens >= input.maxAddedTokens) {
           break;
         }
@@ -1247,7 +1252,7 @@ const runLedgermindToolLoop = async (input: {
         tool: 'grep',
         status: 'ok',
         query: search.scope === undefined ? search.query : `${search.query} [scope=${search.scope}]`,
-        matchCount: grepOutput.matches.length,
+        matchCount: grepMatches.length,
         addedCount,
         addedTokens: addedTokenCount,
       });

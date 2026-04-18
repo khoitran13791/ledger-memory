@@ -52,6 +52,35 @@ export const readOptionalString = (
   return raw;
 };
 
+export const readOptionalInteger = (
+  input: Record<string, unknown>,
+  field: string,
+  toolName: string,
+  bounds: {
+    readonly minimum?: number;
+    readonly maximum?: number;
+  } = {},
+): number | undefined => {
+  if (!(field in input) || input[field] === undefined) {
+    return undefined;
+  }
+
+  const raw = input[field];
+  if (typeof raw !== 'number' || !Number.isInteger(raw)) {
+    throw new TypeError(`${toolName} expects optional "${field}" to be an integer when provided.`);
+  }
+
+  if (bounds.minimum !== undefined && raw < bounds.minimum) {
+    throw new TypeError(`${toolName} expects optional "${field}" to be >= ${bounds.minimum}.`);
+  }
+
+  if (bounds.maximum !== undefined && raw > bounds.maximum) {
+    throw new TypeError(`${toolName} expects optional "${field}" to be <= ${bounds.maximum}.`);
+  }
+
+  return raw;
+};
+
 export const readRequiredBoolean = (
   input: Record<string, unknown>,
   field: string,

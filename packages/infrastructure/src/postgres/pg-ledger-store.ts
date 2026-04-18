@@ -3,12 +3,15 @@ import {
   type LedgerAppendPort,
   type LedgerReadGrepMatch,
   type LedgerReadPort,
+  type RegexSearchPageInput,
+  type RegexSearchPageOutput,
   type SequenceRange,
 } from '@ledgermind/application';
 import {
   createEventId,
   createLedgerEvent,
   createSequenceNumber,
+  createSummaryNodeId,
   createTokenCount,
   createTimestamp,
   InvariantViolationError,
@@ -67,10 +70,12 @@ interface PendingLedgerInsertRow {
 
 interface RegexMatchRow {
   readonly id: string;
-  readonly seq: number;
+  readonly seq: number | string;
   readonly content: string;
   readonly match_start: number;
   readonly match_length: number;
+  readonly covering_summary_id: string | null;
+  readonly total_match_count: number | string;
 }
 
 interface PgErrorConstraintCandidate {
@@ -492,13 +497,46 @@ export class PgLedgerStore implements LedgerAppendPort, LedgerReadPort {
   async regexSearchEvents(
     conversationId: ConversationId,
     pattern: string,
-    scope?: SummaryNodeId,
-  ): Promise<readonly LedgerReadGrepMatch[]> {
+    page: RegexSearchPageInput,
+  ): Promise<RegexSearchPageOutput> {
     try {
-      const scopedSummaryId = toScopedSummary(scope);
+      const scopedSummaryId = toScopedSummary(page.scope);
 
       const result = await this.executor.query<RegexMatchRow>(
-        `WITH RECURSIVE scoped_summaries AS (
+        `WITH RECURSIVE active_summary_refs AS (
+          SELECT ci.summary_id, ci.position
+          FROM context_items ci
+          WHERE ci.conversation_id = $1
+            AND ci.summary_id IS NOT NULL
+        ),
+        active_summary_scope AS (
+          SELECT
+            asr.summary_id AS covering_summary_id,
+            asr.summary_id AS source_summary_id,
+            asr.position,
+            ARRAY[asr.summary_id]::text[] AS path
+          FROM active_summary_refs asr
+
+          UNION ALL
+
+          SELECT
+            ass.covering_summary_id,
+            spe.parent_summary_id AS source_summary_id,
+            ass.position,
+            ass.path || spe.parent_summary_id
+          FROM active_summary_scope ass
+          JOIN summary_parent_edges spe ON spe.summary_id = ass.source_summary_id
+          WHERE NOT spe.parent_summary_id = ANY(ass.path)
+        ),
+        active_message_coverage AS (
+          SELECT DISTINCT ON (sme.message_id)
+            sme.message_id,
+            ass.covering_summary_id
+          FROM active_summary_scope ass
+          JOIN summary_message_edges sme ON sme.summary_id = ass.source_summary_id
+          ORDER BY sme.message_id, ass.position ASC, ass.covering_summary_id ASC
+        ),
+        scoped_summaries AS (
           SELECT $3::text AS summary_id
           WHERE $3::text IS NOT NULL
 
@@ -512,35 +550,69 @@ export class PgLedgerStore implements LedgerAppendPort, LedgerReadPort {
           SELECT sme.message_id
           FROM summary_message_edges sme
           JOIN scoped_summaries ss ON ss.summary_id = sme.summary_id
+        ),
+        matched AS (
+          SELECT
+            le.id,
+            le.seq,
+            le.content,
+            regexp_instr(
+              CASE
+                WHEN le.role = 'system' AND le.content LIKE '__SYSTEM_PROMPT__%' THEN substring(le.content FROM 16)
+                ELSE le.content
+              END,
+              $2,
+              1,
+              1,
+              0,
+              'n'
+            ) AS match_start,
+            COALESCE(length(substring(le.content FROM $2)), 0) AS match_length,
+            CASE
+              WHEN $3::text IS NOT NULL THEN $3::text
+              ELSE amc.covering_summary_id
+            END AS covering_summary_id
+          FROM ledger_events le
+          LEFT JOIN active_message_coverage amc ON amc.message_id = le.id
+          WHERE le.conversation_id = $1
+            AND (
+              $3::text IS NULL
+              OR le.id IN (SELECT message_id FROM scoped_messages)
+            )
+            AND regexp_instr(
+              CASE
+                WHEN le.role = 'system' AND le.content LIKE '__SYSTEM_PROMPT__%' THEN substring(le.content FROM 16)
+                ELSE le.content
+              END,
+              $2,
+              1,
+              1,
+              0,
+              'n'
+            ) > 0
+        ),
+        paged AS (
+          SELECT
+            matched.*,
+            COUNT(*) OVER() AS total_match_count
+          FROM matched
+          ORDER BY seq ASC
+          OFFSET $4
+          LIMIT $5
         )
         SELECT
-          le.id,
-          le.seq,
-          le.content,
-          regexp_instr(le.content, $2, 1, 1, 0, 'n') AS match_start,
-          COALESCE(length(substring(le.content FROM $2)), 0) AS match_length
-        FROM ledger_events le
-        WHERE le.conversation_id = $1
-          AND (
-            $3::text IS NULL
-            OR le.id IN (SELECT message_id FROM scoped_messages)
-          )
-          AND regexp_instr(
-            CASE
-              WHEN le.role = 'system' AND le.content LIKE '__SYSTEM_PROMPT__%' THEN substring(le.content FROM 16)
-              ELSE le.content
-            END,
-            $2,
-            1,
-            1,
-            0,
-            'n'
-          ) > 0
-        ORDER BY le.seq ASC`,
-        [conversationId, pattern, scopedSummaryId],
+          id,
+          seq,
+          content,
+          match_start,
+          match_length,
+          covering_summary_id,
+          total_match_count
+        FROM paged`,
+        [conversationId, pattern, scopedSummaryId, page.offset, page.limit],
       );
 
-      return result.rows.map((row) => {
+      const matches = result.rows.map((row) => {
         const startIndex = Math.max(0, row.match_start - 1);
         const excerpt = createExcerpt(row.content, startIndex, row.match_length);
 
@@ -548,11 +620,21 @@ export class PgLedgerStore implements LedgerAppendPort, LedgerReadPort {
           eventId: createEventId(row.id),
           sequence: toEventSequenceNumber(row.seq),
           excerpt,
-          ...(scope === undefined ? {} : { coveringSummaryId: scope }),
+          ...(row.covering_summary_id === null
+            ? {}
+            : { coveringSummaryId: createSummaryNodeId(row.covering_summary_id) }),
         };
 
         return match;
       });
+
+      return {
+        matches,
+        totalMatchCount:
+          result.rows.length === 0
+            ? 0
+            : parsePgBigInt(result.rows[0]!.total_match_count, 'regex_match.total_match_count'),
+      };
     } catch (error) {
       return mapPgError(error);
     }

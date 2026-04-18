@@ -4,6 +4,8 @@ import type { ConversationPort } from '../../ports/driven/persistence/conversati
 import type {
   GrepMatch as LedgerReadGrepMatch,
   LedgerReadPort,
+  RegexSearchPageInput,
+  RegexSearchPageOutput,
   SequenceRange,
 } from '../../ports/driven/persistence/ledger-read.port';
 import type {
@@ -150,9 +152,16 @@ export class FakeLedgerReadPort implements LedgerReadPort {
     readonly conversationId: ConversationId;
     readonly pattern: string;
     readonly scope?: SummaryNodeId;
+    readonly offset: number;
+    readonly limit: number;
   }> = [];
 
-  constructor(private readonly matches: readonly LedgerReadGrepMatch[] = []) {}
+  constructor(
+    private readonly page: RegexSearchPageOutput = {
+      matches: [],
+      totalMatchCount: 0,
+    },
+  ) {}
 
   async getEvents(
     conversationId: ConversationId,
@@ -177,15 +186,17 @@ export class FakeLedgerReadPort implements LedgerReadPort {
   async regexSearchEvents(
     conversationId: ConversationId,
     pattern: string,
-    scope?: SummaryNodeId,
-  ): Promise<readonly LedgerReadGrepMatch[]> {
+    input: RegexSearchPageInput,
+  ): Promise<RegexSearchPageOutput> {
     this.regexCalls.push({
       conversationId,
       pattern,
-      ...(scope === undefined ? {} : { scope }),
+      ...(input.scope === undefined ? {} : { scope: input.scope }),
+      offset: input.offset,
+      limit: input.limit,
     });
 
-    return this.matches;
+    return this.page;
   }
 }
 
