@@ -3,10 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { createConversationId } from '@ledgermind/domain';
 
 import {
+  applySessionBindingToToolArguments,
   resolveSessionBinding,
   type ResolveSessionBindingInput,
+  type SessionBindingRuntimeMetadata,
 } from '../session-binding';
 import {
   createFileSessionBindingStore,
@@ -77,5 +80,45 @@ describe('resolveSessionBinding', () => {
     expect(String(child.parentConversationId)).toBe(String(parent.conversationId));
     expect(String(reloadedChild.conversationId)).toBe(String(child.conversationId));
     expect(String(reloadedChild.parentConversationId)).toBe(String(parent.conversationId));
+  });
+});
+
+describe('applySessionBindingToToolArguments', () => {
+  it('overwrites expand callerContext from the resolved binding and trusted runtime metadata', () => {
+    const boundArguments = applySessionBindingToToolArguments(
+      'memory.expand',
+      {
+        summaryId: 'sum_leaf_1',
+        callerContext: {
+          conversationId: 'conv_spoofed',
+          isSubAgent: true,
+          parentConversationId: 'conv_spoofed_parent',
+        },
+      },
+      {
+        runtime: 'amp',
+        runtimeSessionId: 'thread-child',
+        userScope: 'alice',
+        workspaceScope: '/workspace/ledger-memory',
+        conversationId: createConversationId('conv_bound_child'),
+        parentConversationId: createConversationId('conv_bound_parent'),
+      },
+      {
+        runtime: 'amp',
+        runtimeSessionId: 'thread-child',
+        userScope: 'alice',
+        workspaceScope: '/workspace/ledger-memory',
+        isSubAgent: false,
+      } satisfies SessionBindingRuntimeMetadata,
+    );
+
+    expect(boundArguments).toEqual({
+      summaryId: 'sum_leaf_1',
+      callerContext: {
+        conversationId: 'conv_bound_child',
+        isSubAgent: false,
+        parentConversationId: 'conv_bound_parent',
+      },
+    });
   });
 });
