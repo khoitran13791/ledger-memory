@@ -45,6 +45,22 @@ const collectScopedMessageIds = (state, scope) => {
     visit(scope);
     return messageIds;
 };
+const buildActiveCoverageByEventId = (state, conversationId) => {
+    const coverage = new Map();
+    const contextItems = [...(state.contextItemsByConversation.get(conversationId) ?? [])].sort((left, right) => left.position - right.position);
+    for (const item of contextItems) {
+        if (item.ref.type !== 'summary') {
+            continue;
+        }
+        const coveredMessageIds = collectScopedMessageIds(state, item.ref.summaryId);
+        for (const messageId of coveredMessageIds) {
+            if (!coverage.has(messageId)) {
+                coverage.set(messageId, item.ref.summaryId);
+            }
+        }
+    }
+    return coverage;
+};
 export class InMemoryLedgerStore {
     state;
     constructor(state = createInMemoryPersistenceState()) {
@@ -106,10 +122,11 @@ export class InMemoryLedgerStore {
             return toLowerCase(event.content).includes(normalizedQuery);
         });
     }
-    async regexSearchEvents(conversationId, pattern, scope) {
+    async regexSearchEvents(conversationId, pattern, page) {
         const regex = new RegExp(pattern);
         const events = sortEventsBySequence(this.state.ledgerEventsByConversation.get(conversationId) ?? []);
-        const scopedMessageIds = scope ? collectScopedMessageIds(this.state, scope) : null;
+        const scopedMessageIds = page.scope ? collectScopedMessageIds(this.state, page.scope) : null;
+        const activeCoverageByEventId = page.scope === undefined ? buildActiveCoverageByEventId(this.state, conversationId) : null;
         const matches = [];
         for (const event of events) {
             if (scopedMessageIds && !scopedMessageIds.has(event.id)) {
@@ -119,21 +136,27 @@ export class InMemoryLedgerStore {
             if (!match || match.index === undefined) {
                 continue;
             }
-            const result = scope === undefined
+            const result = page.scope === undefined
                 ? {
                     eventId: event.id,
                     sequence: event.sequence,
                     excerpt: createExcerpt(event.content, match.index, match[0]?.length ?? 0),
+                    ...(activeCoverageByEventId?.get(event.id) === undefined
+                        ? {}
+                        : { coveringSummaryId: activeCoverageByEventId.get(event.id) }),
                 }
                 : {
                     eventId: event.id,
                     sequence: event.sequence,
                     excerpt: createExcerpt(event.content, match.index, match[0]?.length ?? 0),
-                    coveringSummaryId: scope,
+                    coveringSummaryId: page.scope,
                 };
             matches.push(result);
         }
-        return matches;
+        return {
+            matches: matches.slice(page.offset, page.offset + page.limit),
+            totalMatchCount: matches.length,
+        };
     }
 }
 //# sourceMappingURL=in-memory-ledger-store.js.map

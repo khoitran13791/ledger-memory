@@ -1,4 +1,4 @@
-import type { LedgerAppendPort, LedgerReadGrepMatch, LedgerReadPort, SequenceRange } from '@ledgermind/application';
+import type { LedgerAppendPort, LedgerReadPort, RegexSearchPageInput, RegexSearchPageOutput, SequenceRange } from '@ledgermind/application';
 import { type ConversationId, type LedgerEvent, type SequenceNumber, type SummaryNodeId } from '@ledgermind/domain';
 import type { InMemoryPersistenceState } from './state';
 export declare class InMemoryLedgerStore implements LedgerAppendPort, LedgerReadPort {
@@ -8,6 +8,6 @@ export declare class InMemoryLedgerStore implements LedgerAppendPort, LedgerRead
     getNextSequence(conversationId: ConversationId): Promise<SequenceNumber>;
     getEvents(conversationId: ConversationId, range?: SequenceRange): Promise<readonly LedgerEvent[]>;
     searchEvents(conversationId: ConversationId, query: string, scope?: SummaryNodeId): Promise<readonly LedgerEvent[]>;
-    regexSearchEvents(conversationId: ConversationId, pattern: string, scope?: SummaryNodeId): Promise<readonly LedgerReadGrepMatch[]>;
+    regexSearchEvents(conversationId: ConversationId, pattern: string, page: RegexSearchPageInput): Promise<RegexSearchPageOutput>;
 }
 //# sourceMappingURL=in-memory-ledger-store.d.ts.map
