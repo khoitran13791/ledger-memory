@@ -59,6 +59,19 @@ pnpm --filter @ledgermind/infrastructure migrate:status
 pnpm --filter @ledgermind/infrastructure migrate:down
 ```
 
+## Durable Operators
+
+LedgerMind now exposes durable operator recursion through `llmMap()`, `agenticMap()`, and `getOperatorRun()` on `MemoryEngine`.
+
+Minimal local workflow:
+
+1. create or choose a conversation
+2. call `llmMap()` or `agenticMap()` and keep the returned `runId`
+3. start your runtime's operator worker (`pnpm worker:operator` is the repo CLI entrypoint once runtime executors are wired)
+4. inspect status with `getOperatorRun({ runId })`
+
+For API details, zero-item behavior, child bootstrap/reuse rules, inline vs durable execution modes, and worker requirements, see `docs/operator-level-recursion.md`.
+
 ## Agent Integrations
 
 - `@ledgermind/mcp-server` exposes the canonical memory tool catalog over stdio MCP.
@@ -70,6 +83,7 @@ Example configs live under `examples/claude-code/` and `examples/ampcode/`.
 ## Key docs
 
 - `docs/high-level-design.md` — architecture blueprint
+- `docs/operator-level-recursion.md` — durable operator API, worker flow, and inspection guide
 - `docs/design-decisions-addendum.md` — implementation decisions and invariants
 - `docs/testing-strategy.md` — test strategy and quality gates
 - `docs/implementation-roadmap.md` — delivery roadmap and sprint sequencing

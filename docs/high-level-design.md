@@ -179,7 +179,7 @@ All source code dependencies point **inward**. Inner layers define abstractions;
 | **LLM Provider** | Used by compaction engine for summarization (via `SummarizerPort`) |
 | **Database** | Persistent store for ledger, DAG, context projection, artifacts |
 | **File System** | Storage for path-backed large files; source for explorer analysis |
-| **Background Worker** | Executes async compaction jobs and explorer tasks |
+| **Background Worker** | Executes polling-first operator tasks/finalization plus async compaction/explorer work |
 
 ---
 
@@ -730,29 +730,35 @@ interface ExploreArtifactOutput {
 
 ```typescript
 interface LLMMapInput {
-  items: unknown[];                        // or JSONL file path
+  conversationId: ConversationId;
   prompt: string;
   outputSchema: JsonSchema;
-  concurrency?: number;                    // default 16
-  retryPolicy?: { maxRetries: number };    // default 3
+  concurrencyLimit: number;
+  retryPolicy: { maxRetries: number; retryBackoffSeconds: number };
+  idempotencyKey?: string;
+  items?: unknown[];
+  inputArtifactId?: ArtifactId;
 }
 interface LLMMapOutput {
-  results: unknown[];
-  artifactId: ArtifactId;                  // stored output file
-  failures: { index: number; error: string }[];
+  runId: string;
+  status: OperatorRunStatus;
+  inputArtifactId?: ArtifactId;
 }
 ```
 
-**Steps:**
-1. Register input as artifact
-2. Create worker pool with concurrency limit
-3. Each worker: stateless LLM call → schema validation → retry on failure
-4. Collect results → write output JSONL → register as artifact
-5. Return summary handle (not full content) to active context
+**Execution model:**
+1. Validate that exactly one of `items` or `inputArtifactId` is present.
+2. Persist inline datasets as artifacts when needed.
+3. Create a durable operator run plus one task per item.
+4. Workers claim tasks with leases, execute one attempt, and persist success/failure state.
+5. Finalization writes ordered JSONL output to an artifact and appends a compact parent handle.
+6. Callers inspect terminal results later through `getOperatorRun()`.
+
+Zero-item submissions are valid and finalize immediately to an empty JSONL output artifact.
 
 #### AgenticMapUseCase
 
-Same interface but spawns full sub-agent sessions per item with tool access. Sub-agents inherit parent conversation lineage.
+`agenticMap` follows the same durable submit/inspect contract as `llmMap`, but each task executes inside a child conversation. Child assignment and bootstrap state are persisted so retries reuse the same child conversation rather than creating duplicates.
 
 ---
 
@@ -774,11 +780,14 @@ interface MemoryEngine {
   expand(input: ExpandInput): Promise<ExpandOutput>;
   storeArtifact(input: StoreArtifactInput): Promise<StoreArtifactOutput>;
   exploreArtifact(input: ExploreArtifactInput): Promise<ExploreArtifactOutput>;
+  llmMap(input: LLMMapInput): Promise<LLMMapOutput>;
+  agenticMap(input: AgenticMapInput): Promise<AgenticMapOutput>;
+  getOperatorRun(input: GetOperatorRunInput): Promise<GetOperatorRunOutput>;
 }
 
 // Tool provider — creates framework-specific tool definitions
 interface ToolProviderPort {
-  createTools(engine: MemoryEngine): ToolDefinition[];
+  createTools(engine: MemoryEngine, runtime: ToolRuntimeContextProvider): ToolDefinition[];
 }
 
 // Event subscriber — for external systems to react to domain events
@@ -934,7 +943,7 @@ interface ExplorerRegistryPort {
 
 interface JobQueuePort {
   enqueue<T>(job: Job<T>): Promise<JobId>;
-  onComplete(jobId: JobId, callback: (result: unknown) => void): void;
+  subscribe<T>(type: string, handler: JobHandler<T>): Promise<JobSubscription>;
 }
 
 interface Job<T> {
@@ -1705,10 +1714,10 @@ Every compaction creates traceable domain events:
 | OpenAI Agents SDK adapter | Tool bundle pattern |
 | 25+ more explorers | Full type coverage from Volt |
 | SQLite adapter | Embedded alternative for local dev |
-| Operator recursion (LLM-Map, Agentic-Map) | Worker pool + schema validation |
+| Operator recursion (LLM-Map, Agentic-Map) | Durable submit/inspect API, child bootstrap reuse, polling-first worker, schema validation |
 | Observation masking | Rule-based pre-summarization filtering |
 | Composite retrieval scoring | Recency + DAG relevance + optional semantic |
-| Backpressure / job queue | Production compaction scheduling |
+| Backpressure / job queue | Optional wake-up hints via `subscribe(type, handler)`; polling remains the correctness path |
 
 ### Phase 3 — Infrastructure Mode
 
