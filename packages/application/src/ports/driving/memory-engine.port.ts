@@ -151,17 +151,33 @@ export interface GrepInput {
   readonly conversationId: ConversationId;
   readonly pattern: string;
   readonly scope?: SummaryNodeId;
+  readonly offset?: number;
+  readonly limit?: number;
 }
 
 export interface GrepMatch {
   readonly eventId: EventId;
   readonly sequence: SequenceNumber;
   readonly excerpt: string;
+}
+
+export interface GrepGroup {
   readonly coveringSummaryId?: SummaryNodeId;
+  readonly matches: readonly GrepMatch[];
+}
+
+export interface GrepPageInfo {
+  readonly offset: number;
+  readonly limit: number;
+  readonly returnedMatchCount: number;
+  readonly totalMatchCount: number;
+  readonly hasMore: boolean;
+  readonly nextOffset?: number;
 }
 
 export interface GrepOutput {
-  readonly matches: readonly GrepMatch[];
+  readonly groups: readonly GrepGroup[];
+  readonly page: GrepPageInfo;
 }
 
 export interface DescribeInput {
