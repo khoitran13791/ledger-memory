@@ -78,6 +78,8 @@ interface MaterializeStepOutput {
     readonly id: string;
     readonly mimeType: string;
     readonly tokenCount: number;
+    readonly originalPath?: string;
+    readonly explorationSummary?: string;
   }[];
 }
 
@@ -550,6 +552,10 @@ export const runGoldenScenario = async (input: {
                 id: reference.id,
                 mimeType: reference.mimeType,
                 tokenCount: reference.tokenCount.value,
+                ...(reference.originalPath === undefined ? {} : { originalPath: reference.originalPath }),
+                ...(reference.explorationSummary === undefined
+                  ? {}
+                  : { explorationSummary: reference.explorationSummary }),
               })),
             ),
           },

@@ -7,6 +7,7 @@ import type {
   ConversationId,
   DomainEvent,
   HashPort,
+  MimeType,
   SummaryNode,
   SummaryNodeId,
   TokenCount,
@@ -32,6 +33,12 @@ import {
   InvalidTokenizerOutputError,
 } from '../../errors/application-errors';
 import type { EventPublisherPort } from '../../ports/driven/events/event-publisher.port';
+import type {
+  ExplorerInput,
+  ExplorerOutput,
+  ExplorerPort,
+} from '../../ports/driven/explorer/explorer.port';
+import type { ExplorerRegistryPort } from '../../ports/driven/explorer/explorer-registry.port';
 import type { FileReaderPort } from '../../ports/driven/filesystem/file-reader.port';
 import type { TokenizerPort } from '../../ports/driven/llm/tokenizer.port';
 import type { ArtifactStorePort } from '../../ports/driven/persistence/artifact-store.port';
@@ -95,9 +102,15 @@ class TestFileReader implements FileReaderPort {
 
 class TestArtifactStore implements ArtifactStorePort {
   readonly stored = new Map<Artifact['id'], Artifact>();
+  readonly updateCalls: Array<{ id: Artifact['id']; summary: string; explorerUsed: string }> = [];
 
-  async store(artifact: Artifact): Promise<void> {
+  async store(artifact: Artifact): Promise<boolean> {
+    if (this.stored.has(artifact.id)) {
+      return false;
+    }
+
     this.stored.set(artifact.id, artifact);
+    return true;
   }
 
   async getMetadata(id: Artifact['id']): Promise<Artifact | null> {
@@ -108,8 +121,101 @@ class TestArtifactStore implements ArtifactStorePort {
     return null;
   }
 
-  async updateExploration(): Promise<void> {
+  async updateExploration(
+    id: Artifact['id'],
+    summary: string,
+    explorerUsed: string,
+  ): Promise<void> {
+    const artifact = this.stored.get(id);
+    if (!artifact) {
+      return;
+    }
+
+    this.stored.set(
+      id,
+      Object.freeze({
+        ...artifact,
+        explorationSummary: summary,
+        explorerUsed,
+      }),
+    );
+    this.updateCalls.push({ id, summary, explorerUsed });
+  }
+}
+
+class StaleReadArtifactStore extends TestArtifactStore {
+  async getMetadata(): Promise<Artifact | null> {
+    return null;
+  }
+}
+
+class StaticExplorer implements ExplorerPort {
+  constructor(
+    public readonly name: string,
+    private readonly output: ExplorerOutput,
+  ) {}
+
+  readonly inputs: ExplorerInput[] = [];
+
+  canHandle(): number {
+    return 1;
+  }
+
+  async explore(input: ExplorerInput): Promise<ExplorerOutput> {
+    this.inputs.push(input);
+    return this.output;
+  }
+}
+
+class SequencedExplorer implements ExplorerPort {
+  constructor(
+    public readonly name: string,
+    private readonly outputs: readonly ExplorerOutput[],
+  ) {}
+
+  readonly inputs: ExplorerInput[] = [];
+  private index = 0;
+
+  canHandle(): number {
+    return 1;
+  }
+
+  async explore(input: ExplorerInput): Promise<ExplorerOutput> {
+    this.inputs.push(input);
+    const next = this.outputs[Math.min(this.index, this.outputs.length - 1)];
+    this.index += 1;
+    if (next === undefined) {
+      throw new Error('No sequenced explorer output configured.');
+    }
+    return next;
+  }
+}
+
+class StaticExplorerRegistry implements ExplorerRegistryPort {
+  readonly resolveCalls: Array<{
+    readonly mimeType: MimeType;
+    readonly path: string;
+  }> = [];
+
+  constructor(private readonly explorer: ExplorerPort) {}
+
+  register(): void {
     return;
+  }
+
+  resolve(mimeType: MimeType, path: string): ExplorerPort {
+    this.resolveCalls.push({ mimeType, path });
+    return this.explorer;
+  }
+}
+
+class ThrowingExplorerRegistry implements ExplorerRegistryPort {
+  register(): void {
+    return;
+  }
+
+  resolve(): ExplorerPort {
+    throw new Error('registry resolution failed');
   }
 }
 
@@ -279,9 +385,20 @@ class SpyEventPublisher implements EventPublisherPort {
   }
 }
 
+const createExplorerRegistryForTest = (): ExplorerRegistryPort => {
+  return new StaticExplorerRegistry(
+    new StaticExplorer('noop-explorer', {
+      summary: 'Noop exploration summary',
+      metadata: Object.freeze({}),
+      tokenCount: createTokenCount(1),
+    }),
+  );
+};
+
 const createUseCase = (
   conversation: Conversation | null = createConversationForTest(),
   tokenizer: TokenizerPort = new SimpleTokenizer(),
+  options?: { readonly explorerRegistry?: ExplorerRegistryPort },
 ) => {
   const hashPort = new DeterministicHashPort();
   const artifactStore = new TestArtifactStore();
@@ -293,11 +410,140 @@ const createUseCase = (
       idService: createIdService(hashPort),
       hashPort,
       tokenizer,
+      explorerRegistry: options?.explorerRegistry ?? createExplorerRegistryForTest(),
     }),
   };
 };
 
 describe('StoreArtifactUseCase', () => {
+  it('auto-explores readable artifacts on first store', async () => {
+    const explorer = new StaticExplorer('json-explorer', {
+      summary: 'JSON auth config with token limit 128000',
+      metadata: Object.freeze({ topLevelKeys: ['auth', 'tokenLimit'] }),
+      tokenCount: createTokenCount(12),
+    });
+    const explorerRegistry = new StaticExplorerRegistry(explorer);
+
+    const { useCase, artifactStore } = createUseCase(createConversationForTest(), new SimpleTokenizer(), {
+      explorerRegistry,
+    });
+
+    const stored = await useCase.execute({
+      conversationId,
+      source: {
+        kind: 'text',
+        content: '{"auth":{"provider":"jwt"},"tokenLimit":128000}',
+      },
+      mimeType: createMimeType('application/json'),
+    });
+
+    const metadata = await artifactStore.getMetadata(stored.artifactId);
+
+    expect(metadata?.explorationSummary).toBe('JSON auth config with token limit 128000');
+    expect(metadata?.explorerUsed).toBe('json-explorer');
+    expect(explorerRegistry.resolveCalls).toHaveLength(1);
+    expect(explorer.inputs).toHaveLength(1);
+  });
+
+  it('does not re-explore artifacts that already have exploration metadata', async () => {
+    const explorer = new SequencedExplorer('json-explorer', [
+      {
+        summary: 'Initial summary',
+        metadata: Object.freeze({ version: 1 }),
+        tokenCount: createTokenCount(6),
+      },
+      {
+        summary: 'Overwritten summary should never persist',
+        metadata: Object.freeze({ version: 2 }),
+        tokenCount: createTokenCount(7),
+      },
+    ]);
+    const explorerRegistry = new StaticExplorerRegistry(explorer);
+    const { useCase, artifactStore } = createUseCase(createConversationForTest(), new SimpleTokenizer(), {
+      explorerRegistry,
+    });
+
+    const first = await useCase.execute({
+      conversationId,
+      source: { kind: 'text', content: '{"same":"content"}' },
+      mimeType: createMimeType('application/json'),
+    });
+    const second = await useCase.execute({
+      conversationId,
+      source: { kind: 'text', content: '{"same":"content"}' },
+      mimeType: createMimeType('text/plain'),
+    });
+
+    expect(first.artifactId).toEqual(second.artifactId);
+
+    const metadata = await artifactStore.getMetadata(first.artifactId);
+    expect(metadata?.explorationSummary).toBe('Initial summary');
+    expect(metadata?.explorerUsed).toBe('json-explorer');
+    expect(explorer.inputs).toHaveLength(1);
+    expect(explorerRegistry.resolveCalls).toHaveLength(1);
+    expect(artifactStore.updateCalls).toHaveLength(1);
+  });
+
+  it('does not re-explore when metadata pre-check is stale but insert loses', async () => {
+    const hashPort = new DeterministicHashPort();
+    const artifactStore = new StaleReadArtifactStore();
+    const conversation = createConversationForTest();
+    const explorer = new SequencedExplorer('json-explorer', [
+      {
+        summary: 'Initial summary',
+        metadata: Object.freeze({ version: 1 }),
+        tokenCount: createTokenCount(6),
+      },
+      {
+        summary: 'Second summary should never be used',
+        metadata: Object.freeze({ version: 2 }),
+        tokenCount: createTokenCount(7),
+      },
+    ]);
+    const explorerRegistry = new StaticExplorerRegistry(explorer);
+    const useCase = new StoreArtifactUseCase({
+      unitOfWork: new TestUnitOfWork(artifactStore, new TestConversationStore(conversation)),
+      idService: createIdService(hashPort),
+      hashPort,
+      tokenizer: new SimpleTokenizer(),
+      explorerRegistry,
+    });
+
+    const first = await useCase.execute({
+      conversationId,
+      source: { kind: 'text', content: '{"same":"content"}' },
+      mimeType: createMimeType('application/json'),
+    });
+    const second = await useCase.execute({
+      conversationId,
+      source: { kind: 'text', content: '{"same":"content"}' },
+      mimeType: createMimeType('text/plain'),
+    });
+
+    expect(first.artifactId).toEqual(second.artifactId);
+    expect(explorer.inputs).toHaveLength(1);
+    expect(explorerRegistry.resolveCalls).toHaveLength(1);
+    expect(artifactStore.updateCalls).toHaveLength(1);
+  });
+
+  it('does not swallow explorer resolution failures during store-time auto exploration', async () => {
+    const { useCase, artifactStore } = createUseCase(createConversationForTest(), new SimpleTokenizer(), {
+      explorerRegistry: new ThrowingExplorerRegistry(),
+    });
+
+    const execution = useCase.execute({
+      conversationId,
+      source: {
+        kind: 'text',
+        content: '{"auth":{"provider":"jwt"},"tokenLimit":128000}',
+      },
+      mimeType: createMimeType('application/json'),
+    });
+
+    await expect(execution).rejects.toThrow('registry resolution failed');
+    expect(artifactStore.updateCalls).toHaveLength(0);
+  });
+
   it('stores text artifacts with stable IDs and metadata', async () => {
     const { useCase, artifactStore } = createUseCase();
 
@@ -415,6 +661,7 @@ describe('StoreArtifactUseCase', () => {
       idService: createIdService(hashPort),
       hashPort,
       tokenizer: new SimpleTokenizer(),
+      explorerRegistry: createExplorerRegistryForTest(),
       fileReader,
     });
 
@@ -430,6 +677,7 @@ describe('StoreArtifactUseCase', () => {
       idService: createIdService(hashPort),
       hashPort,
       tokenizer: new SimpleTokenizer(),
+      explorerRegistry: createExplorerRegistryForTest(),
       fileReader: fileReader2,
     });
 
@@ -451,6 +699,7 @@ describe('StoreArtifactUseCase', () => {
       idService: createIdService(hashPort),
       hashPort,
       tokenizer: new SimpleTokenizer(),
+      explorerRegistry: createExplorerRegistryForTest(),
       eventPublisher,
     });
 

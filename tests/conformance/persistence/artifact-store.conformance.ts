@@ -61,9 +61,13 @@ export const registerArtifactStoreConformance = (adapter: ConformanceAdapterDefi
         const binaryPayload = new Uint8Array([4, 5, 6, 7]);
         const pathPayload = new Uint8Array([8, 9, 10]);
 
-        await runtime.artifacts.store(inlineText, 'conformance inline text');
-        await runtime.artifacts.store(inlineBinary, binaryPayload);
-        await runtime.artifacts.store(pathArtifact, pathPayload);
+        const textInserted = await runtime.artifacts.store(inlineText, 'conformance inline text');
+        const binaryInserted = await runtime.artifacts.store(inlineBinary, binaryPayload);
+        const pathInserted = await runtime.artifacts.store(pathArtifact, pathPayload);
+
+        expect(textInserted).toBe(true);
+        expect(binaryInserted).toBe(true);
+        expect(pathInserted).toBe(true);
 
         const loadedText = await runtime.artifacts.getContent(inlineText.id);
         const loadedBinary = await runtime.artifacts.getContent(inlineBinary.id);
@@ -97,7 +101,8 @@ export const registerArtifactStoreConformance = (adapter: ConformanceAdapterDefi
           storageKind: 'inline_text',
         });
 
-        await runtime.artifacts.store(artifact, 'content before update');
+        const inserted = await runtime.artifacts.store(artifact, 'content before update');
+        expect(inserted).toBe(true);
         await runtime.artifacts.updateExploration(artifact.id, 'summary update', 'conformance-explorer');
 
         const updated = await runtime.artifacts.getMetadata(artifact.id);
@@ -106,6 +111,28 @@ export const registerArtifactStoreConformance = (adapter: ConformanceAdapterDefi
         expect(updated?.explorationSummary).toBe('summary update');
         expect(updated?.explorerUsed).toBe('conformance-explorer');
         expect(content).toBe('content before update');
+      } finally {
+        await runtime.destroy();
+      }
+    });
+
+    it('returns false when duplicate artifact store becomes a no-op', async () => {
+      const runtime = await adapter.createRuntime();
+
+      try {
+        const artifact = createArtifactFixture({
+          id: 'file_conf_duplicate',
+          conversationId: runtime.defaultConversationId,
+          storageKind: 'inline_text',
+        });
+
+        const firstInsert = await runtime.artifacts.store(artifact, 'first payload');
+        const duplicateInsert = await runtime.artifacts.store(artifact, 'second payload');
+        const content = await runtime.artifacts.getContent(artifact.id);
+
+        expect(firstInsert).toBe(true);
+        expect(duplicateInsert).toBe(false);
+        expect(content).toBe('first payload');
       } finally {
         await runtime.destroy();
       }

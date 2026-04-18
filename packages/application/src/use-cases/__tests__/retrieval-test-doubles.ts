@@ -274,9 +274,10 @@ export class FakeArtifactStorePort implements ArtifactStorePort {
     }
   }
 
-  async store(artifact: Artifact, content?: string | Uint8Array): Promise<void> {
+  async store(artifact: Artifact, content?: string | Uint8Array): Promise<boolean> {
     void content;
     this.artifacts.set(artifact.id, artifact);
+    return true;
   }
 
   async getMetadata(id: ArtifactId): Promise<Artifact | null> {

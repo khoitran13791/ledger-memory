@@ -114,11 +114,11 @@ const toContentColumns = (
 export class PgArtifactStore implements ArtifactStorePort {
   constructor(private readonly executor: PgExecutor) {}
 
-  async store(artifact: Artifact, content?: string | Uint8Array): Promise<void> {
+  async store(artifact: Artifact, content?: string | Uint8Array): Promise<boolean> {
     try {
       const columns = toContentColumns(artifact, content);
 
-      await this.executor.query(
+      const result = await this.executor.query(
         `INSERT INTO artifacts (
           id,
           conversation_id,
@@ -146,6 +146,8 @@ export class PgArtifactStore implements ArtifactStorePort {
           columns.binary,
         ],
       );
+
+      return toRowCount(result.rowCount) > 0;
     } catch (error) {
       return mapPgError(error);
     }

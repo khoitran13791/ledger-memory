@@ -492,7 +492,7 @@ describe('operator worker regressions', () => {
     const originalStore = runtime.artifactStore.store.bind(runtime.artifactStore);
     let crashInjected = false;
     runtime.artifactStore.store = async (artifact, content) => {
-      await originalStore(artifact, content);
+      const inserted = await originalStore(artifact, content);
       if (!crashInjected && artifact.mimeType === 'application/x-ndjson') {
         crashInjected = true;
         const run = await runtime.operatorExecution.getRun(submitted.runId);
@@ -506,6 +506,7 @@ describe('operator worker regressions', () => {
         }
         throw new Error('simulated crash after artifact write');
       }
+      return inserted;
     };
 
     await expect(partialFinalize.execute({ runId: submitted.runId })).rejects.toThrow('simulated crash after artifact write');

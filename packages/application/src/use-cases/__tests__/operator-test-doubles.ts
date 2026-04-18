@@ -108,12 +108,13 @@ export class InMemoryArtifactStoreDouble implements ArtifactStorePort {
     }
   }
 
-  async store(artifact: Artifact, content?: string | Uint8Array): Promise<void> {
+  async store(artifact: Artifact, content?: string | Uint8Array): Promise<boolean> {
     this.storeCalls.push({ artifactId: artifact.id, content });
     this.storedMetadata.set(artifact.id, artifact);
     if (content !== undefined) {
       this.storedContents.set(artifact.id, content);
     }
+    return true;
   }
 
   async getMetadata(id: ArtifactId): Promise<Artifact | null> {

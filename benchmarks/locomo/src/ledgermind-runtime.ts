@@ -676,6 +676,7 @@ const createEngine = (input: {
   const { deps, summarizer } = input;
   const idService = createIdService(deterministicHashPort);
   const fixedOccurredAt = createTimestamp(new Date('2026-03-01T00:00:00.000Z'));
+  const explorerRegistry = createDefaultExplorerRegistry(sharedTokenizer);
 
   const clock = {
     now: () => fixedOccurredAt,
@@ -703,11 +704,12 @@ const createEngine = (input: {
     idService,
     hashPort: deterministicHashPort,
     tokenizer: sharedTokenizer,
+    explorerRegistry,
   });
 
   const exploreArtifactUseCase = new ExploreArtifactUseCase({
     artifactStore: deps.artifactStore,
-    explorerRegistry: createDefaultExplorerRegistry(sharedTokenizer),
+    explorerRegistry,
   });
 
   const appendUseCase = new AppendLedgerEventsUseCase({

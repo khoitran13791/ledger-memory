@@ -12,15 +12,17 @@ import { cloneArtifactContent, createInMemoryPersistenceState } from './state';
 export class InMemoryArtifactStore implements ArtifactStorePort {
   constructor(private readonly state: InMemoryPersistenceState = createInMemoryPersistenceState()) {}
 
-  async store(artifact: Artifact, content?: string | Uint8Array): Promise<void> {
+  async store(artifact: Artifact, content?: string | Uint8Array): Promise<boolean> {
     if (this.state.artifactsById.has(artifact.id)) {
-      return;
+      return false;
     }
 
     this.state.artifactsById.set(artifact.id, {
       artifact,
       content: cloneArtifactContent(content ?? null),
     });
+
+    return true;
   }
 
   async getMetadata(id: ArtifactId): Promise<Artifact | null> {

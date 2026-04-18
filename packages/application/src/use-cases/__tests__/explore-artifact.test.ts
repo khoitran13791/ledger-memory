@@ -45,8 +45,8 @@ class TestArtifactStore implements ArtifactStorePort {
     private readonly throwOnUpdate = false,
   ) {}
 
-  async store(): Promise<void> {
-    return;
+  async store(): Promise<boolean> {
+    return true;
   }
 
   async getMetadata(id: ArtifactId): Promise<Artifact | null> {

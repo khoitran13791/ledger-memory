@@ -62,11 +62,12 @@ class FakeArtifactStorePort implements ArtifactStorePort {
     }
   }
 
-  async store(artifact: Artifact, content?: string | Uint8Array): Promise<void> {
+  async store(artifact: Artifact, content?: string | Uint8Array): Promise<boolean> {
     this.artifacts.set(artifact.id, artifact);
     if (content !== undefined) {
       this.contents.set(artifact.id, content);
     }
+    return true;
   }
 
   async getMetadata(id: ArtifactId): Promise<Artifact | null> {

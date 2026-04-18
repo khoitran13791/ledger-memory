@@ -117,6 +117,8 @@ export interface ArtifactReference {
   readonly id: ArtifactId;
   readonly mimeType: MimeType;
   readonly tokenCount: TokenCount;
+  readonly originalPath?: string;
+  readonly explorationSummary?: string;
 }
 
 export interface MaterializeContextOutput {

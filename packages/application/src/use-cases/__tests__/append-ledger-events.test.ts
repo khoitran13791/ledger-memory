@@ -319,8 +319,8 @@ class NoopSummaryDagStore implements SummaryDagPort {
 }
 
 class NoopArtifactStore implements ArtifactStorePort {
-  async store(): Promise<void> {
-    return;
+  async store(): Promise<boolean> {
+    return true;
   }
 
   async getMetadata(): Promise<Artifact | null> {

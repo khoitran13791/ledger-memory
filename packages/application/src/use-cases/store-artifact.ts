@@ -13,6 +13,7 @@ import {
   type TokenizerOperation,
 } from '../errors/application-errors';
 import type { EventPublisherPort } from '../ports/driven/events/event-publisher.port';
+import type { ExplorerRegistryPort } from '../ports/driven/explorer/explorer-registry.port';
 import type { FileReaderPort } from '../ports/driven/filesystem/file-reader.port';
 import type { TokenizerPort } from '../ports/driven/llm/tokenizer.port';
 import type { UnitOfWorkPort } from '../ports/driven/persistence/unit-of-work.port';
@@ -21,6 +22,7 @@ import type {
   StoreArtifactInput,
   StoreArtifactOutput,
 } from '../ports/driving/memory-engine.port';
+import { runArtifactExploration } from './artifact-exploration';
 
 const textEncoder = new TextEncoder();
 
@@ -173,6 +175,7 @@ export interface StoreArtifactUseCaseDeps {
   readonly idService: IdService;
   readonly hashPort: HashPort;
   readonly tokenizer: TokenizerPort;
+  readonly explorerRegistry: ExplorerRegistryPort;
   readonly fileReader?: FileReaderPort;
   readonly eventPublisher?: EventPublisherPort;
 }
@@ -211,7 +214,17 @@ export class StoreArtifactUseCase {
         tokenCount: preparedSource.tokenCount,
       });
 
-      await uow.artifacts.store(artifact, preparedSource.content);
+      const inserted = await uow.artifacts.store(artifact, preparedSource.content);
+
+      if (inserted && preparedSource.content !== undefined) {
+        const exploration = await runArtifactExploration({
+          artifact,
+          content: preparedSource.content,
+          explorerRegistry: this.deps.explorerRegistry,
+        });
+
+        await uow.artifacts.updateExploration(artifact.id, exploration.summary, exploration.explorerUsed);
+      }
 
       return {
         artifactId: artifact.id,
