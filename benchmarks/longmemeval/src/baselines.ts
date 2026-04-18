@@ -7,7 +7,7 @@ import type {
   LongMemEvalTraceToolStep,
 } from './types.js';
 import { estimateTokens } from './utils.js';
-import { createLedgermindRuntimeFromConfig } from './ledgermind-runtime.js';
+import { createLedgermindRuntimeFromConfig, type LedgermindRuntime } from './ledgermind-runtime.js';
 
 export interface LongMemEvalBaselineExecutionResult {
   readonly prediction: string;
@@ -28,6 +28,9 @@ export interface LongMemEvalBaselineStrategy {
   readonly baseline: LongMemEvalBaselineName;
   run(example: LongMemEvalExample): Promise<LongMemEvalBaselineExecutionResult>;
 }
+
+const flattenGrepMatches = (output: Awaited<ReturnType<LedgermindRuntime['engine']['grep']>>) =>
+  output.groups.flatMap((group) => group.matches);
 
 const renderFullHistoryContext = (example: LongMemEvalExample): string => {
   return example.history
@@ -348,7 +351,9 @@ const createLedgermindStrategy = (
           toolLoopReserveTokens,
           config.fairness.tokenBudget - estimateTokens(initialContext),
         );
-        for (const match of grepOutput.matches) {
+        const grepMatches = flattenGrepMatches(grepOutput);
+
+        for (const match of grepMatches) {
           const eventRecord = runtime.eventLookup.get(match.eventId);
           if (eventRecord === undefined) {
             continue;
@@ -378,9 +383,9 @@ const createLedgermindStrategy = (
           step: toolSteps.length + 1,
           kind: 'grep',
           query: grepQuery,
-          matchCount: grepOutput.matches.length,
+          matchCount: grepMatches.length,
           addedTokens,
-          outcome: grepOutput.matches.length > 0 ? 'ok' : 'skipped',
+          outcome: grepMatches.length > 0 ? 'ok' : 'skipped',
         });
       }
 

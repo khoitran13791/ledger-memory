@@ -59,7 +59,16 @@ const createEngine = (): {
 } => {
   const grep = vi.fn(async (_input: GrepInput): Promise<GrepOutput> => {
     void _input;
-    return { matches: [] };
+    return {
+      groups: [],
+      page: {
+        offset: 0,
+        limit: 25,
+        returnedMatchCount: 0,
+        totalMatchCount: 0,
+        hasMore: false,
+      },
+    };
   });
 
   const expand = vi.fn(async (_input: ExpandInput): Promise<ExpandOutput> => {
@@ -170,11 +179,15 @@ describe('operator tool surface regression', () => {
       conversationId: 'conv_model_supplied',
       query: 'needle',
       scope: 'sum_scope_001',
+      offset: 3,
+      limit: 7,
     });
     expect(grep).toHaveBeenCalledWith({
       conversationId: runtimeCallerContext.conversationId,
       pattern: 'needle',
       scope: 'sum_scope_001',
+      offset: 3,
+      limit: 7,
     });
 
     await getToolSetTool(tools, 'memory.expand').execute({

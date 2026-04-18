@@ -59,6 +59,32 @@ const readRequiredNumber = (input: Record<string, unknown>, field: string, toolN
   return value;
 };
 
+const readOptionalInteger = (
+  input: Record<string, unknown>,
+  field: string,
+  toolName: string,
+  bounds: {
+    readonly minimum?: number;
+    readonly maximum?: number;
+  } = {},
+): number | undefined => {
+  const value = input[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    throw new TypeError(`${toolName} expects optional "${field}" to be an integer when provided.`);
+  }
+  if (bounds.minimum !== undefined && value < bounds.minimum) {
+    throw new TypeError(`${toolName} expects optional "${field}" to be >= ${bounds.minimum}.`);
+  }
+  if (bounds.maximum !== undefined && value > bounds.maximum) {
+    throw new TypeError(`${toolName} expects optional "${field}" to be <= ${bounds.maximum}.`);
+  }
+
+  return value;
+};
+
 const readRequiredObject = (input: Record<string, unknown>, field: string, toolName: string): Record<string, unknown> => {
   const value = input[field];
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -106,6 +132,17 @@ const grepParameters: Readonly<Record<string, unknown>> = {
     scope: {
       type: 'string',
       description: 'Optional summary ID scope for narrowing recall results.',
+    },
+    offset: {
+      type: 'integer',
+      minimum: 0,
+      description: 'Zero-based match offset for pagination.',
+    },
+    limit: {
+      type: 'integer',
+      minimum: 1,
+      maximum: 100,
+      description: 'Maximum number of matches to return in one page.',
     },
   },
   required: ['query'],
@@ -265,9 +302,17 @@ const extractReferences = (data: unknown): ToolReferences | undefined => {
 };
 
 const deriveGrepReferences = (scope: string | undefined, output: GrepOutput): ToolReferences | undefined => {
-  const eventIds = normalizeIds(output.matches.map((match) => String(match.eventId)));
+  const eventIds = normalizeIds(
+    output.groups.flatMap((group) => group.matches.map((match) => String(match.eventId))),
+  );
+  const summaryIds = normalizeIds([
+    ...(scope === undefined ? [] : [scope]),
+    ...output.groups.flatMap((group) =>
+      group.coveringSummaryId === undefined ? [] : [String(group.coveringSummaryId)],
+    ),
+  ]);
   return mergeReferences({
-    ...(scope === undefined ? {} : { summaryIds: [scope] }),
+    ...(summaryIds === undefined ? {} : { summaryIds }),
     ...(eventIds === undefined ? {} : { eventIds }),
   });
 };
@@ -390,11 +435,18 @@ const createToolDefinitions = (
           const callerContext = getCallerContext(runtime);
           const query = readRequiredString(payload, 'query', 'memory.grep');
           const scope = readOptionalString(payload, 'scope', 'memory.grep');
+          const offset = readOptionalInteger(payload, 'offset', 'memory.grep', { minimum: 0 });
+          const limit = readOptionalInteger(payload, 'limit', 'memory.grep', {
+            minimum: 1,
+            maximum: 100,
+          });
 
           const grepInput: GrepInput = {
             conversationId: callerContext.conversationId,
             pattern: query,
             ...(scope === undefined ? {} : { scope: createSummaryNodeId(scope) }),
+            ...(offset === undefined ? {} : { offset }),
+            ...(limit === undefined ? {} : { limit }),
           };
 
           const output = await engine.grep(grepInput);

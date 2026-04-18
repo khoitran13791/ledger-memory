@@ -521,8 +521,12 @@ describe('regression catalog 8.3 + 8.4 + 8.5 + 8.6 (postgres)', () => {
         scope: alphaCondensed.id,
       });
 
-      expect(scoped.matches.map((match) => match.eventId)).toEqual([alphaOne.id, alphaTwo.id]);
-      expect(scoped.matches.every((match) => match.coveringSummaryId === alphaCondensed.id)).toBe(true);
+      expect(scoped.groups.flatMap((group) => group.matches.map((match) => match.eventId))).toEqual([
+        alphaOne.id,
+        alphaTwo.id,
+      ]);
+      expect(scoped.groups.every((group) => group.coveringSummaryId === alphaCondensed.id)).toBe(true);
+      expect(scoped.page.totalMatchCount).toBe(2);
     } finally {
       await harness.destroy();
     }
@@ -593,8 +597,12 @@ describe('regression catalog 8.3 + 8.4 + 8.5 + 8.6 (postgres)', () => {
       const matches = await ledger.searchEvents(conversationId, 'authentication');
       expect(matches.map((event) => event.id)).toEqual([events[0].id]);
       expect(matches[0]?.content.toLowerCase()).toContain('authentication');
-      const regexMatches = await ledger.regexSearchEvents(conversationId, 'authen');
-      expect(regexMatches.map((match) => match.eventId)).toEqual([events[0].id]);
+      const regexPage = await ledger.regexSearchEvents(conversationId, 'authen', {
+        offset: 0,
+        limit: 25,
+      });
+      expect(regexPage.matches.map((match) => match.eventId)).toEqual([events[0].id]);
+      expect(regexPage.totalMatchCount).toBe(1);
     } finally {
       await harness.destroy();
     }

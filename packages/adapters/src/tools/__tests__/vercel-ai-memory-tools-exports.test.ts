@@ -19,7 +19,16 @@ describe('tools public exports', () => {
     };
 
     const engine = {
-      grep: async () => ({ matches: [] }),
+      grep: async () => ({
+        groups: [],
+        page: {
+          offset: 0,
+          limit: 25,
+          returnedMatchCount: 0,
+          totalMatchCount: 0,
+          hasMore: false,
+        },
+      }),
       describe: async () => ({
         kind: 'summary' as const,
         metadata: {},

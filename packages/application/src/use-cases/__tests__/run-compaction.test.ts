@@ -375,7 +375,10 @@ class TestLedgerReadPort implements LedgerReadPort {
   }
 
   async regexSearchEvents() {
-    return [];
+    return {
+      matches: [],
+      totalMatchCount: 0,
+    };
   }
 }
 

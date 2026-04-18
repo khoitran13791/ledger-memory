@@ -82,18 +82,26 @@ export const deriveRecallReferences = (
   scope: string | undefined,
   output: GrepOutput,
 ): ToolReferences | undefined => {
-  const eventIds = output.matches
+  const eventIds = output.groups
+    .flatMap((group) => group.matches)
     .map((match) => String(match.eventId))
     .filter((eventId) => eventId.trim().length > 0);
+  const summaryIds = output.groups.flatMap((group) =>
+    group.coveringSummaryId === undefined ? [] : [String(group.coveringSummaryId)],
+  );
 
   const dedupedEventIds = mergeReferenceArrays([eventIds]);
+  const dedupedSummaryIds = mergeReferenceArrays([
+    scope === undefined ? undefined : [scope],
+    summaryIds,
+  ]);
 
-  if (scope === undefined && dedupedEventIds === undefined) {
+  if (dedupedSummaryIds === undefined && dedupedEventIds === undefined) {
     return undefined;
   }
 
   return {
-    ...(scope === undefined ? {} : { summaryIds: [scope] }),
+    ...(dedupedSummaryIds === undefined ? {} : { summaryIds: dedupedSummaryIds }),
     ...(dedupedEventIds === undefined ? {} : { eventIds: dedupedEventIds }),
   };
 };

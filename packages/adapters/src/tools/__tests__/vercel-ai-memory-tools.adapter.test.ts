@@ -64,7 +64,14 @@ const createMinimalEngine = (): {
   const grep = vi.fn(async (_input: GrepInput): Promise<GrepOutput> => {
     void _input;
     return {
-      matches: [],
+      groups: [],
+      page: {
+        offset: 0,
+        limit: 25,
+        returnedMatchCount: 0,
+        totalMatchCount: 0,
+        hasMore: false,
+      },
     };
   });
 
@@ -293,7 +300,16 @@ describe('createVercelMemoryTools', () => {
     expect(() =>
       createVercelMemoryTools(
         {
-          grep: async (): Promise<GrepOutput> => ({ matches: [] }),
+          grep: async (): Promise<GrepOutput> => ({
+            groups: [],
+            page: {
+              offset: 0,
+              limit: 25,
+              returnedMatchCount: 0,
+              totalMatchCount: 0,
+              hasMore: false,
+            },
+          }),
           describe: async (): Promise<DescribeOutput> => ({
             kind: 'summary',
             metadata: {},
@@ -362,6 +378,8 @@ describe('createVercelMemoryTools', () => {
       conversationId: 'conv_1',
       query: 'alpha',
       scope: 'sum_scope_1',
+      offset: 2,
+      limit: 5,
     });
 
     expect(grep).toHaveBeenCalledTimes(1);
@@ -369,9 +387,20 @@ describe('createVercelMemoryTools', () => {
       conversationId: runtimeCallerContext.conversationId,
       pattern: 'alpha',
       scope: 'sum_scope_1',
+      offset: 2,
+      limit: 5,
     });
 
-    const envelope = assertSuccessEnvelope(result, { matches: [] });
+    const envelope = assertSuccessEnvelope(result, {
+      groups: [],
+      page: {
+        offset: 0,
+        limit: 25,
+        returnedMatchCount: 0,
+        totalMatchCount: 0,
+        hasMore: false,
+      },
+    });
     expect(envelope.references).toEqual({
       summaryIds: ['sum_scope_1'],
       conversationIds: ['conv_runtime'],
@@ -384,18 +413,29 @@ describe('createVercelMemoryTools', () => {
     const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     grep.mockResolvedValueOnce({
-      matches: [
+      groups: [
         {
-          eventId: createEventId('evt_100'),
-          sequence: createSequenceNumber(1),
-          excerpt: 'alpha',
-        },
-        {
-          eventId: createEventId('evt_101'),
-          sequence: createSequenceNumber(2),
-          excerpt: 'beta',
+          matches: [
+            {
+              eventId: createEventId('evt_100'),
+              sequence: createSequenceNumber(1),
+              excerpt: 'alpha',
+            },
+            {
+              eventId: createEventId('evt_101'),
+              sequence: createSequenceNumber(2),
+              excerpt: 'beta',
+            },
+          ],
         },
       ],
+      page: {
+        offset: 0,
+        limit: 25,
+        returnedMatchCount: 2,
+        totalMatchCount: 2,
+        hasMore: false,
+      },
     });
 
     const grepTool = getToolSetTool(tools, 'memory.grep');
@@ -405,18 +445,29 @@ describe('createVercelMemoryTools', () => {
     });
 
     const envelope = assertSuccessEnvelope(result, {
-      matches: [
+      groups: [
         {
-          eventId: createEventId('evt_100'),
-          sequence: createSequenceNumber(1),
-          excerpt: 'alpha',
-        },
-        {
-          eventId: createEventId('evt_101'),
-          sequence: createSequenceNumber(2),
-          excerpt: 'beta',
+          matches: [
+            {
+              eventId: createEventId('evt_100'),
+              sequence: createSequenceNumber(1),
+              excerpt: 'alpha',
+            },
+            {
+              eventId: createEventId('evt_101'),
+              sequence: createSequenceNumber(2),
+              excerpt: 'beta',
+            },
+          ],
         },
       ],
+      page: {
+        offset: 0,
+        limit: 25,
+        returnedMatchCount: 2,
+        totalMatchCount: 2,
+        hasMore: false,
+      },
     });
     expect(envelope.references).toEqual({
       eventIds: ['evt_100', 'evt_101'],
@@ -474,7 +525,14 @@ describe('createVercelMemoryTools', () => {
     const tools = createVercelMemoryTools(engine as MemoryEngine, runtime);
 
     const grepOutputWithReferences = {
-      matches: [],
+      groups: [],
+      page: {
+        offset: 0,
+        limit: 25,
+        returnedMatchCount: 0,
+        totalMatchCount: 0,
+        hasMore: false,
+      },
       references: {
         summaryIds: ['sum_scope_1', 1],
         artifactIds: ['file_1', null],
@@ -894,5 +952,27 @@ describe('VercelAiMemoryToolsAdapter', () => {
       'memory.agenticMap',
       'memory.getOperatorRun',
     ]);
+  });
+
+  it('advertises grep pagination parameters through ToolProviderPort', () => {
+    const { engine } = createMinimalEngine();
+    const adapter = new VercelAiMemoryToolsAdapter();
+
+    const tools = adapter.createTools(engine as MemoryEngine, runtime);
+    const grepTool = tools.find((tool) => tool.name === 'memory.grep');
+
+    expect(grepTool?.parameters).toMatchObject({
+      properties: {
+        offset: {
+          type: 'integer',
+          minimum: 0,
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 100,
+        },
+      },
+    });
   });
 });

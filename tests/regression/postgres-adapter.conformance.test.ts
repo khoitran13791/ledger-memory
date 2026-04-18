@@ -488,10 +488,15 @@ describe('postgres adapter conformance (FR-014 / FR-016)', () => {
       const scopedText = await ledger.searchEvents(conversationId, 'alpha', scopedCondensed.id);
       expect(scopedText.map((event) => event.id)).toEqual([evt3.id]);
 
-      const scopedRegex = await ledger.regexSearchEvents(conversationId, 'alpha', scopedCondensed.id);
-      expect(scopedRegex).toHaveLength(1);
-      expect(scopedRegex[0]?.eventId).toBe(evt3.id);
-      expect(scopedRegex[0]?.coveringSummaryId).toBe(scopedCondensed.id);
+      const scopedRegex = await ledger.regexSearchEvents(conversationId, 'alpha', {
+        scope: scopedCondensed.id,
+        offset: 0,
+        limit: 25,
+      });
+      expect(scopedRegex.matches).toHaveLength(1);
+      expect(scopedRegex.matches[0]?.eventId).toBe(evt3.id);
+      expect(scopedRegex.matches[0]?.coveringSummaryId).toBe(scopedCondensed.id);
+      expect(scopedRegex.totalMatchCount).toBe(1);
     } finally {
       await harness.destroy();
     }
@@ -508,13 +513,19 @@ describe('postgres adapter conformance (FR-014 / FR-016)', () => {
       const ancestors = await conversations.getAncestorChain(unknownConversationId);
       const events = await ledger.getEvents(unknownConversationId);
       const textMatches = await ledger.searchEvents(unknownConversationId, 'missing');
-      const regexMatches = await ledger.regexSearchEvents(unknownConversationId, 'missing');
+      const regexMatches = await ledger.regexSearchEvents(unknownConversationId, 'missing', {
+        offset: 0,
+        limit: 25,
+      });
 
       expect(loaded).toBeNull();
       expect(ancestors).toEqual([]);
       expect(events).toEqual([]);
       expect(textMatches).toEqual([]);
-      expect(regexMatches).toEqual([]);
+      expect(regexMatches).toEqual({
+        matches: [],
+        totalMatchCount: 0,
+      });
     } finally {
       await harness.destroy();
     }

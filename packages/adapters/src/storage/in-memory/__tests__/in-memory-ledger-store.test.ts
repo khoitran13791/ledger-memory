@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { InMemoryLedgerStore, createInMemoryPersistenceState } from '@ledgermind/adapters';
 import { createLedgerEvent } from '@ledgermind/domain';
 import {
+  createContextItem,
   createConversationId,
   createEventId,
   createSequenceNumber,
+  createSummaryContextItemRef,
   createSummaryNodeId,
 } from '@ledgermind/domain';
 import { createTimestamp } from '@ledgermind/domain';
@@ -113,10 +115,15 @@ describe('InMemoryLedgerStore', () => {
     const scopedSearchMatches = await store.searchEvents(conversationId, 'alpha', summaryId);
     expect(scopedSearchMatches.map((event) => event.id)).toEqual([evt3.id]);
 
-    const regexMatches = await store.regexSearchEvents(conversationId, 'alpha', summaryId);
-    expect(regexMatches).toHaveLength(1);
+    const regexPage = await store.regexSearchEvents(conversationId, 'alpha', {
+      scope: summaryId,
+      offset: 0,
+      limit: 25,
+    });
+    expect(regexPage.totalMatchCount).toBe(1);
+    expect(regexPage.matches).toHaveLength(1);
 
-    const scopedMatch = regexMatches[0];
+    const scopedMatch = regexPage.matches[0];
     expect(scopedMatch).toBeDefined();
     if (!scopedMatch) {
       throw new Error('Expected scoped regex match to exist.');
@@ -124,5 +131,46 @@ describe('InMemoryLedgerStore', () => {
 
     expect(scopedMatch.eventId).toBe(evt3.id);
     expect(scopedMatch.coveringSummaryId).toBe(summaryId);
+  });
+
+  it('returns paged regex matches with active covering summaries for unscoped grep', async () => {
+    const state = createInMemoryPersistenceState();
+    const store = new InMemoryLedgerStore(state);
+    const conversationId = createConversationId('conv_ledger_paged');
+
+    const evt1 = createEvent(conversationId, 1, 'alpha one');
+    const evt2 = createEvent(conversationId, 2, 'alpha two');
+    const evt3 = createEvent(conversationId, 3, 'alpha three');
+
+    await store.appendEvents(conversationId, [evt1, evt2, evt3]);
+
+    const summaryId = createSummaryNodeId('sum_active_alpha');
+    state.summaryNodesById.set(summaryId, {
+      id: summaryId,
+      conversationId,
+      kind: 'leaf',
+      content: 'active alpha summary',
+      tokenCount: createTokenCount(5),
+      artifactIds: [],
+      createdAt: createTimestamp(new Date('2026-01-01T00:10:00.000Z')),
+    });
+    state.summaryNodeIdsByConversation.set(conversationId, [summaryId]);
+    state.leafMessageEdgesBySummary.set(summaryId, [evt1.id, evt2.id]);
+    state.contextItemsByConversation.set(conversationId, [
+      createContextItem({
+        conversationId,
+        position: 0,
+        ref: createSummaryContextItemRef(summaryId),
+      }),
+    ]);
+
+    const page = await store.regexSearchEvents(conversationId, 'alpha', {
+      offset: 0,
+      limit: 2,
+    });
+
+    expect(page.totalMatchCount).toBe(3);
+    expect(page.matches.map((match) => match.eventId)).toEqual([evt1.id, evt2.id]);
+    expect(page.matches.every((match) => match.coveringSummaryId === summaryId)).toBe(true);
   });
 });

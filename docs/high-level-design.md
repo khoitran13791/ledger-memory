@@ -753,17 +753,27 @@ interface GrepInput {
   conversationId: ConversationId;
   pattern: string;                         // regex pattern
   scope?: SummaryNodeId;                   // optional DAG scope
+  offset?: number;                         // zero-based match offset
+  limit?: number;                          // page size (default 25, capped at 100)
 }
 interface GrepOutput {
-  matches: GrepMatch[];                    // flat ordered matches
+  groups: GrepGroup[];                     // contiguous groups by current covering summary
+  page: {
+    offset: number;
+    limit: number;
+    returnedMatchCount: number;
+    totalMatchCount: number;
+    hasMore: boolean;
+    nextOffset?: number;
+  };
 }
 ```
 
-**Current implementation contract:** the engine returns a flat ordered match
-list with no pagination fields. When a `scope` is provided, current storage
-adapters annotate each match with `coveringSummaryId = scope`. Unscoped grep
-does not currently guarantee coverage grouping by the summary node that covers a
-match.
+**Implementation contract:** the engine returns matches ordered by ascending
+event sequence, paginates that ordered stream via `offset` and `limit`, then
+groups the returned page into contiguous buckets by the summary node that
+currently covers each match. When a `scope` is provided, all returned matches
+are grouped under that scope.
 
 **Tool exposure note:** the core use case is `grep()`. The current MCP catalog
 surfaces this capability as `memory.recall`, while the Vercel adapter surfaces
@@ -1033,7 +1043,18 @@ interface LedgerAppendPort {
 interface LedgerReadPort {
   getEvents(conversationId: ConversationId, range?: SequenceRange): Promise<LedgerEvent[]>;
   searchEvents(conversationId: ConversationId, query: string): Promise<LedgerEvent[]>;
-  regexSearchEvents(conversationId: ConversationId, pattern: string, scope?: SummaryNodeId): Promise<GrepMatch[]>;
+  regexSearchEvents(
+    conversationId: ConversationId,
+    pattern: string,
+    page: {
+      scope?: SummaryNodeId;
+      offset: number;
+      limit: number;
+    },
+  ): Promise<{
+    matches: GrepMatch[];
+    totalMatchCount: number;
+  }>;
 }
 
 interface ContextProjectionPort {
@@ -2075,7 +2096,7 @@ await engine.append({ conversationId, events });
 const ctx = await engine.materializeContext({ conversationId, budgetTokens: 24_000, overheadTokens: 2_000 });
 
 // Use tools
-const grepResult = await engine.grep({ conversationId, pattern: "auth.*token" });
+const grepResult = await engine.grep({ conversationId, pattern: "auth.*token", limit: 10 });
 const desc = await engine.describe({ id: "sum_abc123def456" });
 ```
 

@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { IdempotencyConflictError } from '@ledgermind/application';
 import { createLedgerEvent } from '@ledgermind/domain';
-import { createEventId, createSequenceNumber, createSummaryNode, createSummaryNodeId } from '@ledgermind/domain';
+import {
+  createContextItem,
+  createEventId,
+  createSequenceNumber,
+  createSummaryContextItemRef,
+  createSummaryNode,
+  createSummaryNodeId,
+} from '@ledgermind/domain';
 import { createTimestamp } from '@ledgermind/domain';
 import { createTokenCount } from '@ledgermind/domain';
 import type { ConversationId, EventMetadata } from '@ledgermind/domain';
@@ -523,16 +530,50 @@ describe('PgLedgerStore', () => {
     try {
       const fixture = await setupScopedSearchFixture(harness);
 
-      const scopedRegexMatches = await harness.ledger.regexSearchEvents(
-        fixture.conversationId,
-        'alpha',
-        fixture.scopedSummaryId,
+      const scopedRegexPage = await harness.ledger.regexSearchEvents(fixture.conversationId, 'alpha', {
+        scope: fixture.scopedSummaryId,
+        offset: 0,
+        limit: 25,
+      });
+      expect(scopedRegexPage.totalMatchCount).toBe(2);
+      expect(scopedRegexPage.matches.map((match) => match.eventId)).toEqual(fixture.scopedEventIds);
+      expect(scopedRegexPage.matches.every((match) => match.coveringSummaryId === fixture.scopedSummaryId)).toBe(
+        true,
       );
-      expect(scopedRegexMatches.map((match) => match.eventId)).toEqual(fixture.scopedEventIds);
-      expect(scopedRegexMatches.every((match) => match.coveringSummaryId === fixture.scopedSummaryId)).toBe(true);
 
-      const unscopedRegexMatches = await harness.ledger.regexSearchEvents(fixture.conversationId, 'alpha');
-      expect(unscopedRegexMatches.map((match) => match.eventId)).toEqual(fixture.allEventIds);
+      const unscopedRegexPage = await harness.ledger.regexSearchEvents(fixture.conversationId, 'alpha', {
+        offset: 0,
+        limit: 25,
+      });
+      expect(unscopedRegexPage.totalMatchCount).toBe(4);
+      expect(unscopedRegexPage.matches.map((match) => match.eventId)).toEqual(fixture.allEventIds);
+    } finally {
+      await harness.destroy();
+    }
+  });
+
+  it('returns paged unscoped regex matches tagged with the active covering summary', async () => {
+    const harness = await createPostgresTestHarness();
+
+    try {
+      const fixture = await setupScopedSearchFixture(harness);
+
+      await harness.context.appendContextItems(fixture.conversationId, [
+        createContextItem({
+          conversationId: fixture.conversationId,
+          position: 0,
+          ref: createSummaryContextItemRef(fixture.scopedSummaryId),
+        }),
+      ]);
+
+      const page = await harness.ledger.regexSearchEvents(fixture.conversationId, 'alpha', {
+        offset: 0,
+        limit: 1,
+      });
+
+      expect(page.totalMatchCount).toBe(4);
+      expect(page.matches).toHaveLength(1);
+      expect(page.matches[0]?.coveringSummaryId).toBe(fixture.scopedSummaryId);
     } finally {
       await harness.destroy();
     }
@@ -548,8 +589,13 @@ describe('PgLedgerStore', () => {
       const evt2 = createEvent(conversationId, 2, `${'c'.repeat(60)} alpha ${'d'.repeat(60)}`);
       await ledger.appendEvents(conversationId, [evt1, evt2]);
 
-      const matches = await ledger.regexSearchEvents(conversationId, 'alpha');
+      const page = await ledger.regexSearchEvents(conversationId, 'alpha', {
+        offset: 0,
+        limit: 25,
+      });
+      const matches = page.matches;
 
+      expect(page.totalMatchCount).toBe(2);
       expect(matches.map((match) => match.sequence)).toEqual([1, 2]);
       expect(matches.map((match) => match.eventId)).toEqual([evt1.id, evt2.id]);
       expect(matches.every((match) => match.excerpt.includes('alpha'))).toBe(true);

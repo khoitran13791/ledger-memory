@@ -148,8 +148,10 @@ it("full lifecycle: append → compact → materialize → grep → expand", asy
   expect(ctx.budgetUsed.value).toBeLessThanOrEqual(1800);
 
   // Grep finds content from compacted history
-  const grepResult = await engine.grep({ conversationId, pattern: "specific-term" });
-  expect(grepResult.matches.length).toBeGreaterThan(0);
+  const grepResult = await engine.grep({ conversationId, pattern: "specific-term", limit: 10 });
+  const matches = grepResult.groups.flatMap((group) => group.matches);
+  expect(matches.length).toBeGreaterThan(0);
+  expect(grepResult.page.limit).toBe(10);
 
   // Expand recovers original messages
   const summaryRef = ctx.summaryReferences[0];

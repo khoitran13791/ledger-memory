@@ -1,4 +1,5 @@
 import { InvalidReferenceError } from '../errors/application-errors';
+import type { SummaryNodeId } from '@ledgermind/domain';
 import type {
   GrepMatch as LedgerReadGrepMatch,
   LedgerReadPort,
@@ -44,25 +45,37 @@ const toPublicMatch = (match: LedgerReadGrepMatch): GrepMatch => {
 };
 
 const toPublicGroups = (matches: readonly LedgerReadGrepMatch[]): readonly GrepGroup[] => {
-  const groups: GrepGroup[] = [];
+  const groups: Array<{
+    coveringSummaryId: SummaryNodeId | null;
+    matches: GrepMatch[];
+  }> = [];
 
   for (const match of matches) {
     const current = groups.at(-1);
 
-    if (current?.coveringSummaryId === match.coveringSummaryId) {
-      (current.matches as GrepMatch[]).push(toPublicMatch(match));
+    if (current !== undefined && current.coveringSummaryId === match.coveringSummaryId) {
+      current.matches.push(toPublicMatch(match));
       continue;
     }
 
     groups.push({
-      ...(match.coveringSummaryId === undefined
-        ? {}
-        : { coveringSummaryId: match.coveringSummaryId }),
+      coveringSummaryId: match.coveringSummaryId ?? null,
       matches: [toPublicMatch(match)],
     });
   }
 
-  return groups;
+  return groups.map((group): GrepGroup => {
+    if (group.coveringSummaryId === null) {
+      return {
+        matches: group.matches,
+      };
+    }
+
+    return {
+      coveringSummaryId: group.coveringSummaryId,
+      matches: group.matches,
+    };
+  });
 };
 
 export class GrepUseCase {

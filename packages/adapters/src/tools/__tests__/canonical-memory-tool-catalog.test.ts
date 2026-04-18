@@ -20,6 +20,7 @@ interface CanonicalMemoryTool {
   readonly requiresApproval: boolean;
   readonly subAgentOnly: boolean;
   readonly idempotent: boolean;
+  readonly parameters: Record<string, unknown>;
   execute(input: unknown): Promise<unknown>;
 }
 
@@ -56,7 +57,14 @@ const createMinimalEngine = (): {
   const grep = vi.fn(async (_input: GrepInput): Promise<GrepOutput> => {
     void _input;
     return {
-      matches: [],
+      groups: [],
+      page: {
+        offset: 0,
+        limit: 25,
+        returnedMatchCount: 0,
+        totalMatchCount: 0,
+        hasMore: false,
+      },
     };
   });
 
@@ -215,21 +223,41 @@ describe('createCanonicalMemoryToolCatalog', () => {
     });
   });
 
-  it('keeps the canonical recall contract scoped to a conversation input', async () => {
+  it('keeps the canonical recall contract scoped to a conversation input and forwards pagination', async () => {
     const { engine, grep } = createMinimalEngine();
     const createCanonicalMemoryToolCatalog = await loadCreateCanonicalMemoryToolCatalog();
 
     const catalog = createCanonicalMemoryToolCatalog(engine as MemoryEngine);
     const recallTool = getToolByName(catalog, 'memory.recall');
 
+    expect(recallTool.parameters).toMatchObject({
+      properties: {
+        offset: {
+          type: 'integer',
+          minimum: 0,
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 100,
+        },
+      },
+    });
+
     await recallTool.execute({
       conversationId: String(createConversationId('conversation-123')),
       query: 'needle',
+      scope: 'sum_scope_123',
+      offset: 4,
+      limit: 10,
     });
 
     expect(grep).toHaveBeenCalledWith({
       conversationId: createConversationId('conversation-123'),
       pattern: 'needle',
+      scope: 'sum_scope_123',
+      offset: 4,
+      limit: 10,
     });
   });
 

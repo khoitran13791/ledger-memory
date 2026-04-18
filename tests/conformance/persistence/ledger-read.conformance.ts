@@ -96,8 +96,12 @@ export const registerLedgerReadConformance = (adapter: ConformanceAdapterDefinit
 
         await runtime.ledger.appendEvents(conversationId, [eventOne, eventTwo]);
 
-        const unscoped = await runtime.ledger.regexSearchEvents(conversationId, 'auth');
-        expect(unscoped.map((match) => match.sequence)).toEqual([1, 2]);
+        const unscoped = await runtime.ledger.regexSearchEvents(conversationId, 'auth', {
+          offset: 0,
+          limit: 25,
+        });
+        expect(unscoped.matches.map((match) => match.sequence)).toEqual([1, 2]);
+        expect(unscoped.totalMatchCount).toBe(2);
 
         if (!adapter.capabilities.regexSearch) {
           return;
@@ -131,9 +135,14 @@ export const registerLedgerReadConformance = (adapter: ConformanceAdapterDefinit
         await runtime.dag.addLeafEdges(leafId, [eventTwo.id]);
         await runtime.dag.addCondensedEdges(condensedId, [leafId]);
 
-        const scoped = await runtime.ledger.regexSearchEvents(conversationId, 'auth', condensedId);
-        expect(scoped).toHaveLength(1);
-        expect(scoped[0]?.eventId).toBe(eventTwo.id);
+        const scoped = await runtime.ledger.regexSearchEvents(conversationId, 'auth', {
+          scope: condensedId,
+          offset: 0,
+          limit: 25,
+        });
+        expect(scoped.matches).toHaveLength(1);
+        expect(scoped.matches[0]?.eventId).toBe(eventTwo.id);
+        expect(scoped.totalMatchCount).toBe(1);
       } finally {
         await runtime.destroy();
       }

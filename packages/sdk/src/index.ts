@@ -106,9 +106,11 @@ export type {
   ExplorerHints,
   GetOperatorRunInput,
   GetOperatorRunOutput,
+  GrepGroup,
   GrepInput,
   GrepMatch,
   GrepOutput,
+  GrepPageInfo,
   KeptWorkInput,
   LLMMapInput,
   LLMMapOutput,
@@ -601,4 +603,3 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
 
   return engine;
 }
-
