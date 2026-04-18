@@ -20,7 +20,8 @@
     "@ledgermind/adapters": "workspace:*",
     "@ledgermind/application": "workspace:*",
     "@ledgermind/domain": "workspace:*",
-    "@ledgermind/infrastructure": "workspace:*"
+    "@ledgermind/infrastructure": "workspace:*",
+    "@ledgermind/sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

@@ -239,6 +239,9 @@ importers:
       '@ledgermind/infrastructure':
         specifier: workspace:*
         version: link:../packages/infrastructure
+      '@ledgermind/sdk':
+        specifier: workspace:*
+        version: link:../packages/sdk
     devDependencies:
       '@types/node':
         specifier: ^22.18.0

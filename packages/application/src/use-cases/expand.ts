@@ -27,8 +27,13 @@ export class ExpandUseCase {
       throw new UnauthorizedExpandError(input.callerContext.conversationId, input.summaryId);
     }
 
+    const allowedParentConversationId = callerConversation.parentId;
     const summaryNode = await this.deps.summaryDag.getNode(input.summaryId);
-    if (!summaryNode || summaryNode.conversationId !== input.callerContext.conversationId) {
+    if (
+      summaryNode === null ||
+      (summaryNode.conversationId !== callerConversation.id &&
+        summaryNode.conversationId !== allowedParentConversationId)
+    ) {
       throw new InvalidReferenceError('summary', input.summaryId);
     }
 

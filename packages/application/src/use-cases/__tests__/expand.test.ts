@@ -69,6 +69,43 @@ describe('ExpandUseCase', () => {
     expect(summaryDag.expandCalls).toEqual([summaryId]);
   });
 
+  it('allows a child caller to expand a summary owned by its stored parent conversation', async () => {
+    const parentOwnedSummaryId = createSummaryNodeId('sum_expand_parent_owned_uc');
+    const parentSummary = createTestSummary({
+      idValue: 'sum_expand_parent_owned_uc',
+      conversationId: parentConversationId,
+      kind: 'leaf',
+      content: 'parent conversation summary',
+      tokenCount: 12,
+    });
+    const parentEvent = createTestLedgerEvent({
+      idValue: 'evt_expand_parent_owned_1',
+      conversationId: parentConversationId,
+      sequence: 1,
+      content: 'parent source event',
+    });
+
+    const authorization = new FakeAuthorizationPort(true);
+    const summaryDag = new FakeSummaryDagPort({
+      summaries: [parentSummary],
+      expandedMessagesBySummaryId: new Map([[parentOwnedSummaryId, [parentEvent]]]),
+    });
+    const conversations = new FakeConversationPort([
+      createTestConversation('conv_expand_parent_uc'),
+      createTestConversation('conv_expand_uc', parentConversationId),
+    ]);
+
+    const useCase = new ExpandUseCase({ authorization, conversations, summaryDag });
+
+    const output = await useCase.execute({
+      summaryId: parentOwnedSummaryId,
+      callerContext: createCaller(true),
+    });
+
+    expect(output.messages).toEqual([parentEvent]);
+    expect(summaryDag.expandCalls).toEqual([parentOwnedSummaryId]);
+  });
+
   it('throws typed authorization error for unauthorized caller', async () => {
     const authorization = new FakeAuthorizationPort(false);
     const summaryDag = new FakeSummaryDagPort();

@@ -178,6 +178,54 @@ describe('sdk lifecycle e2e', () => {
     expect(integrity.report.checks.every((check) => check.passed)).toBe(true);
   });
 
+  it('lets an authorized child expand a compacted summary owned by its direct parent conversation', async () => {
+    const { engine, conversationId, parentConversationId } = createHarness({
+      suffix: 'expand_parent_summary',
+      parentSuffix: 'expand_parent_summary_parent',
+      contextWindow: 200,
+      softThreshold: 0.6,
+      hardThreshold: 0.9,
+    });
+
+    expect(parentConversationId, 'Expected parent conversation.').toBeDefined();
+    if (parentConversationId === undefined) {
+      throw new Error('Expected parent conversation.');
+    }
+
+    await engine.append({
+      conversationId: parentConversationId,
+      events: [
+        createEvent('user', 'parent detail alpha', 20),
+        createEvent('assistant', 'parent detail beta', 20),
+        createEvent('user', 'parent detail gamma', 20),
+        createEvent('assistant', 'parent detail delta', 20),
+        createEvent('user', 'parent detail epsilon', 20),
+        createEvent('assistant', 'parent detail zeta', 20),
+      ],
+    });
+
+    const compaction = await engine.runCompaction({
+      conversationId: parentConversationId,
+      trigger: 'soft',
+      targetTokens: createTokenCount(90),
+    });
+
+    const parentSummaryId = requireFirstId(compaction.nodesCreated, 'parent summary node id');
+
+    const expanded = await engine.expand({
+      summaryId: parentSummaryId,
+      callerContext: {
+        conversationId,
+        isSubAgent: true,
+        parentConversationId,
+      },
+    });
+
+    expect(expanded.messages.length).toBeGreaterThan(0);
+    expect(expanded.messages.every((message) => message.conversationId === parentConversationId)).toBe(true);
+    expect(expanded.messages.some((message) => message.content.includes('parent detail alpha'))).toBe(true);
+  });
+
   it('triggers blocking hard compaction during materialization when context is over hard threshold', async () => {
     const { engine, conversationId } = createHarness({
       suffix: 'hard_materialize',
