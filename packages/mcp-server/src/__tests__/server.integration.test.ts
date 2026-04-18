@@ -100,4 +100,56 @@ describe('createLedgermindMcpServer', () => {
 
     await Promise.all([client.close(), runtime.server.close()]);
   });
+
+  it('rejects memory.expand when callerContext self-attests sub-agent status but trusted session metadata does not', async () => {
+    const { engine, expand } = createMinimalEngine();
+    const runtime = createLedgermindMcpServer({
+      config: {
+        storage: { type: 'in-memory' },
+        enableWriteTools: false,
+        readOnly: true,
+      },
+      engine: engine as MemoryEngine,
+    });
+
+    const client = new Client(
+      { name: 'ledgermind-mcp-server-test', version: '0.0.0' },
+      { capabilities: {} },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([client.connect(clientTransport), runtime.server.connect(serverTransport)]);
+
+    const result = await client.callTool({
+      name: 'memory.expand',
+      arguments: {
+        summaryId: 'sum_leaf_1',
+        callerContext: {
+          conversationId: 'conv_spoofed',
+          isSubAgent: true,
+        },
+      },
+      _meta: {
+        'ledgermind/session': {
+          runtime: 'amp',
+          runtimeSessionId: 'thread-root',
+          userScope: 'alice',
+          workspaceScope: '/workspace/ledger-memory',
+          isSubAgent: false,
+        },
+      },
+    } as Parameters<typeof client.callTool>[0]);
+
+    expect(expand).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: {
+        code: 'MCP_TOOL_ACCESS_DENIED',
+        toolName: 'memory.expand',
+      },
+    });
+
+    await Promise.all([client.close(), runtime.server.close()]);
+  });
 });

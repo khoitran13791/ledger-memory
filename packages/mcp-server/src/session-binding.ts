@@ -117,10 +117,10 @@ export const applySessionBindingToToolArguments = (
     nextArguments.conversationId = String(binding.conversationId);
   }
 
-  if (toolName === 'memory.expand' && nextArguments.callerContext === undefined) {
+  if (toolName === 'memory.expand') {
     nextArguments.callerContext = {
       conversationId: String(binding.conversationId),
-      isSubAgent: metadata.isSubAgent ?? false,
+      isSubAgent: metadata.isSubAgent === true,
       ...(binding.parentConversationId === undefined
         ? {}
         : { parentConversationId: String(binding.parentConversationId) }),

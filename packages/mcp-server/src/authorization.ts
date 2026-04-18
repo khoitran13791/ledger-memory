@@ -16,20 +16,9 @@ interface AuthorizeMcpToolInvocationInput {
   readonly metadata: SessionBindingRuntimeMetadata | undefined;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const readCallerIsSubAgent = (
-  argumentsInput: Record<string, unknown> | undefined,
+const readTrustedCallerIsSubAgent = (
   metadata: SessionBindingRuntimeMetadata | undefined,
-): boolean => {
-  const callerContext = argumentsInput?.callerContext;
-  if (isRecord(callerContext) && typeof callerContext.isSubAgent === 'boolean') {
-    return callerContext.isSubAgent;
-  }
-
-  return metadata?.isSubAgent === true;
-};
+): boolean => metadata?.isSubAgent === true;
 
 export const canExposeMcpTool = (tool: ToolDefinition, config: McpServerConfig): boolean =>
   !(tool.access === 'write' && config.enableWriteTools === false);
@@ -37,7 +26,6 @@ export const canExposeMcpTool = (tool: ToolDefinition, config: McpServerConfig):
 export const authorizeMcpToolInvocation = ({
   tool,
   config,
-  argumentsInput,
   metadata,
 }: AuthorizeMcpToolInvocationInput): McpToolAuthorizationDecision => {
   if (!canExposeMcpTool(tool, config)) {
@@ -47,7 +35,7 @@ export const authorizeMcpToolInvocation = ({
     };
   }
 
-  if (tool.subAgentOnly === true && !readCallerIsSubAgent(argumentsInput, metadata)) {
+  if (tool.subAgentOnly === true && !readTrustedCallerIsSubAgent(metadata)) {
     return {
       allowed: false,
       reason: `${tool.name} requires an authorized sub-agent caller.`,

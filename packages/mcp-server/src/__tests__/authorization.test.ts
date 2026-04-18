@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ToolDefinition } from '@ledgermind/application';
+import type { SessionBindingRuntimeMetadata } from '../session-binding';
 
 import {
   authorizeMcpToolInvocation,
@@ -18,6 +19,16 @@ const createToolDefinition = (
   subAgentOnly: true,
   idempotent: true,
   execute: async () => ({ ok: true, data: {} }),
+  ...overrides,
+});
+
+const createMetadata = (
+  overrides: Partial<SessionBindingRuntimeMetadata> = {},
+): SessionBindingRuntimeMetadata => ({
+  runtime: 'amp',
+  runtimeSessionId: 'thread-001',
+  userScope: 'alice',
+  workspaceScope: '/workspace/ledger-memory',
   ...overrides,
 });
 
@@ -44,6 +55,79 @@ describe('MCP authorization policy', () => {
 
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toContain('authorized sub-agent');
+  });
+
+  it('denies privileged expand calls when callerContext self-attests sub-agent status without trusted metadata', () => {
+    const tool = createToolDefinition();
+
+    const decision = authorizeMcpToolInvocation({
+      tool,
+      config: {
+        storage: { type: 'in-memory' },
+        enableWriteTools: false,
+        readOnly: true,
+      },
+      metadata: undefined,
+      argumentsInput: {
+        summaryId: 'sum_leaf_1',
+        callerContext: {
+          conversationId: 'conv_spoofed',
+          isSubAgent: true,
+        },
+      },
+    });
+
+    expect(decision).toEqual({
+      allowed: false,
+      reason: 'memory.expand requires an authorized sub-agent caller.',
+    });
+  });
+
+  it('denies privileged expand calls when trusted metadata says the caller is not a sub-agent', () => {
+    const tool = createToolDefinition();
+
+    const decision = authorizeMcpToolInvocation({
+      tool,
+      config: {
+        storage: { type: 'in-memory' },
+        enableWriteTools: false,
+        readOnly: true,
+      },
+      metadata: createMetadata({ isSubAgent: false }),
+      argumentsInput: {
+        summaryId: 'sum_leaf_1',
+        callerContext: {
+          conversationId: 'conv_spoofed',
+          isSubAgent: true,
+        },
+      },
+    });
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain('authorized sub-agent');
+  });
+
+  it('allows privileged expand calls only when trusted metadata marks the caller as a sub-agent', () => {
+    const tool = createToolDefinition();
+
+    const decision = authorizeMcpToolInvocation({
+      tool,
+      config: {
+        storage: { type: 'in-memory' },
+        enableWriteTools: false,
+        readOnly: true,
+      },
+      metadata: createMetadata({ isSubAgent: true }),
+      argumentsInput: {
+        summaryId: 'sum_leaf_1',
+        callerContext: {
+          conversationId: 'conv_spoofed',
+          isSubAgent: false,
+        },
+      },
+    });
+
+    expect(decision.allowed).toBe(true);
   });
 
   it('hides write tools unless the server config explicitly enables them', () => {
