@@ -156,7 +156,7 @@ Durable bootstrap semantics:
 - bootstrap state persists as `bootstrap_not_started`, `bootstrap_in_progress`, or `bootstrap_completed`
 - if a worker crashes after child creation but before bootstrap completes, the next worker reuses the same child and finishes bootstrap
 - child execution does not start until bootstrap is marked complete
-- parent-side `expand()` checks actual conversation lineage rather than trusting model-controlled payloads
+- parent-side `expand()` checks actual conversation lineage rather than trusting model-controlled payloads, and only permits summaries owned by the child conversation or its direct parent
 
 ## `getOperatorRun()`
 

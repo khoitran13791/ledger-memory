@@ -808,9 +808,9 @@ pass `AuthorizationPort.canExpand(callerContext)`. The use case then verifies
 that the caller conversation exists, that it is itself a child conversation, and
 that the stored `parentId` matches `callerContext.parentConversationId`.
 
-The expanded summary must currently belong to the caller conversation itself.
-Direct parent-summary expansion is not implemented in the current application
-layer, even though child lineage is still validated before expansion.
+The expanded summary must belong either to the caller conversation or to that
+caller conversation's stored direct parent. Expansion does not cross beyond the
+direct parent lineage.
 
 #### CheckIntegrityUseCase
 
@@ -1852,7 +1852,7 @@ interface ExplorerConformanceTest {
   - **Escalation correctness:** Level 1 → 2 → 3 triggered in correct order
   - **Idempotency:** Duplicate append with same key is no-op
   - **Authorization gating:** Expand fails for self-attested or invalid-lineage callers
-  - **Current expand behavior:** Valid child lineage is required, but expansion is still limited to summaries owned by the caller conversation
+  - **Expand delegated parent history:** Valid child lineage allows expansion of summaries owned by the caller conversation or its stored direct parent, but not unrelated conversations
   - **Artifact ID propagation:** File IDs survive arbitrary compaction rounds
   - **DAG integrity:** No cycles after any sequence of compactions
 
@@ -1934,9 +1934,10 @@ Every compaction creates traceable domain events:
 
 **Canonical enforcement detail:** a tool payload may include caller context for
 transport convenience, but sub-agent identity is not self-attested. Runtimes
-must derive or overwrite `isSubAgent` from trusted session metadata. The current
-application layer validates child lineage before expansion, but expansion itself
-is still limited to summaries owned by the caller conversation.
+must derive or overwrite `isSubAgent` from trusted session metadata. The
+application layer validates child lineage before expansion and only allows
+summaries owned by the bound child conversation or its stored direct parent
+conversation.
 
 ### 18.2 Data Boundaries
 
