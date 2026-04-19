@@ -204,6 +204,16 @@ describe('LOCOMO smoke harness', () => {
       summaries: result.runSummary.baselines,
       baselineName: 'ledgermind_static_materialize',
     });
+    const rawTurnDiagnostic = findSummary({
+      summaries: result.runSummary.baselines,
+      baselineName: 'ledgermind_static_materialize_raw_turn_injection',
+    });
+
+    expect(runtimeAnchor.diagnostics?.rawTurnInjectionEnabledRate).toBe(0);
+    expect(rawTurnDiagnostic.diagnostics?.rawTurnInjectionEnabledRate).toBe(1);
+    expect(rawTurnDiagnostic.diagnostics?.rawTurnInjectionEnabledRate).not.toBe(
+      runtimeAnchor.diagnostics?.rawTurnInjectionEnabledRate,
+    );
 
     for (const baselineName of expectedBaselines.slice(4)) {
       const gate = findPromotionGate({

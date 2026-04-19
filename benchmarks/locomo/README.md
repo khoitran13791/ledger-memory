@@ -15,27 +15,27 @@ Each run writes to `benchmarks/locomo/runs/<run-id>/`:
 
 Default in heuristic mode (`--runtime-mode static_materialize`):
 
-- `ledgermind_static_materialize` (parity, raw-turn injection enabled by default)
+- `ledgermind_static_materialize` (parity anchor, no raw-turn injection)
 - `truncation` (parity)
 - `rag` (parity)
-- `full_context` (upper-bound when it exceeds parity budget)
+- `full_context` (upper-bound only when executed rows exceed the parity budget)
 
 Default in heuristic mode with `--runtime-mode agentic_loop`:
 
 - `ledgermind_agentic_loop` (parity, uses a bounded memory-tool loop over materialized memory: describe → expand → grep)
 - `truncation` (parity)
 - `rag` (parity)
-- `full_context` (upper-bound when it exceeds parity budget)
+- `full_context` (upper-bound only when executed rows exceed the parity budget)
 
 Additional defaults in LLM mode:
 
 - `oracle_evidence` (parity control baseline: prioritizes LOCOMO gold evidence turns)
-- `oracle_full_conversation_llm` (upper-bound control baseline: full conversation through same LLM answer path)
+- `oracle_full_conversation_llm` (upper-bound control baseline only when executed rows exceed the parity budget: full conversation through same LLM answer path)
 
 Optional LedgerMind diagnostics (`--include-ledgermind-diagnostics`):
 
-- static runtime mode: `ledgermind_static_materialize_no_precompaction`, `ledgermind_static_materialize_raw_turn_injection`, `ledgermind_static_materialize_no_precompaction_raw_turn_injection`
-- agentic runtime mode: `ledgermind_agentic_loop_no_precompaction`, `ledgermind_agentic_loop_raw_turn_injection`, `ledgermind_agentic_loop_no_precompaction_raw_turn_injection`
+- static runtime mode: `ledgermind_static_materialize_no_precompaction`, `ledgermind_static_materialize_raw_turn_injection`, `ledgermind_static_materialize_no_precompaction_raw_turn_injection` (`*_raw_turn_injection` entries are diagnostic-only variants)
+- agentic runtime mode: `ledgermind_agentic_loop_no_precompaction`, `ledgermind_agentic_loop_raw_turn_injection`, `ledgermind_agentic_loop_no_precompaction_raw_turn_injection` (`*_raw_turn_injection` entries are diagnostic-only variants)
 
 ## Usage
 
@@ -66,7 +66,7 @@ pnpm --filter @ledgermind/benchmark-locomo benchmark --prediction-mode llm --mod
 
 - `--prediction-mode llm` enables OpenAI-compatible generation (`heuristic` is default) and is required for oracle controls.
 - `--runtime-mode <static_materialize|agentic_loop>` selects runtime labeling for LedgerMind baselines (default: `static_materialize`).
-- `--artifacts-enabled <true|false>` toggles artifact storage/injection for ablation runs (default: `true`; env: `LOCOMO_ARTIFACTS_ENABLED`).
+- `--artifacts-enabled <true|false>` isolates artifact storage/exploration in ablation runs without inlining raw caption text into base runtime context (default: `true`; env: `LOCOMO_ARTIFACTS_ENABLED`).
 - `--model`, `--llm-base-url`, `--llm-api-key`, `--llm-timeout-ms` configure LLM inference.
 - `--max-examples <N>` caps selected examples (applies before execution; useful for staged non-smoke runs).
 - `--smoke` runs the fixed CI smoke subset and `--canary` runs the fixed canary subset (cannot be combined).
