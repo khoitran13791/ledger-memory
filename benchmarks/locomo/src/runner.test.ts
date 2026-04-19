@@ -228,4 +228,33 @@ describe('runLocomoBenchmark evidence-in-context metrics', () => {
     expect(traceRows.find((row) => row.qaIndex === 2)?.failureClassification?.category).toBe('reachability_failure');
     expect(traceRows.find((row) => row.qaIndex === 2)?.failureClassification?.goldEvidenceReachable).toBe(false);
   });
+
+  it('keeps full_context aggregate parity when all execution rows are parity', async () => {
+    const outputDir = `${process.cwd()}/.tmp/locomo-runner-full-context-parity-test`;
+
+    const result = await runLocomoBenchmark({
+      config: makeConfig(outputDir, ['full_context']),
+      samples: [sample],
+      examples,
+    });
+
+    const perExampleRows = (await readFile(result.perExamplePath, 'utf8'))
+      .split('\n')
+      .filter((line) => line.trim().length > 0)
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            readonly baseline: string;
+            readonly parityMode: 'parity' | 'upper_bound';
+          },
+      );
+
+    const fullContextRows = perExampleRows.filter((row) => row.baseline === 'full_context');
+    expect(fullContextRows.length).toBeGreaterThan(0);
+    expect(fullContextRows.every((row) => row.parityMode === 'parity')).toBe(true);
+
+    const baselineSummary = result.runSummary.baselines.find((summary) => summary.baseline === 'full_context');
+    expect(baselineSummary).toBeDefined();
+    expect(baselineSummary?.parityMode).toBe('parity');
+  });
 });

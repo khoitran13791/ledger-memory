@@ -533,12 +533,7 @@ const summarizeBaselines = async (input: {
       });
     }
 
-    const parityMode =
-      rows.some((row) => row.parityMode === 'upper_bound') ||
-      baselineName === 'full_context' ||
-      baselineName === 'oracle_full_conversation_llm'
-        ? 'upper_bound'
-        : 'parity';
+    const parityMode = rows.some((row) => row.parityMode === 'upper_bound') ? 'upper_bound' : 'parity';
 
     summaries.push(
       aggregateBaselineSummary({
