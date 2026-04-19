@@ -1697,6 +1697,7 @@ const createLedgermindBaseline = (
         artifactsEnabled: config.artifactsEnabled,
       });
 
+      const rawTurnInjectionContextLines = buildContextLines(input.sample);
       const contextBudget = Math.max(1, input.fairness.tokenBudget - input.fairness.overheadTokens);
       const artifactBearingExample = extractTurns(input.sample).some((turn) => hasArtifactLikeContent(turn));
       const reservedForToolLoopTokens =
@@ -1737,7 +1738,7 @@ const createLedgermindBaseline = (
           contextTokenEstimate: contextResult.contextTokenEstimate,
           question: input.example.question,
           tokenBudget: contextBudget,
-          runtimeContextLines: runtime.contextLines,
+          runtimeContextLines: rawTurnInjectionContextLines,
           topK: config.ledgermindRawTurnInjectionTopK,
           injectionMaxTokens: config.ledgermindRawTurnInjectionMaxTokens,
         });

@@ -261,6 +261,73 @@ describe('oracle baselines', () => {
     expect(agenticDiagnostic.contextResult.contextIds).not.toEqual(agenticAnchor.contextResult.contextIds);
   });
 
+  it('keeps caption-only artifact clues available to raw-turn diagnostics without leaking them into runtime context', async () => {
+    const artifactOnlyClue = 'AURORA-19';
+    const artifactSample: LocomoConversationSample = {
+      sample_id: 'sample-raw-turn-artifact-clue',
+      conversation: {
+        session_1_date_time: '1:00 pm on 1 Jan, 2026',
+        session_1: [
+          {
+            speaker: 'Alice',
+            dia_id: 'D1:1',
+            text: 'Alice shared an attachment with contingency notes for the launch review.',
+            blip_caption: `{"artifact":"launch-note","contingency_alias":"${artifactOnlyClue}","owner":"oncall"}`,
+          },
+          {
+            speaker: 'Bob',
+            dia_id: 'D1:2',
+            text: 'Bob asked which attachment mentioned the contingency alias required for sign-off.',
+          },
+        ],
+      },
+      qa: [
+        {
+          question: `Which contingency alias is referenced in Alice's attachment, ${artifactOnlyClue}?`,
+          answer: artifactOnlyClue,
+          evidence: ['D1:1'],
+          category: 3,
+        },
+      ],
+    };
+
+    const artifactExample: LocomoExample = {
+      sampleId: artifactSample.sample_id,
+      qaIndex: 0,
+      category: 3,
+      question: `Which contingency alias is referenced in Alice's attachment, ${artifactOnlyClue}?`,
+      answer: artifactOnlyClue,
+      evidence: ['D1:1'],
+    };
+
+    const fairness = {
+      ...makeConfig('heuristic').fairness,
+      tokenBudget: 3_000,
+      overheadTokens: 16,
+    };
+    const baselines = createBaselineStrategies({
+      ...makeConfig('heuristic'),
+      baselines: ['ledgermind_static_materialize', 'ledgermind_static_materialize_raw_turn_injection'],
+    });
+
+    const staticAnchor = await baselines.ledgermind_static_materialize.run({
+      sample: artifactSample,
+      example: artifactExample,
+      fairness,
+      seed: 0,
+    });
+    const staticDiagnostic = await baselines.ledgermind_static_materialize_raw_turn_injection.run({
+      sample: artifactSample,
+      example: artifactExample,
+      fairness,
+      seed: 0,
+    });
+
+    expect(staticAnchor.contextResult.context).not.toContain(artifactOnlyClue);
+    expect(staticDiagnostic.contextResult.context).toContain(artifactOnlyClue);
+    expect(staticDiagnostic.diagnostics?.rawTurnInjectionAddedCount ?? 0).toBeGreaterThan(0);
+  });
+
   it('records runtime provenance that matches the baseline runtime mode label', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.91);
     const artifactOnlyClue = 'AURORA-19';
