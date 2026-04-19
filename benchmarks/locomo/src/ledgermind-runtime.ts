@@ -879,10 +879,8 @@ const createInMemoryRuntime = async (input: {
         turn.blipCaption === undefined
           ? ''
           : input.artifactsEnabled && artifactId !== undefined
-            ? ` [shared ${artifactId}] [shared_caption ${turn.blipCaption}]`
-            : input.artifactsEnabled
-              ? ` [shared ${turn.blipCaption}]`
-              : '';
+            ? ` [shared ${artifactId}]`
+            : '';
       const content = `DATE: ${turn.dateTime} | ID: ${turn.diaId} | ${turn.speaker}: ${turn.text}${sharedSuffix}`;
       const role = speakerRoleMap.get(turn.speaker) ?? ('assistant' as MessageRole);
       return {
@@ -906,7 +904,15 @@ const createInMemoryRuntime = async (input: {
   return {
     conversationId: conversation.id,
     engine,
-    contextLines: buildContextLines(input.sample).map((line) => ({
+    contextLines: buildContextLines(
+      input.sample,
+      input.artifactsEnabled
+        ? {
+            artifactMode: 'artifact_id_only',
+            artifactIdByTurnId,
+          }
+        : undefined,
+    ).map((line) => ({
       id: line.id,
       text: line.text,
       tokenEstimate: line.tokenEstimate,

@@ -379,6 +379,8 @@ describe('oracle baselines', () => {
       makeConfig('heuristic').ledgermindToolLoopMaxAddedTokens,
     );
     expect(agenticExecution.contextResult.context).toContain('DATE:');
+    expect(agenticExecution.contextResult.context).toContain('[shared file_');
+    expect(agenticExecution.contextResult.context).not.toContain('[shared_caption ');
     expect(agenticExecution.contextResult.context).toContain('tool: [artifact:file_');
     expect(agenticExecution.contextResult.contextIds.some((id) => id.startsWith('artifact:file_'))).toBe(true);
     expect((agenticExecution.diagnostics?.toolLoop?.exploredArtifactIds.length ?? 0) > 0).toBe(true);

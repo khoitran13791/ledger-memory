@@ -201,6 +201,60 @@ describe('createLedgermindRuntime summarizer selection', () => {
     await runtime.destroy();
   });
 
+  it('keeps artifact captions out of runtime materialization when artifacts are enabled', async () => {
+    const caption = '{"image":"migration","version":"v2"}';
+    const artifactSample: LocomoConversationSample = {
+      ...sample,
+      conversation: {
+        ...sample.conversation,
+        session_1: [
+          {
+            speaker: 'Alice',
+            dia_id: 'D1:1',
+            text: 'Alice shared a migration screenshot.',
+            blip_caption: caption,
+          },
+          {
+            speaker: 'Bob',
+            dia_id: 'D1:2',
+            text: 'Bob acknowledged the screenshot.',
+          },
+        ],
+      },
+    };
+
+    const runtime = await createLedgermindRuntime({
+      sample: artifactSample,
+      fairness,
+      runtimeMode: 'static_materialize',
+      summarizerType: 'locomo_deterministic_head_tail_v1',
+      llmBaseUrl: undefined,
+      llmApiKey: undefined,
+      llmTimeoutMs: 1_000,
+      precompact: false,
+      artifactsEnabled: true,
+    });
+
+    const materialized = await runtime.engine.materializeContext({
+      conversationId: runtime.conversationId,
+      budgetTokens: 256,
+      overheadTokens: 32,
+    });
+    const artifactId =
+      materialized.modelMessages
+        .flatMap((message) => message.content.match(/\bfile_[a-zA-Z0-9_-]+\b/g) ?? [])
+        .at(0) ?? '';
+
+    expect(runtime.provenance.artifactsEnabled).toBe(true);
+    expect(artifactId.startsWith('file_')).toBe(true);
+    expect(materialized.modelMessages.some((message) => message.content.includes(caption))).toBe(false);
+    expect(materialized.modelMessages.some((message) => message.content.includes(artifactId))).toBe(true);
+    expect(runtime.contextLines.some((line) => line.text.includes(caption))).toBe(false);
+    expect(runtime.contextLines.some((line) => line.text.includes(artifactId))).toBe(true);
+
+    await runtime.destroy();
+  });
+
   it('records llm structured summarizer in runtime provenance and structured trace entries', async () => {
     const fetchMock = vi.fn(async () =>
       ({

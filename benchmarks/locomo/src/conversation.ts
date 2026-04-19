@@ -29,6 +29,13 @@ export interface ContextLine {
   readonly tokenEstimate: number;
 }
 
+type ContextLineArtifactMode = 'inline_caption' | 'artifact_id_only';
+
+interface ContextLineFormattingOptions {
+  readonly artifactMode?: ContextLineArtifactMode;
+  readonly artifactIdByTurnId?: ReadonlyMap<string, string>;
+}
+
 const getSessionNumbers = (conversation: Readonly<Record<string, unknown>>): readonly number[] => {
   const sessionNumbers: number[] = [];
 
@@ -93,20 +100,28 @@ export const extractTurns = (sample: LocomoConversationSample): readonly LocomoT
   return Object.freeze(turns);
 };
 
-export const formatTurnLine = (turn: LocomoTurn): string => {
+export const formatTurnLine = (turn: LocomoTurn, options: ContextLineFormattingOptions = {}): string => {
   const base = `DATE: ${turn.dateTime} | ID: ${turn.diaId} | ${turn.speaker} said, "${turn.text}"`;
 
   if (turn.blipCaption === undefined) {
     return base;
   }
 
+  if (options.artifactMode === 'artifact_id_only') {
+    const artifactId = options.artifactIdByTurnId?.get(turn.diaId);
+    return artifactId === undefined ? base : `${base} [shared ${artifactId}]`;
+  }
+
   return `${base} and shared ${turn.blipCaption}`;
 };
 
-export const buildContextLines = (sample: LocomoConversationSample): readonly ContextLine[] => {
+export const buildContextLines = (
+  sample: LocomoConversationSample,
+  options: ContextLineFormattingOptions = {},
+): readonly ContextLine[] => {
   return Object.freeze(
     extractTurns(sample).map((turn) => {
-      const text = formatTurnLine(turn);
+      const text = formatTurnLine(turn, options);
       return {
         id: turn.diaId,
         text,
