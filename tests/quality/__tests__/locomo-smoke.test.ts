@@ -211,8 +211,10 @@ describe('LOCOMO smoke harness', () => {
 
     expect(runtimeAnchor.diagnostics?.rawTurnInjectionEnabledRate).toBe(0);
     expect(rawTurnDiagnostic.diagnostics?.rawTurnInjectionEnabledRate).toBe(1);
-    expect(rawTurnDiagnostic.diagnostics?.rawTurnInjectionEnabledRate).not.toBe(
-      runtimeAnchor.diagnostics?.rawTurnInjectionEnabledRate,
+    expect(runtimeAnchor.diagnostics?.averageRawTurnInjectionAddedCount).toBe(0);
+    expect(rawTurnDiagnostic.diagnostics?.averageRawTurnInjectionAddedCount ?? 0).toBeGreaterThan(0);
+    expect(rawTurnDiagnostic.diagnostics?.averageRawTurnInjectionAddedCount).not.toBe(
+      runtimeAnchor.diagnostics?.averageRawTurnInjectionAddedCount,
     );
 
     for (const baselineName of expectedBaselines.slice(4)) {
