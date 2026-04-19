@@ -73,7 +73,7 @@ pnpm --filter @ledgermind/benchmark-locomo benchmark --prediction-mode llm --mod
 - `--ledgermind-tool-loop-max-steps`, `--ledgermind-tool-loop-max-describe-calls`, `--ledgermind-tool-loop-max-explore-artifact-calls`, `--ledgermind-tool-loop-max-expand-calls`, `--ledgermind-tool-loop-max-grep-calls`, and `--ledgermind-tool-loop-max-added-tokens` bound agentic retrieval behavior deterministically.
 - Oracle baselines (`oracle_evidence`, `oracle_full_conversation_llm`) require `--prediction-mode llm` and intentionally fail in heuristic mode.
 - Legacy baseline aliases (`ledgermind`, `ledgermind_no_precompaction`, `ledgermind_raw_turn_injection`, `ledgermind_no_precompaction_raw_turn_injection`) remain accepted and map to the selected runtime mode.
-- Raw-turn injection defaults are now `top-k=4` and `max-tokens=256` for stronger default LedgerMind evidence grounding; override with `--ledgermind-raw-turn-injection-top-k` and `--ledgermind-raw-turn-injection-max-tokens`.
+- Raw-turn injection settings default to `top-k=4` and `max-tokens=256` when `*_raw_turn_injection` diagnostic baselines are selected; override with `--ledgermind-raw-turn-injection-top-k` and `--ledgermind-raw-turn-injection-max-tokens`.
 
 ## Dataset and scorer
 
