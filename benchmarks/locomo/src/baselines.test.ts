@@ -149,7 +149,69 @@ describe('oracle baselines', () => {
   });
 
   it('separates raw-turn diagnostic variants from default runtime anchors', async () => {
-    const fairness = makeConfig('heuristic').fairness;
+    const artifactSample: LocomoConversationSample = {
+      sample_id: 'sample-agentic-artifact',
+      conversation: {
+        session_1_date_time: '1:00 pm on 1 Jan, 2026',
+        session_1: [
+          {
+            speaker: 'Alice',
+            dia_id: 'D1:1',
+            text: 'Alice shared architecture notes with migration details, sequence diagrams, and rollback checkpoints.',
+            blip_caption: '{"artifact":"architecture","version":"v1","topic":"migration"}',
+          },
+          {
+            speaker: 'Bob',
+            dia_id: 'D1:2',
+            text: 'Bob asked which parts of the architecture notes are mandatory for first rollout and which are optional.',
+          },
+          {
+            speaker: 'Alice',
+            dia_id: 'D1:3',
+            text: 'Alice clarified that retry policy and idempotency safeguards are mandatory for release readiness.',
+          },
+          {
+            speaker: 'Bob',
+            dia_id: 'D1:4',
+            text: 'Bob requested a compact checklist tied to deployment gates and incident response expectations.',
+            blip_caption: '{"artifact":"checklist","items":["retry-policy","incident-runbook"]}',
+          },
+          {
+            speaker: 'Alice',
+            dia_id: 'D1:5',
+            text: 'Alice confirmed the checklist includes rollback windows, observability alerts, and ownership mapping.',
+          },
+          {
+            speaker: 'Bob',
+            dia_id: 'D1:6',
+            text: 'Bob reiterated that architecture notes must stay discoverable during the QA session.',
+          },
+        ],
+      },
+      qa: [
+        {
+          question: 'What did Alice share?',
+          answer: 'architecture notes',
+          evidence: ['D1:1'],
+          category: 3,
+        },
+      ],
+    };
+
+    const artifactExample: LocomoExample = {
+      sampleId: 'sample-agentic-artifact',
+      qaIndex: 0,
+      category: 3,
+      question: 'What did Alice share?',
+      answer: 'architecture notes',
+      evidence: ['D1:1'],
+    };
+
+    const fairness = {
+      ...makeConfig('heuristic').fairness,
+      tokenBudget: 3000,
+      overheadTokens: 16,
+    };
     const baselines = createBaselineStrategies({
       ...makeConfig('heuristic'),
       baselines: [
@@ -161,26 +223,26 @@ describe('oracle baselines', () => {
     });
 
     const staticAnchor = await baselines.ledgermind_static_materialize.run({
-      sample,
-      example,
+      sample: artifactSample,
+      example: artifactExample,
       fairness,
       seed: 0,
     });
     const staticDiagnostic = await baselines.ledgermind_static_materialize_raw_turn_injection.run({
-      sample,
-      example,
+      sample: artifactSample,
+      example: artifactExample,
       fairness,
       seed: 0,
     });
     const agenticAnchor = await baselines.ledgermind_agentic_loop.run({
-      sample,
-      example,
+      sample: artifactSample,
+      example: artifactExample,
       fairness,
       seed: 0,
     });
     const agenticDiagnostic = await baselines.ledgermind_agentic_loop_raw_turn_injection.run({
-      sample,
-      example,
+      sample: artifactSample,
+      example: artifactExample,
       fairness,
       seed: 0,
     });
@@ -189,6 +251,14 @@ describe('oracle baselines', () => {
     expect(staticDiagnostic.diagnostics?.rawTurnInjectionEnabled).toBe(true);
     expect(agenticAnchor.diagnostics?.rawTurnInjectionEnabled).toBe(false);
     expect(agenticDiagnostic.diagnostics?.rawTurnInjectionEnabled).toBe(true);
+    expect(staticAnchor.diagnostics?.rawTurnInjectionAddedCount).toBeUndefined();
+    expect(agenticAnchor.diagnostics?.rawTurnInjectionAddedCount).toBeUndefined();
+    expect(staticDiagnostic.diagnostics?.rawTurnInjectionAddedCount ?? 0).toBeGreaterThan(0);
+    expect(agenticDiagnostic.diagnostics?.rawTurnInjectionAddedCount ?? 0).toBeGreaterThan(0);
+    expect(staticDiagnostic.contextResult.context).not.toBe(staticAnchor.contextResult.context);
+    expect(staticDiagnostic.contextResult.contextIds).not.toEqual(staticAnchor.contextResult.contextIds);
+    expect(agenticDiagnostic.contextResult.context).not.toBe(agenticAnchor.contextResult.context);
+    expect(agenticDiagnostic.contextResult.contextIds).not.toEqual(agenticAnchor.contextResult.contextIds);
   });
 
   it('records runtime provenance that matches the baseline runtime mode label', async () => {
