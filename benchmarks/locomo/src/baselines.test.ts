@@ -263,6 +263,7 @@ describe('oracle baselines', () => {
 
   it('records runtime provenance that matches the baseline runtime mode label', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.91);
+    const artifactOnlyClue = 'AURORA-19';
 
     const artifactSample: LocomoConversationSample = {
       sample_id: 'sample-agentic-artifact',
@@ -272,41 +273,25 @@ describe('oracle baselines', () => {
           {
             speaker: 'Alice',
             dia_id: 'D1:1',
-            text: 'Alice shared architecture notes with migration details, sequence diagrams, and rollback checkpoints.',
-            blip_caption: '{"artifact":"architecture","version":"v1","topic":"migration"}',
+            text: 'Alice shared an attachment with contingency details for the release rollout.',
+            blip_caption: `{"artifact":"rollout-note","contingency_alias":"${artifactOnlyClue}","owner":"oncall"}`,
           },
           {
             speaker: 'Bob',
             dia_id: 'D1:2',
-            text: 'Bob asked which parts of the architecture notes are mandatory for first rollout and which are optional.',
+            text: 'Bob asked where the contingency alias could be found before the launch review.',
           },
           {
             speaker: 'Alice',
             dia_id: 'D1:3',
-            text: 'Alice clarified that retry policy and idempotency safeguards are mandatory for release readiness.',
-          },
-          {
-            speaker: 'Bob',
-            dia_id: 'D1:4',
-            text: 'Bob requested a compact checklist tied to deployment gates and incident response expectations.',
-            blip_caption: '{"artifact":"checklist","items":["retry-policy","incident-runbook"]}',
-          },
-          {
-            speaker: 'Alice',
-            dia_id: 'D1:5',
-            text: 'Alice confirmed the checklist includes rollback windows, observability alerts, and ownership mapping.',
-          },
-          {
-            speaker: 'Bob',
-            dia_id: 'D1:6',
-            text: 'Bob reiterated that architecture notes must stay discoverable during the QA session.',
+            text: 'Alice said the attachment has the exact contingency alias needed for approval notes.',
           },
         ],
       },
       qa: [
         {
-          question: 'What did Alice share?',
-          answer: 'architecture notes',
+          question: "What contingency alias is in Alice's attachment?",
+          answer: artifactOnlyClue,
           evidence: ['D1:1'],
           category: 3,
         },
@@ -317,8 +302,8 @@ describe('oracle baselines', () => {
       sampleId: 'sample-agentic-artifact',
       qaIndex: 0,
       category: 3,
-      question: 'What did Alice share?',
-      answer: 'architecture notes',
+      question: "What contingency alias is in Alice's attachment?",
+      answer: artifactOnlyClue,
       evidence: ['D1:1'],
     };
 
@@ -336,6 +321,18 @@ describe('oracle baselines', () => {
     }).ledgermind_static_materialize.run({
       sample,
       example,
+      fairness: constrainedFairness,
+      seed: 0,
+    });
+
+    const staticArtifactExecution = await createBaselineStrategies({
+      ...makeConfig('heuristic'),
+      runtimeMode: 'static_materialize',
+      baselines: ['ledgermind_static_materialize'],
+      fairness: constrainedFairness,
+    }).ledgermind_static_materialize.run({
+      sample: artifactSample,
+      example: artifactExample,
       fairness: constrainedFairness,
       seed: 0,
     });
@@ -382,11 +379,19 @@ describe('oracle baselines', () => {
     expect(agenticExecution.contextResult.context).toContain('[shared file_');
     expect(agenticExecution.contextResult.context).not.toContain('[shared_caption ');
     expect(agenticExecution.contextResult.context).toContain('tool: [artifact:file_');
+    expect(agenticExecution.contextResult.context).toContain(artifactOnlyClue);
     expect(agenticExecution.contextResult.contextIds.some((id) => id.startsWith('artifact:file_'))).toBe(true);
     expect((agenticExecution.diagnostics?.toolLoop?.exploredArtifactIds.length ?? 0) > 0).toBe(true);
     expect(
       agenticExecution.diagnostics?.toolLoop?.steps.some((step) => step.tool === 'explore_artifact' && step.status === 'ok'),
     ).toBe(true);
+    expect(staticArtifactExecution.contextResult.context).not.toContain(artifactOnlyClue);
+
+    const exploredArtifactToolLine = agenticExecution.contextResult.context
+      .split('\n')
+      .find((line) => line.startsWith('tool: [artifact:file_'));
+    expect(exploredArtifactToolLine).toBeDefined();
+    expect(exploredArtifactToolLine).toContain(artifactOnlyClue);
 
     const toolLoopDiagnostics = agenticExecution.diagnostics?.toolLoop;
     expect(toolLoopDiagnostics?.describeSignals?.length ?? 0).toBe(toolLoopDiagnostics?.describedIds.length ?? 0);
