@@ -73,11 +73,16 @@ const createPredictionKey = (baseline: string, seed: number): string => {
 const toSampleQaForScoring = (input: {
   readonly sample: LocomoConversationSample;
   readonly exampleMap: ReadonlyMap<string, PerExampleRecord>;
+  readonly selectedExampleKeys: ReadonlySet<string>;
   readonly predictionKey: string;
   readonly modelKey: string;
 }): { readonly sample_id: string; readonly qa: readonly Record<string, unknown>[] } => {
-  const qa = input.sample.qa.map((qa, qaIndex) => {
+  const qa = input.sample.qa.flatMap((qa, qaIndex) => {
     const mapKey = `${input.sample.sample_id}::${qaIndex}`;
+    if (!input.selectedExampleKeys.has(mapKey)) {
+      return [];
+    }
+
     const row = input.exampleMap.get(mapKey);
 
     const prediction = row?.prediction ?? 'No information available';
@@ -97,7 +102,7 @@ const toSampleQaForScoring = (input: {
       payload[`${input.modelKey}_recall`] = 1;
     }
 
-    return payload;
+    return [payload];
   });
 
   return {
@@ -220,6 +225,9 @@ export const scoreSeedWithOfficialScorer = async (input: {
     input.rows.map((row) => [`${row.sampleId}::${row.qaIndex}`, row] as const),
   );
 
+  const selectedExampleKeys = new Set(
+    input.examples.map((example) => `${example.sampleId}::${example.qaIndex}`),
+  );
   const sampleIdsUsed = new Set(input.examples.map((example) => example.sampleId));
   const qaBySample = input.allSamples
     .filter((sample) => sampleIdsUsed.has(sample.sample_id))
@@ -227,10 +235,12 @@ export const scoreSeedWithOfficialScorer = async (input: {
       toSampleQaForScoring({
         sample,
         exampleMap,
+        selectedExampleKeys,
         predictionKey,
         modelKey,
       }),
-    );
+    )
+    .filter((sample) => sample.qa.length > 0);
 
   const modelJsonPath = path.resolve(input.outputDir, `${modelKey}.json`);
   await writeFile(modelJsonPath, `${JSON.stringify(qaBySample, null, 2)}\n`, 'utf8');
