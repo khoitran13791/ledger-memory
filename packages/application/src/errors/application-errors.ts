@@ -111,6 +111,16 @@ export class ArtifactContentUnavailableError extends ApplicationError {
   }
 }
 
+export class ArtifactSourceContentUnavailableError extends ApplicationError {
+  readonly code = 'ARTIFACT_SOURCE_CONTENT_UNAVAILABLE';
+  readonly path: string;
+
+  constructor(path: string, message?: string) {
+    super(message ?? `Artifact source content unavailable: ${path}`);
+    this.path = path;
+  }
+}
+
 export class ExplorerResolutionError extends ApplicationError {
   readonly code = 'EXPLORER_RESOLUTION_FAILED';
   readonly artifactId: ArtifactId;

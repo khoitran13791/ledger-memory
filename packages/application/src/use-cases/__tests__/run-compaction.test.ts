@@ -1007,7 +1007,7 @@ describe('RunCompactionUseCase', () => {
     expect(summarizer.calls).toHaveLength(1);
   });
 
-  it('emits SummaryNodeCreated for each successful compaction round', async () => {
+  it('emits CompactionTriggered before SummaryNodeCreated', async () => {
     const system = createEventForTest({ id: 'evt_summary_event_0', sequence: 1, role: 'system', tokenCount: 5 });
     const one = createEventForTest({ id: 'evt_summary_event_1', sequence: 2, tokenCount: 10 });
     const two = createEventForTest({ id: 'evt_summary_event_2', sequence: 3, tokenCount: 10, role: 'assistant' });
@@ -1060,7 +1060,15 @@ describe('RunCompactionUseCase', () => {
       outputTokens: createTokenCount(8),
       coveredItemCount: 2,
     });
+    expect(eventPublisher.events[0]).toMatchObject({
+      type: 'CompactionTriggered',
+      conversationId,
+      trigger: 'soft',
+      currentTokens: createTokenCount(65),
+      threshold: createTokenCount(60),
+    });
     expect(eventPublisher.events.map((event) => event.type)).toEqual([
+      'CompactionTriggered',
       'SummaryNodeCreated',
       'CompactionCompleted',
     ]);
@@ -1341,8 +1349,8 @@ describe('RunCompactionUseCase', () => {
       trigger: 'soft',
     });
 
-    expect(eventPublisher.events).toHaveLength(1);
-    expect(eventPublisher.events[0]).toMatchObject({
+    expect(eventPublisher.events[0]?.type).toBe('CompactionTriggered');
+    expect(eventPublisher.events.at(-1)).toMatchObject({
       type: 'CompactionCompleted',
       conversationId,
       rounds: output.rounds,

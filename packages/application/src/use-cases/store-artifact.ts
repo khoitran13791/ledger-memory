@@ -8,6 +8,7 @@ import {
 } from '@ledgermind/domain';
 
 import {
+  ArtifactSourceContentUnavailableError,
   ConversationNotFoundError,
   InvalidTokenizerOutputError,
   type TokenizerOperation,
@@ -147,26 +148,24 @@ const prepareArtifactSource = async (
     };
   }
 
-  if (fileReader) {
-    const fileBytes = await fileReader.readBytes(source.path);
-    return {
-      storageKind: 'path',
-      originalPath: source.path,
-      content: fileBytes,
-      contentHashHex: hashPort.sha256(fileBytes),
-      tokenCount: countTokensSafely(tokenizer, 'estimateFromBytes', fileBytes.byteLength),
-    };
+  if (fileReader === undefined) {
+    throw new ArtifactSourceContentUnavailableError(source.path);
   }
 
-  // Fallback: hash the path itself (not truly content-addressed)
-  const pathBytes = textEncoder.encode(source.path);
+  let fileBytes: Uint8Array;
+  try {
+    fileBytes = await fileReader.readBytes(source.path);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : undefined;
+    throw new ArtifactSourceContentUnavailableError(source.path, message);
+  }
 
   return {
     storageKind: 'path',
     originalPath: source.path,
-    content: undefined,
-    contentHashHex: hashPort.sha256(textEncoder.encode(`path:${source.path}`)),
-    tokenCount: countTokensSafely(tokenizer, 'estimateFromBytes', pathBytes.byteLength),
+    content: fileBytes,
+    contentHashHex: hashPort.sha256(fileBytes),
+    tokenCount: countTokensSafely(tokenizer, 'estimateFromBytes', fileBytes.byteLength),
   };
 };
 

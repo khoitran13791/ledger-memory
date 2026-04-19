@@ -297,6 +297,32 @@ const validateTokenizerTokenCount = (
   return output as TokenCount;
 };
 
+const computeTriggerThreshold = (input: {
+  readonly trigger: RunCompactionInput['trigger'];
+  readonly contextWindow: TokenCount;
+  readonly availableBudget: TokenCount;
+  readonly softThreshold: number;
+  readonly hardThreshold: number;
+}): TokenCount => {
+  const hardThreshold = createTokenCount(
+    Math.min(
+      Math.floor(input.contextWindow.value * input.hardThreshold),
+      input.availableBudget.value,
+    ),
+  );
+
+  if (input.trigger === 'hard') {
+    return hardThreshold;
+  }
+
+  return createTokenCount(
+    Math.min(
+      Math.floor(input.contextWindow.value * input.softThreshold),
+      hardThreshold.value,
+    ),
+  );
+};
+
 export const applyDeterministicFallback = (input: {
   readonly content: string;
   readonly maxTokens: number;
@@ -383,6 +409,21 @@ export class RunCompactionUseCase {
 
     const initialTokens = await this.readCurrentContextTokenCount(input.conversationId);
     let currentTokens = initialTokens;
+    const triggerThreshold = computeTriggerThreshold({
+      trigger: input.trigger,
+      contextWindow: conversation.config.contextWindow,
+      availableBudget: budget.available,
+      softThreshold: conversation.config.thresholds.soft,
+      hardThreshold: conversation.config.thresholds.hard,
+    });
+
+    this.deps.eventPublisher?.publish({
+      type: 'CompactionTriggered',
+      conversationId: input.conversationId,
+      trigger: input.trigger,
+      currentTokens: initialTokens,
+      threshold: triggerThreshold,
+    });
 
     let rounds = 0;
     const nodesCreated: SummaryNodeId[] = [];

@@ -29,6 +29,7 @@ import {
 } from '@ledgermind/domain';
 
 import {
+  ArtifactSourceContentUnavailableError,
   ConversationNotFoundError,
   InvalidTokenizerOutputError,
 } from '../../errors/application-errors';
@@ -97,6 +98,14 @@ class TestFileReader implements FileReaderPort {
       throw new Error(`File not found: ${path}`);
     }
     return data;
+  }
+}
+
+class ThrowingFileReader implements FileReaderPort {
+  constructor(private readonly message: string) {}
+
+  async readBytes(path: string): Promise<Uint8Array> {
+    throw new Error(`${this.message}: ${path}`);
   }
 }
 
@@ -398,7 +407,10 @@ const createExplorerRegistryForTest = (): ExplorerRegistryPort => {
 const createUseCase = (
   conversation: Conversation | null = createConversationForTest(),
   tokenizer: TokenizerPort = new SimpleTokenizer(),
-  options?: { readonly explorerRegistry?: ExplorerRegistryPort },
+  options?: {
+    readonly explorerRegistry?: ExplorerRegistryPort;
+    readonly fileReader?: FileReaderPort;
+  },
 ) => {
   const hashPort = new DeterministicHashPort();
   const artifactStore = new TestArtifactStore();
@@ -411,6 +423,7 @@ const createUseCase = (
       hashPort,
       tokenizer,
       explorerRegistry: options?.explorerRegistry ?? createExplorerRegistryForTest(),
+      ...(options?.fileReader === undefined ? {} : { fileReader: options.fileReader }),
     }),
   };
 };
@@ -580,24 +593,38 @@ describe('StoreArtifactUseCase', () => {
     expect(stored?.tokenCount.value).toBeGreaterThan(0);
   });
 
-  it('stores path artifacts with stable IDs and path metadata', async () => {
+  it('rejects path artifacts without readable bytes', async () => {
     const { useCase, artifactStore } = createUseCase();
 
-    const first = await useCase.execute({
-      conversationId,
-      source: { kind: 'path', path: '/tmp/project/data.json' },
-    });
-    const second = await useCase.execute({
+    const execution = useCase.execute({
       conversationId,
       source: { kind: 'path', path: '/tmp/project/data.json' },
     });
 
-    expect(first.artifactId).toEqual(second.artifactId);
+    await expect(execution).rejects.toBeInstanceOf(ArtifactSourceContentUnavailableError);
+    await expect(execution).rejects.toMatchObject({
+      code: 'ARTIFACT_SOURCE_CONTENT_UNAVAILABLE',
+      path: '/tmp/project/data.json',
+    });
+    expect(artifactStore.stored.size).toBe(0);
+  });
 
-    const stored = await artifactStore.getMetadata(first.artifactId);
-    expect(stored?.storageKind).toBe('path');
-    expect(stored?.originalPath).toBe('/tmp/project/data.json');
-    expect(stored?.mimeType).toBe(createMimeType('application/octet-stream'));
+  it('wraps fileReader read failures for path artifacts', async () => {
+    const { useCase, artifactStore } = createUseCase(createConversationForTest(), new SimpleTokenizer(), {
+      fileReader: new ThrowingFileReader('read failure'),
+    });
+
+    const execution = useCase.execute({
+      conversationId,
+      source: { kind: 'path', path: '/tmp/project/data.json' },
+    });
+
+    await expect(execution).rejects.toBeInstanceOf(ArtifactSourceContentUnavailableError);
+    await expect(execution).rejects.toMatchObject({
+      code: 'ARTIFACT_SOURCE_CONTENT_UNAVAILABLE',
+      path: '/tmp/project/data.json',
+    });
+    expect(artifactStore.stored.size).toBe(0);
   });
 
   it('throws typed conversation-not-found error', async () => {

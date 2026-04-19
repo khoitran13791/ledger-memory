@@ -229,6 +229,34 @@ describe('GetOperatorRunUseCase', () => {
     expect(output.tasks.map((task) => task.itemIndex)).toEqual([0]);
   });
 
+  it('works without global Buffer', async () => {
+    const content = `${JSON.stringify(smallResults[0])}\n`;
+    const artifactStore = new FakeArtifactStorePort([
+      {
+        artifact: createOutputArtifact(outputArtifactId, content),
+        content,
+      },
+    ]);
+    const operatorExecution = new FakeOperatorExecutionPort(createStoredRun(), [createStoredTask()]);
+    const useCase = new GetOperatorRunUseCase({
+      operatorExecution,
+      artifactStore,
+      config: createOperatorConfig({ maxInlineRunResultsBytes: content.length + 8 }),
+    });
+
+    const originalBuffer = globalThis.Buffer;
+
+    try {
+      globalThis.Buffer = undefined as unknown as typeof Buffer;
+
+      const output = await useCase.execute({ runId });
+
+      expect(output.inlineResults).toEqual(smallResults);
+    } finally {
+      globalThis.Buffer = originalBuffer;
+    }
+  });
+
   it('omits inline results when the serialized payload exceeds the configured byte ceiling', async () => {
     const content = `${JSON.stringify(smallResults[0])}\n`;
     const artifactStore = new FakeArtifactStorePort([

@@ -17,6 +17,8 @@ export interface GetOperatorRunUseCaseDeps {
   readonly config?: Partial<OperatorConfig>;
 }
 
+const textEncoder = new TextEncoder();
+
 const parseInlineResults = async (
   outputArtifactId: ArtifactId | undefined,
   artifactStore: ArtifactStorePort,
@@ -36,7 +38,7 @@ const parseInlineResults = async (
     throw new ArtifactContentUnavailableError(outputArtifactId);
   }
 
-  if (Buffer.byteLength(content, 'utf8') > maxInlineRunResultsBytes) {
+  if (textEncoder.encode(content).byteLength > maxInlineRunResultsBytes) {
     return undefined;
   }
 

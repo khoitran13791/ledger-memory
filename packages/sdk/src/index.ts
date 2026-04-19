@@ -14,6 +14,7 @@ import type {
   DescribeInput,
   ExpandInput,
   ExploreArtifactInput,
+  ExplorerRegistryPort,
   FileReaderPort,
   GetOperatorRunInput,
   GrepInput,
@@ -338,6 +339,7 @@ export interface MemoryEngineConfig {
 
   readonly compaction?: Partial<RunCompactionConfig>;
   readonly operators?: MemoryEngineOperatorConfig;
+  readonly explorerRegistry?: ExplorerRegistryPort;
 }
 
 export type InMemoryPresetConfig = Omit<MemoryEngineConfig, 'storage'>;
@@ -411,7 +413,7 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
 
   const summarizer = new DeterministicSummarizerAdapter(tokenizer);
   const authorization = new SubAgentAuthorizationAdapter();
-  const explorerRegistry = createDefaultExplorerRegistry(tokenizer);
+  const explorerRegistry = config.explorerRegistry ?? createDefaultExplorerRegistry(tokenizer);
 
   const hashPort = new NodeCryptoHashPort();
   const idService: IdService = createIdService(hashPort);

@@ -151,6 +151,7 @@ export type {
 export {
   ApplicationError,
   ArtifactContentUnavailableError,
+  ArtifactSourceContentUnavailableError,
   ArtifactExplorationFailedError,
   ArtifactNotFoundError,
   ConversationNotFoundError,

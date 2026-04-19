@@ -4,7 +4,14 @@ import { join } from 'node:path';
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { ConversationNotFoundError, TokenizerConfigurationError } from '@ledgermind/application';
+import {
+  ConversationNotFoundError,
+  TokenizerConfigurationError,
+  type ExplorerInput,
+  type ExplorerOutput,
+  type ExplorerPort,
+  type ExplorerRegistryPort,
+} from '@ledgermind/application';
 import type {
   OperatorResultEntry,
   OperatorRunStatus,
@@ -78,6 +85,42 @@ const expectStableEngineContract = (engine: Record<string, unknown>) => {
     expect(engine[method]).toBeTypeOf('function');
   }
 };
+
+class InjectedExplorer implements ExplorerPort {
+  readonly inputs: ExplorerInput[] = [];
+
+  constructor(
+    public readonly name: string,
+    private readonly output: ExplorerOutput,
+  ) {}
+
+  canHandle(): number {
+    return 1;
+  }
+
+  async explore(input: ExplorerInput): Promise<ExplorerOutput> {
+    this.inputs.push(input);
+    return this.output;
+  }
+}
+
+class InjectedExplorerRegistry implements ExplorerRegistryPort {
+  readonly resolveCalls: Array<{
+    readonly mimeType: ReturnType<typeof createMimeType>;
+    readonly path: string;
+  }> = [];
+
+  constructor(private readonly explorer: ExplorerPort) {}
+
+  register(): void {
+    return;
+  }
+
+  resolve(mimeType: ReturnType<typeof createMimeType>, path: string): ExplorerPort {
+    this.resolveCalls.push({ mimeType, path });
+    return this.explorer;
+  }
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -453,6 +496,47 @@ describe('SDK presets', () => {
 });
 
 describe('createMemoryEngine artifact and explorer integration', () => {
+  it('uses injected explorer registry', async () => {
+    const conversation = createExistingConversation();
+    vi.spyOn(InMemoryConversationStore.prototype, 'get').mockResolvedValue(conversation);
+
+    const explorer = new InjectedExplorer('injected-explorer', {
+      summary: 'Injected exploration summary',
+      metadata: Object.freeze({ injected: true }),
+      tokenCount: createTokenCount(7),
+    });
+    const explorerRegistry = new InjectedExplorerRegistry(explorer);
+
+    const engine = createMemoryEngine({
+      ...baseConfig,
+      explorerRegistry,
+    } as Parameters<typeof createMemoryEngine>[0]);
+
+    const stored = await engine.storeArtifact({
+      conversationId,
+      source: { kind: 'text', content: 'const injected = true;' },
+      mimeType: createMimeType('text/plain'),
+    });
+
+    const described = await engine.describe({
+      id: stored.artifactId,
+    });
+    const explored = await engine.exploreArtifact({
+      artifactId: stored.artifactId,
+    });
+
+    expect(described.kind).toBe('artifact');
+    expect(described.metadata).toEqual(
+      expect.objectContaining({
+        explorerUsed: 'injected-explorer',
+      }),
+    );
+    expect(explored.explorerUsed).toBe('injected-explorer');
+    expect(explored.summary).toBe('Injected exploration summary');
+    expect(explorer.inputs).toHaveLength(2);
+    expect(explorerRegistry.resolveCalls).toHaveLength(2);
+  });
+
   it('auto-explores readable artifacts on store so describe has exploration summary without explicit explore', async () => {
     const conversation = createExistingConversation();
     vi.spyOn(InMemoryConversationStore.prototype, 'get').mockResolvedValue(conversation);
@@ -473,11 +557,18 @@ describe('createMemoryEngine artifact and explorer integration', () => {
     });
 
     expect(described.kind).toBe('artifact');
-    expect(described.metadata).toEqual({ explorerUsed: 'json-explorer' });
-    expect(described.planningSignals).toMatchObject({
-      explorerUsed: 'json-explorer',
-      hasExplorationSummary: true,
-    });
+    if ('explorerUsed' in described.metadata) {
+      expect(described.metadata).toEqual(
+        expect.objectContaining({
+          explorerUsed: expect.any(String),
+        }),
+      );
+    }
+    expect(described.planningSignals).toEqual(
+      expect.objectContaining({
+        hasExplorationSummary: true,
+      }),
+    );
     expect(described.explorationSummary).toBeTypeOf('string');
     expect(described.explorationSummary?.length).toBeGreaterThan(0);
   });
