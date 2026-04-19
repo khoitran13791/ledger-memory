@@ -148,6 +148,49 @@ describe('oracle baselines', () => {
     expect(baselines.ledgermind_agentic_loop_no_precompaction.name).toBe('ledgermind_agentic_loop_no_precompaction');
   });
 
+  it('separates raw-turn diagnostic variants from default runtime anchors', async () => {
+    const fairness = makeConfig('heuristic').fairness;
+    const baselines = createBaselineStrategies({
+      ...makeConfig('heuristic'),
+      baselines: [
+        'ledgermind_static_materialize',
+        'ledgermind_static_materialize_raw_turn_injection',
+        'ledgermind_agentic_loop',
+        'ledgermind_agentic_loop_raw_turn_injection',
+      ],
+    });
+
+    const staticAnchor = await baselines.ledgermind_static_materialize.run({
+      sample,
+      example,
+      fairness,
+      seed: 0,
+    });
+    const staticDiagnostic = await baselines.ledgermind_static_materialize_raw_turn_injection.run({
+      sample,
+      example,
+      fairness,
+      seed: 0,
+    });
+    const agenticAnchor = await baselines.ledgermind_agentic_loop.run({
+      sample,
+      example,
+      fairness,
+      seed: 0,
+    });
+    const agenticDiagnostic = await baselines.ledgermind_agentic_loop_raw_turn_injection.run({
+      sample,
+      example,
+      fairness,
+      seed: 0,
+    });
+
+    expect(staticAnchor.diagnostics?.rawTurnInjectionEnabled).toBe(false);
+    expect(staticDiagnostic.diagnostics?.rawTurnInjectionEnabled).toBe(true);
+    expect(agenticAnchor.diagnostics?.rawTurnInjectionEnabled).toBe(false);
+    expect(agenticDiagnostic.diagnostics?.rawTurnInjectionEnabled).toBe(true);
+  });
+
   it('records runtime provenance that matches the baseline runtime mode label', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.91);
 

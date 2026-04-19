@@ -1984,7 +1984,7 @@ export const createBaselineStrategies = (
       name: 'ledgermind_static_materialize',
       variant: 'default',
       preCompactionEnabled: true,
-      rawTurnInjectionEnabled: true,
+      rawTurnInjectionEnabled: false,
       runtimeMode: 'static_materialize',
     }),
     ledgermind_static_materialize_no_precompaction: createLedgermindBaseline(config, {
@@ -2012,7 +2012,7 @@ export const createBaselineStrategies = (
       name: 'ledgermind_agentic_loop',
       variant: 'default',
       preCompactionEnabled: true,
-      rawTurnInjectionEnabled: true,
+      rawTurnInjectionEnabled: false,
       runtimeMode: 'agentic_loop',
     }),
     ledgermind_agentic_loop_no_precompaction: createLedgermindBaseline(config, {
