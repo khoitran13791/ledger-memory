@@ -696,9 +696,9 @@ interface ArtifactReference {
 
 **Current implementation contract:** `artifactReferences` includes artifact
 IDs plus transport-safe preview metadata (`mimeType`, `tokenCount`,
-`originalPath?`, `explorationSummary?`). `systemPreamble` renders the same data
-as human-readable tool hints (`file_id (/path) - preview teaser`) so callers do
-not need a separate `describe()` call just to discover basic artifact previews.
+`originalPath?`, `explorationSummary?`) and is the complete machine-readable
+preview contract. `systemPreamble` is a capped, human-readable subset
+(`file_id (/path) - preview teaser`) that may be truncated for brevity.
 
 ### 7.3 RunCompaction (Core Engine)
 

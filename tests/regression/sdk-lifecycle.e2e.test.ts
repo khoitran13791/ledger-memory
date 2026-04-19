@@ -388,9 +388,13 @@ describe('sdk lifecycle e2e', () => {
       });
 
       expect(described.kind).toBe('artifact');
+      expect(described.planningSignals).toEqual(
+        expect.objectContaining({
+          hasExplorationSummary: true,
+        }),
+      );
       expect(described.explorationSummary).toBeTypeOf('string');
       expect(described.explorationSummary?.length).toBeGreaterThan(0);
-      expect(described.explorationSummary).toContain('Fallback exploration for');
 
       await engine.append({
         conversationId,
@@ -428,8 +432,12 @@ describe('sdk lifecycle e2e', () => {
           explorationSummary: expect.any(String),
         }),
       );
-      expect(context.systemPreamble).toContain(`${stored.artifactId} (${artifactPath}) - `);
-      expect(context.systemPreamble).toContain('Fallback exploration for');
+      const preambleArtifactPrefix = `${stored.artifactId} (${artifactPath}) - `;
+      expect(context.systemPreamble).toContain(preambleArtifactPrefix);
+      const teaser = context.systemPreamble
+        .slice(context.systemPreamble.indexOf(preambleArtifactPrefix) + preambleArtifactPrefix.length)
+        .trim();
+      expect(teaser.length).toBeGreaterThan(0);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
