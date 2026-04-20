@@ -67,6 +67,32 @@ type ResolvedContextItem =
       readonly recencyScore: number;
     };
 
+type RankedRetrievalCandidate =
+  | {
+      readonly kind: 'message';
+      readonly id: LedgerEvent['id'];
+      readonly tokenCount: number;
+      readonly score: number;
+      readonly stageHits: number;
+      readonly overlapCount: number;
+      readonly rankTieBreaker: number;
+      readonly modelMessage: ModelMessage;
+    }
+  | {
+      readonly kind: 'summary';
+      readonly id: SummaryReference['id'];
+      readonly tokenCount: number;
+      readonly score: number;
+      readonly stageHits: number;
+      readonly overlapCount: number;
+      readonly rankTieBreaker: number;
+      readonly summary: SummaryReference & {
+        readonly content: string;
+        readonly artifactIds: readonly ArtifactId[];
+        readonly createdAt: Date;
+      };
+    };
+
 const assertValidBudgetInput = (input: MaterializeContextInput): void => {
   if (!Number.isSafeInteger(input.budgetTokens) || input.budgetTokens <= 0) {
     throw new InvariantViolationError('MaterializeContextInput.budgetTokens must be a positive safe integer.');
@@ -634,34 +660,79 @@ export class MaterializeContextUseCase {
           stageQueryDiagnostics,
         });
 
-        const rankedCandidates = [...candidateMap.values()]
-          .map((entry) => {
-            const score = entry.stageHits * 100 + entry.overlapCount * 10 + entry.maxStageMatchCount;
+        const rankedCandidates: RankedRetrievalCandidate[] = [
+          ...eventCandidateMap.values().map((entry) => {
+            const score = entry.stageHits * 100 + entry.overlapCount * 10;
             return {
-              ...entry,
+              kind: 'message' as const,
+              id: entry.event.id,
+              tokenCount: entry.event.tokenCount.value,
               score,
+              stageHits: entry.stageHits,
+              overlapCount: entry.overlapCount,
+              rankTieBreaker: -entry.event.sequence,
+              modelMessage: {
+                role: entry.event.role,
+                content: entry.event.content,
+              },
             };
-          })
-          .sort((left, right) => {
-            if (right.score !== left.score) {
-              return right.score - left.score;
-            }
+          }),
+          ...candidateMap.values().map((entry) => {
+            const score = entry.stageHits * 100 + entry.overlapCount * 10;
+            return {
+              kind: 'summary' as const,
+              id: entry.summary.id,
+              tokenCount: entry.summary.tokenCount.value,
+              score,
+              stageHits: entry.stageHits,
+              overlapCount: entry.overlapCount,
+              rankTieBreaker: -entry.summary.createdAt.getTime(),
+              summary: entry.summary,
+            };
+          }),
+        ].sort((left, right) => {
+          if (right.score !== left.score) {
+            return right.score - left.score;
+          }
 
-            const createdAtDiff = right.summary.createdAt.getTime() - left.summary.createdAt.getTime();
-            if (createdAtDiff !== 0) {
-              return createdAtDiff;
-            }
+          if (left.kind !== right.kind) {
+            return left.kind === 'message' ? -1 : 1;
+          }
 
-            return String(left.summary.id).localeCompare(String(right.summary.id));
-          });
+          if (left.rankTieBreaker !== right.rankTieBreaker) {
+            return left.rankTieBreaker - right.rankTieBreaker;
+          }
+
+          return String(left.id).localeCompare(String(right.id));
+        });
 
         const candidateDecisions: RetrievalCandidateDecisionDiagnostics[] = [];
         const selectedSummaryIds: SummaryReference['id'][] = [];
         let addedForHint = 0;
 
         for (const candidate of rankedCandidates) {
+          if (candidate.kind === 'message') {
+            const eventId = String(candidate.id);
+
+            if (selectedRawEventIds.has(eventId)) {
+              continue;
+            }
+            if (addedForHint >= limit) {
+              continue;
+            }
+            if (budgetUsedValue + candidate.tokenCount > availableBudget) {
+              continue;
+            }
+
+            modelMessages.push(candidate.modelMessage);
+            selectedRawEventIds.add(eventId);
+            budgetUsedValue += candidate.tokenCount;
+            addedForHint += 1;
+            retrievalAddedCount += 1;
+            continue;
+          }
+
           const summary = candidate.summary;
-          const tokenCount = summary.tokenCount.value;
           const alreadyInContext = summaryReferences.some((ref) => ref.id === summary.id);
 
           if (alreadyInContext) {
@@ -670,7 +741,7 @@ export class MaterializeContextUseCase {
               score: candidate.score,
               stageHits: candidate.stageHits,
               overlapCount: candidate.overlapCount,
-              tokenCount,
+              tokenCount: candidate.tokenCount,
               selected: false,
               reason: 'already_in_context',
             });
@@ -683,20 +754,20 @@ export class MaterializeContextUseCase {
               score: candidate.score,
               stageHits: candidate.stageHits,
               overlapCount: candidate.overlapCount,
-              tokenCount,
+              tokenCount: candidate.tokenCount,
               selected: false,
               reason: 'limit_reached',
             });
             continue;
           }
 
-          if (budgetUsedValue + tokenCount > availableBudget) {
+          if (budgetUsedValue + candidate.tokenCount > availableBudget) {
             candidateDecisions.push({
               summaryId: summary.id,
               score: candidate.score,
               stageHits: candidate.stageHits,
               overlapCount: candidate.overlapCount,
-              tokenCount,
+              tokenCount: candidate.tokenCount,
               selected: false,
               reason: 'over_budget',
             });
@@ -714,7 +785,7 @@ export class MaterializeContextUseCase {
           });
           summaryArtifactIdsById.set(String(summary.id), summary.artifactIds);
 
-          budgetUsedValue += tokenCount;
+          budgetUsedValue += candidate.tokenCount;
           addedForHint += 1;
           retrievalAddedCount += 1;
           selectedSummaryIds.push(summary.id);
@@ -724,59 +795,10 @@ export class MaterializeContextUseCase {
             score: candidate.score,
             stageHits: candidate.stageHits,
             overlapCount: candidate.overlapCount,
-            tokenCount,
+            tokenCount: candidate.tokenCount,
             selected: true,
             reason: 'selected',
           });
-        }
-
-        if (candidateMap.size === 0) {
-          const rankedEventCandidates = [...eventCandidateMap.values()]
-            .map((entry) => {
-              const score = entry.stageHits * 100 + entry.overlapCount * 10 + entry.maxStageMatchCount;
-              return {
-                ...entry,
-                score,
-              };
-            })
-            .sort((left, right) => {
-              if (right.score !== left.score) {
-                return right.score - left.score;
-              }
-
-              const sequenceDiff = right.event.sequence - left.event.sequence;
-              if (sequenceDiff !== 0) {
-                return sequenceDiff;
-              }
-
-              return String(left.event.id).localeCompare(String(right.event.id));
-            });
-          let addedEventCount = 0;
-
-          for (const candidate of rankedEventCandidates) {
-            const event = candidate.event;
-            const eventId = String(event.id);
-            const tokenCount = event.tokenCount.value;
-
-            if (selectedRawEventIds.has(eventId)) {
-              continue;
-            }
-            if (addedEventCount >= limit) {
-              continue;
-            }
-            if (budgetUsedValue + tokenCount > availableBudget) {
-              continue;
-            }
-
-            modelMessages.push({
-              role: event.role,
-              content: event.content,
-            });
-            selectedRawEventIds.add(eventId);
-            budgetUsedValue += tokenCount;
-            addedEventCount += 1;
-            retrievalAddedCount += 1;
-          }
         }
 
         retrievalDiagnostics.push({

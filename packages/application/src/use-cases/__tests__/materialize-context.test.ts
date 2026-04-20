@@ -1078,6 +1078,77 @@ describe('MaterializeContextUseCase', () => {
     expect(output.budgetUsed.value).toBe(18);
   });
 
+  it('prefers exact raw retrieval messages over generic summaries when hint limit is one', async () => {
+    const exactEvent = createTestMessage({
+      id: createEventId('evt_retrieval_exact_first'),
+      content: 'DATE: 1 Jan 2026 | ID: D1:8 | Alice: auth token rotation #ZX-41 happens tonight.',
+      tokenCount: 18,
+      role: 'assistant',
+      sequence: 8,
+    });
+    const genericSummary = createTestSummary({
+      id: createSummaryNodeId('sum_retrieval_generic'),
+      content: '[Summary] Alice discussed auth token rotation #ZX-41 details.',
+      tokenCount: 10,
+    });
+    const competingSummary = createTestSummary({
+      id: createSummaryNodeId('sum_retrieval_competing'),
+      content: '[Summary] auth token rotation #ZX-41 checklist.',
+      tokenCount: 9,
+    });
+
+    const state = createState({
+      summaries: [genericSummary, competingSummary],
+      events: [exactEvent],
+      summarySearchResults: {
+        'auth token rotation #ZX-41': [genericSummary, competingSummary],
+        'auth token rotation': [genericSummary, competingSummary],
+        'ZX-41': [genericSummary, competingSummary],
+      },
+      eventSearchResults: {
+        'auth token rotation #ZX-41': [exactEvent],
+        'auth token rotation': [exactEvent],
+        'ZX-41': [exactEvent],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 48,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'auth token rotation #ZX-41', limit: 1 }],
+    });
+
+    expect(output.modelMessages.map((message) => message.content)).toEqual([
+      'DATE: 1 Jan 2026 | ID: D1:8 | Alice: auth token rotation #ZX-41 happens tonight.',
+    ]);
+    expect(output.summaryReferences).toEqual([]);
+    expect(output.retrievalAddedCount).toBe(1);
+    expect(output.retrievalMatchCount).toBe(9);
+    expect(state.searchQueries).toEqual([
+      { query: 'auth token rotation #ZX-41' },
+      { query: 'auth token rotation' },
+      { query: 'ZX-41' },
+    ]);
+    expect(state.eventSearchQueries).toEqual([
+      { query: 'auth token rotation #ZX-41' },
+      { query: 'auth token rotation' },
+      { query: 'ZX-41' },
+    ]);
+    expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summaryId: genericSummary.id,
+          selected: false,
+          reason: 'limit_reached',
+        }),
+      ]),
+    );
+  });
+
   it('dedupes raw retrieval events across multiple hints in one materialization run', async () => {
     const exactEvent = createTestMessage({
       id: createEventId('evt_retrieval_raw_dedupe'),
