@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createConversationId,
   createEventId,
+  createSummaryNodeId,
   createTokenCount,
 } from '@ledgermind/domain';
 import type { MemoryEngine } from '@ledgermind/application';
@@ -852,7 +853,7 @@ describe('oracle baselines', () => {
           ],
           summaryReferences: [
             {
-              id: 'sum_summary_only',
+              id: createSummaryNodeId('sum_summary_only'),
               kind: 'leaf',
               tokenCount: createTokenCount(10),
             },
@@ -876,7 +877,7 @@ describe('oracle baselines', () => {
               ],
               candidateDecisions: [
                 {
-                  summaryId: 'sum_summary_only',
+                  summaryId: createSummaryNodeId('sum_summary_only'),
                   score: 110,
                   stageHits: 1,
                   overlapCount: 1,
@@ -886,7 +887,7 @@ describe('oracle baselines', () => {
                 },
               ],
               messageDecisions: [],
-              selectedSummaryIds: ['sum_summary_only'],
+              selectedSummaryIds: [createSummaryNodeId('sum_summary_only')],
               selectedMessageIds: [],
             },
           ],
