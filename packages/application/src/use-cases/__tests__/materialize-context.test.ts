@@ -978,6 +978,11 @@ describe('MaterializeContextUseCase', () => {
 
     expect(output.retrievalMatchCount).toBe(3);
     expect(output.retrievalAddedCount).toBe(1);
+    expect(output.retrievalAddedMessageCount).toBe(0);
+    expect(output.retrievalAddedSummaryCount).toBe(1);
+    expect(output.retrievalAddedCount).toBe(
+      (output.retrievalAddedMessageCount ?? 0) + (output.retrievalAddedSummaryCount ?? 0),
+    );
     expect(state.searchQueries).toEqual([
       { query: 'auth token rotation #ZX-41', scope: primarySummary.id },
       { query: 'auth token rotation', scope: primarySummary.id },
@@ -1013,7 +1018,9 @@ describe('MaterializeContextUseCase', () => {
     expect(firstDecision?.score).toBeGreaterThan(0);
 
     expect(firstHint?.candidateDecisions.find((candidate) => candidate.summaryId === keywordSummary.id)).toBeUndefined();
+    expect(firstHint?.messageDecisions).toEqual([]);
     expect(firstHint?.selectedSummaryIds).toEqual([primarySummary.id]);
+    expect(firstHint?.selectedMessageIds).toEqual([]);
     expect(output.summaryReferences.map((reference) => reference.id)).toEqual([primarySummary.id]);
     expect(output.artifactReferences.map((reference) => reference.id)).toEqual([artifact.id]);
     expect(output.budgetUsed.value).toBe(8);
@@ -1076,6 +1083,75 @@ describe('MaterializeContextUseCase', () => {
       },
     ]);
     expect(output.budgetUsed.value).toBe(18);
+  });
+
+  it('reports raw retrieval diagnostics separately from summary diagnostics', async () => {
+    const exactEvent = createTestMessage({
+      id: createEventId('evt_retrieval_raw_diagnostics'),
+      content: 'DATE: 1 Jan 2026 | ID: D1:9 | Alice: auth token rotation #ZX-41 happens tonight.',
+      tokenCount: 18,
+      role: 'assistant',
+      sequence: 9,
+    });
+    const genericSummary = createTestSummary({
+      id: createSummaryNodeId('sum_retrieval_diagnostics'),
+      content: '[Summary] Alice discussed auth token rotation #ZX-41 details.',
+      tokenCount: 10,
+    });
+
+    const state = createState({
+      summaries: [genericSummary],
+      events: [exactEvent],
+      summarySearchResults: {
+        'auth token rotation #ZX-41': [genericSummary],
+        'auth token rotation': [genericSummary],
+        'ZX-41': [genericSummary],
+      },
+      eventSearchResults: {
+        'auth token rotation #ZX-41': [exactEvent],
+        'auth token rotation': [exactEvent],
+        'ZX-41': [exactEvent],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 48,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'auth token rotation #ZX-41', limit: 1 }],
+    });
+
+    expect(output.retrievalAddedCount).toBe(1);
+    expect(output.retrievalAddedMessageCount).toBe(1);
+    expect(output.retrievalAddedSummaryCount).toBe(0);
+    expect(output.retrievalAddedCount).toBe(
+      (output.retrievalAddedMessageCount ?? 0) + (output.retrievalAddedSummaryCount ?? 0),
+    );
+    expect(output.summaryReferences).toEqual([]);
+
+    expect(output.retrievalDiagnostics?.[0]).toEqual(
+      expect.objectContaining({
+        selectedSummaryIds: [],
+        selectedMessageIds: [exactEvent.id],
+        candidateDecisions: expect.arrayContaining([
+          expect.objectContaining({
+            summaryId: genericSummary.id,
+            selected: false,
+            reason: 'limit_reached',
+          }),
+        ]),
+        messageDecisions: [
+          expect.objectContaining({
+            messageId: exactEvent.id,
+            selected: true,
+            reason: 'selected',
+          }),
+        ],
+      }),
+    );
   });
 
   it('prefers exact raw retrieval messages over generic summaries when hint limit is one', async () => {

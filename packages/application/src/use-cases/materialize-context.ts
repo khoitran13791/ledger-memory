@@ -16,6 +16,7 @@ import type {
   RetrievalCandidateDecisionDiagnostics,
   RetrievalHint,
   RetrievalHintDiagnostics,
+  RetrievalMessageDecisionDiagnostics,
   RetrievalStageLabel,
   RetrievalStageQueryDiagnostics,
   RunCompactionInput,
@@ -547,8 +548,8 @@ export class MaterializeContextUseCase {
     }
 
     let retrievalMatchCount = 0;
-    let retrievalAddedCount = 0;
     const retrievalDiagnostics: RetrievalHintDiagnostics[] = [];
+    const retrievedMessageIdsByIndex = new Map<number, LedgerEvent['id']>();
     const selectedRawEventIds = new Set(
       trimmedBase.selectedItems
         .filter((item): item is Extract<ResolvedContextItem, { kind: 'message' }> => item.kind === 'message')
@@ -579,13 +580,11 @@ export class MaterializeContextUseCase {
           };
           stageHits: number;
           overlapCount: number;
-          maxStageMatchCount: number;
         }>();
         const eventCandidateMap = new Map<string, {
           readonly event: LedgerEvent;
           stageHits: number;
           overlapCount: number;
-          maxStageMatchCount: number;
         }>();
 
         for (const stageQuery of stageQueries) {
@@ -617,7 +616,6 @@ export class MaterializeContextUseCase {
                 summary,
                 stageHits: 1,
                 overlapCount,
-                maxStageMatchCount: matchedSummaries.length,
               });
               continue;
             }
@@ -625,9 +623,6 @@ export class MaterializeContextUseCase {
             existing.stageHits += 1;
             if (overlapCount > existing.overlapCount) {
               existing.overlapCount = overlapCount;
-            }
-            if (matchedSummaries.length > existing.maxStageMatchCount) {
-              existing.maxStageMatchCount = matchedSummaries.length;
             }
           }
 
@@ -640,7 +635,6 @@ export class MaterializeContextUseCase {
                 event,
                 stageHits: 1,
                 overlapCount,
-                maxStageMatchCount: matchedEvents.length,
               });
               continue;
             }
@@ -648,9 +642,6 @@ export class MaterializeContextUseCase {
             existing.stageHits += 1;
             if (overlapCount > existing.overlapCount) {
               existing.overlapCount = overlapCount;
-            }
-            if (matchedEvents.length > existing.maxStageMatchCount) {
-              existing.maxStageMatchCount = matchedEvents.length;
             }
           }
         }
@@ -707,7 +698,9 @@ export class MaterializeContextUseCase {
         });
 
         const candidateDecisions: RetrievalCandidateDecisionDiagnostics[] = [];
+        const messageDecisions: RetrievalMessageDecisionDiagnostics[] = [];
         const selectedSummaryIds: SummaryReference['id'][] = [];
+        const selectedMessageIds: LedgerEvent['id'][] = [];
         let addedForHint = 0;
 
         for (const candidate of rankedCandidates) {
@@ -715,20 +708,57 @@ export class MaterializeContextUseCase {
             const eventId = String(candidate.id);
 
             if (selectedRawEventIds.has(eventId)) {
+              messageDecisions.push({
+                messageId: candidate.id,
+                score: candidate.score,
+                stageHits: candidate.stageHits,
+                overlapCount: candidate.overlapCount,
+                tokenCount: candidate.tokenCount,
+                selected: false,
+                reason: 'already_in_context',
+              });
               continue;
             }
             if (addedForHint >= limit) {
+              messageDecisions.push({
+                messageId: candidate.id,
+                score: candidate.score,
+                stageHits: candidate.stageHits,
+                overlapCount: candidate.overlapCount,
+                tokenCount: candidate.tokenCount,
+                selected: false,
+                reason: 'limit_reached',
+              });
               continue;
             }
             if (budgetUsedValue + candidate.tokenCount > availableBudget) {
+              messageDecisions.push({
+                messageId: candidate.id,
+                score: candidate.score,
+                stageHits: candidate.stageHits,
+                overlapCount: candidate.overlapCount,
+                tokenCount: candidate.tokenCount,
+                selected: false,
+                reason: 'over_budget',
+              });
               continue;
             }
 
             modelMessages.push(candidate.modelMessage);
+            retrievedMessageIdsByIndex.set(modelMessages.length - 1, candidate.id);
             selectedRawEventIds.add(eventId);
             budgetUsedValue += candidate.tokenCount;
             addedForHint += 1;
-            retrievalAddedCount += 1;
+            selectedMessageIds.push(candidate.id);
+            messageDecisions.push({
+              messageId: candidate.id,
+              score: candidate.score,
+              stageHits: candidate.stageHits,
+              overlapCount: candidate.overlapCount,
+              tokenCount: candidate.tokenCount,
+              selected: true,
+              reason: 'selected',
+            });
             continue;
           }
 
@@ -787,7 +817,6 @@ export class MaterializeContextUseCase {
 
           budgetUsedValue += candidate.tokenCount;
           addedForHint += 1;
-          retrievalAddedCount += 1;
           selectedSummaryIds.push(summary.id);
 
           candidateDecisions.push({
@@ -807,11 +836,14 @@ export class MaterializeContextUseCase {
           limit,
           stageQueries: stageQueryDiagnostics,
           candidateDecisions,
+          messageDecisions,
           selectedSummaryIds,
+          selectedMessageIds,
         });
       }
     }
 
+    let finalSelectedMessageIdStrings: ReadonlySet<string> | undefined;
     if (budgetUsedValue > availableBudget) {
       const summaryRefById = new Map(summaryReferences.map((reference) => [reference.id, reference] as const));
       const selectedWithMeta = modelMessages.map((message, index) => {
@@ -824,6 +856,7 @@ export class MaterializeContextUseCase {
           message,
           tokenCount,
           summaryId,
+          retrievedMessageId: retrievedMessageIdsByIndex.get(index),
           index,
         };
       });
@@ -874,6 +907,12 @@ export class MaterializeContextUseCase {
           .map((item) => item.summaryId)
           .filter((summaryId): summaryId is string => summaryId !== undefined),
       );
+      finalSelectedMessageIdStrings = new Set(
+        kept
+          .map((item) => item.retrievedMessageId)
+          .filter((messageId): messageId is LedgerEvent['id'] => messageId !== undefined)
+          .map((messageId) => String(messageId)),
+      );
 
       summaryReferences.splice(
         0,
@@ -883,6 +922,61 @@ export class MaterializeContextUseCase {
 
       budgetUsedValue = used;
     }
+
+    const keptSummaryIdStrings = new Set(summaryReferences.map((reference) => String(reference.id)));
+    const keptMessageIdStrings =
+      finalSelectedMessageIdStrings ??
+      new Set(retrievalDiagnostics.flatMap((hint) => hint.selectedMessageIds.map((messageId) => String(messageId))));
+    const finalizedRetrievalDiagnostics = retrievalDiagnostics.map((hint) => {
+      const selectedSummaryIds = hint.selectedSummaryIds.filter((summaryId) =>
+        keptSummaryIdStrings.has(String(summaryId)),
+      );
+      const selectedMessageIds = hint.selectedMessageIds.filter((messageId) =>
+        keptMessageIdStrings.has(String(messageId)),
+      );
+      const finalizedSummaryIdStrings = new Set(selectedSummaryIds.map((summaryId) => String(summaryId)));
+      const finalizedMessageIdStrings = new Set(selectedMessageIds.map((messageId) => String(messageId)));
+
+      return {
+        ...hint,
+        candidateDecisions: hint.candidateDecisions.map((candidate) => {
+          if (!candidate.selected || finalizedSummaryIdStrings.has(String(candidate.summaryId))) {
+            return candidate;
+          }
+
+          return {
+            ...candidate,
+            selected: false,
+            reason: 'over_budget' as const,
+          };
+        }),
+        messageDecisions: hint.messageDecisions.map((candidate) => {
+          if (!candidate.selected || finalizedMessageIdStrings.has(String(candidate.messageId))) {
+            return candidate;
+          }
+
+          return {
+            ...candidate,
+            selected: false,
+            reason: 'over_budget' as const,
+          };
+        }),
+        selectedSummaryIds,
+        selectedMessageIds,
+      };
+    });
+    const finalizedRetrievalAddedCount = finalizedRetrievalDiagnostics.reduce(
+      (count, hint) => count + hint.selectedSummaryIds.length + hint.selectedMessageIds.length,
+      0,
+    );
+    const finalizedRetrievalAddedMessageCount = finalizedRetrievalDiagnostics.reduce(
+      (count, hint) => count + hint.selectedMessageIds.length,
+      0,
+    );
+    const finalizedRetrievalAddedSummaryCount = finalizedRetrievalDiagnostics.reduce(
+      (count, hint) => count + hint.selectedSummaryIds.length,
+      0,
+    );
 
     const artifactIds = new Set<ArtifactId>();
     for (const summaryReference of summaryReferences) {
@@ -912,8 +1006,12 @@ export class MaterializeContextUseCase {
       artifactReferences,
       budgetUsed: createTokenCount(budgetUsedValue),
       retrievalMatchCount,
-      retrievalAddedCount,
-      ...(retrievalDiagnostics.length === 0 ? {} : { retrievalDiagnostics: Object.freeze(retrievalDiagnostics) }),
+      retrievalAddedCount: finalizedRetrievalAddedCount,
+      retrievalAddedMessageCount: finalizedRetrievalAddedMessageCount,
+      retrievalAddedSummaryCount: finalizedRetrievalAddedSummaryCount,
+      ...(finalizedRetrievalDiagnostics.length === 0
+        ? {}
+        : { retrievalDiagnostics: Object.freeze(finalizedRetrievalDiagnostics) }),
       compactionTriggered,
       trimmedToFit,
       droppedMessageCount,

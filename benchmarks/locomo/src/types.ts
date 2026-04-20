@@ -268,13 +268,25 @@ export interface LedgermindRetrievalCandidateDecisionTrace {
   readonly reason: 'selected' | 'already_in_context' | 'over_budget' | 'limit_reached';
 }
 
+export interface LedgermindRetrievalMessageDecisionTrace {
+  readonly messageId: string;
+  readonly score: number;
+  readonly stageHits: number;
+  readonly overlapCount: number;
+  readonly tokenCount: number;
+  readonly selected: boolean;
+  readonly reason: 'selected' | 'already_in_context' | 'over_budget' | 'limit_reached';
+}
+
 export interface LedgermindRetrievalHintTrace {
   readonly hintQuery: string;
   readonly scopeSummaryId?: string;
   readonly limit: number;
   readonly stageQueries: readonly LedgermindRetrievalStageTrace[];
   readonly candidateDecisions: readonly LedgermindRetrievalCandidateDecisionTrace[];
+  readonly messageDecisions: readonly LedgermindRetrievalMessageDecisionTrace[];
   readonly selectedSummaryIds: readonly string[];
+  readonly selectedMessageIds: readonly string[];
 }
 
 export interface LedgermindDiagnostics {
@@ -301,6 +313,8 @@ export interface LedgermindDiagnostics {
   readonly retrievalHintCount?: number;
   readonly retrievalMatchCount?: number;
   readonly retrievalAddedCount?: number;
+  readonly retrievalAddedMessageCount?: number;
+  readonly retrievalAddedSummaryCount?: number;
   readonly retrievalHints?: readonly LedgermindRetrievalHintTrace[];
   readonly compactionTriggered?: boolean;
   readonly trimmedToFit?: boolean;

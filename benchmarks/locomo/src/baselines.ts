@@ -513,6 +513,8 @@ const diagnosticsFromMaterialized = (input: {
     readonly modelMessages: readonly { readonly role: unknown; readonly content: unknown }[];
     readonly retrievalMatchCount?: number;
     readonly retrievalAddedCount?: number;
+    readonly retrievalAddedMessageCount?: number;
+    readonly retrievalAddedSummaryCount?: number;
     readonly retrievalDiagnostics?: readonly {
       readonly hintQuery: string;
       readonly scopeSummaryId?: unknown;
@@ -531,7 +533,17 @@ const diagnosticsFromMaterialized = (input: {
         readonly selected: boolean;
         readonly reason: 'selected' | 'already_in_context' | 'over_budget' | 'limit_reached';
       }[];
+      readonly messageDecisions?: readonly {
+        readonly messageId: unknown;
+        readonly score: number;
+        readonly stageHits: number;
+        readonly overlapCount: number;
+        readonly tokenCount: number;
+        readonly selected: boolean;
+        readonly reason: 'selected' | 'already_in_context' | 'over_budget' | 'limit_reached';
+      }[];
       readonly selectedSummaryIds: readonly unknown[];
+      readonly selectedMessageIds?: readonly unknown[];
     }[];
     readonly compactionTriggered?: boolean;
     readonly trimmedToFit?: boolean;
@@ -564,6 +576,12 @@ const diagnosticsFromMaterialized = (input: {
     ...(input.materialized.retrievalAddedCount === undefined
       ? {}
       : { retrievalAddedCount: input.materialized.retrievalAddedCount }),
+    ...(input.materialized.retrievalAddedMessageCount === undefined
+      ? {}
+      : { retrievalAddedMessageCount: input.materialized.retrievalAddedMessageCount }),
+    ...(input.materialized.retrievalAddedSummaryCount === undefined
+      ? {}
+      : { retrievalAddedSummaryCount: input.materialized.retrievalAddedSummaryCount }),
     ...(input.materialized.retrievalDiagnostics === undefined
       ? {}
       : {
@@ -585,7 +603,17 @@ const diagnosticsFromMaterialized = (input: {
               selected: candidate.selected,
               reason: candidate.reason,
             })),
+            messageDecisions: (hint.messageDecisions ?? []).map((candidate) => ({
+              messageId: String(candidate.messageId),
+              score: candidate.score,
+              stageHits: candidate.stageHits,
+              overlapCount: candidate.overlapCount,
+              tokenCount: candidate.tokenCount,
+              selected: candidate.selected,
+              reason: candidate.reason,
+            })),
             selectedSummaryIds: hint.selectedSummaryIds.map((summaryId) => String(summaryId)),
+            selectedMessageIds: (hint.selectedMessageIds ?? []).map((messageId) => String(messageId)),
           })),
         }),
     ...(input.materialized.compactionTriggered === undefined

@@ -85,13 +85,25 @@ export interface RetrievalCandidateDecisionDiagnostics {
   readonly reason: RetrievalCandidateDecisionReason;
 }
 
+export interface RetrievalMessageDecisionDiagnostics {
+  readonly messageId: EventId;
+  readonly score: number;
+  readonly stageHits: number;
+  readonly overlapCount: number;
+  readonly tokenCount: number;
+  readonly selected: boolean;
+  readonly reason: RetrievalCandidateDecisionReason;
+}
+
 export interface RetrievalHintDiagnostics {
   readonly hintQuery: string;
   readonly scopeSummaryId?: SummaryNodeId;
   readonly limit: number;
   readonly stageQueries: readonly RetrievalStageQueryDiagnostics[];
   readonly candidateDecisions: readonly RetrievalCandidateDecisionDiagnostics[];
+  readonly messageDecisions: readonly RetrievalMessageDecisionDiagnostics[];
   readonly selectedSummaryIds: readonly SummaryNodeId[];
+  readonly selectedMessageIds: readonly EventId[];
 }
 
 export interface MaterializeContextInput {
@@ -129,6 +141,8 @@ export interface MaterializeContextOutput {
   readonly budgetUsed: TokenCount;
   readonly retrievalMatchCount?: number;
   readonly retrievalAddedCount?: number;
+  readonly retrievalAddedMessageCount?: number;
+  readonly retrievalAddedSummaryCount?: number;
   readonly retrievalDiagnostics?: readonly RetrievalHintDiagnostics[];
   readonly compactionTriggered?: boolean;
   readonly trimmedToFit?: boolean;
