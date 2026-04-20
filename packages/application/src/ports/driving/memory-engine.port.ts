@@ -90,6 +90,7 @@ export interface RetrievalMessageDecisionDiagnostics {
   readonly score: number;
   readonly stageHits: number;
   readonly overlapCount: number;
+  readonly specificityScore?: number;
   readonly tokenCount: number;
   readonly selected: boolean;
   readonly reason: RetrievalCandidateDecisionReason;

@@ -76,6 +76,7 @@ type RankedRetrievalCandidate =
       readonly score: number;
       readonly stageHits: number;
       readonly overlapCount: number;
+      readonly specificityScore: number;
       readonly rankTieBreaker: number;
       readonly modelMessage: ModelMessage;
     }
@@ -281,6 +282,179 @@ const toQueryOverlapCount = (query: string, content: string): number => {
 
   for (const token of queryTokens) {
     if (contentTokens.has(token)) {
+      overlapCount += 1;
+    }
+  }
+
+  return overlapCount;
+};
+
+const RETRIEVAL_STOPWORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'been',
+  'being',
+  'but',
+  'by',
+  'did',
+  'do',
+  'does',
+  'doing',
+  'for',
+  'from',
+  'had',
+  'has',
+  'have',
+  'i',
+  'in',
+  'into',
+  'is',
+  'it',
+  'its',
+  'me',
+  'my',
+  'of',
+  'on',
+  'or',
+  'our',
+  'out',
+  'so',
+  'that',
+  'the',
+  'their',
+  'them',
+  'then',
+  'there',
+  'these',
+  'they',
+  'this',
+  'to',
+  'was',
+  'we',
+  'were',
+  'what',
+  'when',
+  'where',
+  'which',
+  'who',
+  'why',
+  'with',
+  'would',
+  'you',
+  'your',
+]);
+
+const IRREGULAR_RETRIEVAL_TOKEN_NORMALIZATIONS = new Map<string, string>([
+  ['ate', 'eat'],
+  ['been', 'be'],
+  ['being', 'be'],
+  ['bought', 'buy'],
+  ['did', 'do'],
+  ['does', 'do'],
+  ['doing', 'do'],
+  ['done', 'do'],
+  ['gave', 'give'],
+  ['gone', 'go'],
+  ['goes', 'go'],
+  ['got', 'get'],
+  ['had', 'have'],
+  ['has', 'have'],
+  ['is', 'be'],
+  ['left', 'leave'],
+  ['made', 'make'],
+  ['met', 'meet'],
+  ['ran', 'run'],
+  ['saw', 'see'],
+  ['spoken', 'speak'],
+  ['spoke', 'speak'],
+  ['taken', 'take'],
+  ['taught', 'teach'],
+  ['thought', 'think'],
+  ['took', 'take'],
+  ['was', 'be'],
+  ['went', 'go'],
+  ['were', 'be'],
+  ['wrote', 'write'],
+]);
+
+const maybeCollapseRepeatedTrailingConsonant = (token: string): string => {
+  if (token.length < 3) {
+    return token;
+  }
+
+  const last = token.at(-1);
+  const previous = token.at(-2);
+  if (last === undefined || previous === undefined || last !== previous || /[aeiou]/.test(last)) {
+    return token;
+  }
+
+  return token.slice(0, -1);
+};
+
+const toRetrievalTokenVariants = (token: string): readonly string[] => {
+  const variants = new Set<string>([token]);
+  const normalized = IRREGULAR_RETRIEVAL_TOKEN_NORMALIZATIONS.get(token);
+  if (normalized !== undefined) {
+    variants.add(normalized);
+  }
+
+  if (token.length > 4 && token.endsWith('ied')) {
+    variants.add(`${token.slice(0, -3)}y`);
+  }
+
+  if (token.length > 4 && token.endsWith('ed')) {
+    const stripped = maybeCollapseRepeatedTrailingConsonant(token.slice(0, -2));
+    variants.add(stripped);
+    variants.add(`${stripped}e`);
+  }
+
+  if (token.length > 5 && token.endsWith('ing')) {
+    const stripped = maybeCollapseRepeatedTrailingConsonant(token.slice(0, -3));
+    variants.add(stripped);
+    variants.add(`${stripped}e`);
+  }
+
+  if (token.length > 4 && token.endsWith('es')) {
+    variants.add(token.slice(0, -2));
+  }
+
+  if (token.length > 3 && token.endsWith('s')) {
+    variants.add(token.slice(0, -1));
+  }
+
+  return [...variants].filter((variant) => variant.length > 1);
+};
+
+const toRetrievalSpecificTokenGroups = (value: string): readonly (readonly string[])[] => {
+  return toSearchTokens(value)
+    .map((token) =>
+      [...new Set(toRetrievalTokenVariants(token))]
+        .filter((variant) => variant.length > 1)
+        .filter((variant) => !RETRIEVAL_STOPWORDS.has(variant)),
+    )
+    .filter((group) => group.length > 0);
+};
+
+const toRetrievalSpecificTokens = (value: string): readonly string[] => {
+  return toRetrievalSpecificTokenGroups(value).flatMap((group) => group);
+};
+
+const toQuerySpecificityOverlapCount = (query: string, content: string): number => {
+  const queryTokenGroups = toRetrievalSpecificTokenGroups(query);
+  if (queryTokenGroups.length === 0) {
+    return 0;
+  }
+
+  const contentTokens = new Set(toRetrievalSpecificTokens(content));
+  let overlapCount = 0;
+
+  for (const tokenGroup of queryTokenGroups) {
+    if (tokenGroup.some((token) => contentTokens.has(token))) {
       overlapCount += 1;
     }
   }
@@ -553,7 +727,16 @@ export class MaterializeContextUseCase {
     const selectedRawEventIds = new Set(
       trimmedBase.selectedItems
         .filter((item): item is Extract<ResolvedContextItem, { kind: 'message' }> => item.kind === 'message')
-        .map((item) => String(item.contextItem.ref.messageId)),
+        .map((item) => {
+          const { ref } = item.contextItem;
+          if (ref.type !== 'message') {
+            throw new InvariantViolationError(
+              'Expected selected raw context item to reference a message during retrieval ranking.',
+            );
+          }
+
+          return String(ref.messageId);
+        }),
     );
 
     if (retrievalHints.length > 0) {
@@ -585,6 +768,7 @@ export class MaterializeContextUseCase {
           readonly event: LedgerEvent;
           stageHits: number;
           overlapCount: number;
+          specificityScore: number;
         }>();
 
         for (const stageQuery of stageQueries) {
@@ -629,12 +813,14 @@ export class MaterializeContextUseCase {
           for (const event of matchedEvents) {
             const key = String(event.id);
             const overlapCount = toQueryOverlapCount(stageQuery.query, event.content);
+            const specificityScore = toQuerySpecificityOverlapCount(stageQuery.query, event.content);
             const existing = eventCandidateMap.get(key);
             if (existing === undefined) {
               eventCandidateMap.set(key, {
                 event,
                 stageHits: 1,
                 overlapCount,
+                specificityScore,
               });
               continue;
             }
@@ -642,6 +828,9 @@ export class MaterializeContextUseCase {
             existing.stageHits += 1;
             if (overlapCount > existing.overlapCount) {
               existing.overlapCount = overlapCount;
+            }
+            if (specificityScore > existing.specificityScore) {
+              existing.specificityScore = specificityScore;
             }
           }
         }
@@ -651,36 +840,39 @@ export class MaterializeContextUseCase {
           stageQueryDiagnostics,
         });
 
+        const rankedEventCandidates = Array.from(eventCandidateMap.values()).map((entry) => {
+          const score = entry.specificityScore * 100 + entry.stageHits * 10 + entry.overlapCount;
+          return {
+            kind: 'message' as const,
+            id: entry.event.id,
+            tokenCount: entry.event.tokenCount.value,
+            score,
+            stageHits: entry.stageHits,
+            overlapCount: entry.overlapCount,
+            specificityScore: entry.specificityScore,
+            rankTieBreaker: entry.event.sequence,
+            modelMessage: {
+              role: entry.event.role,
+              content: entry.event.content,
+            },
+          };
+        });
+        const rankedSummaryCandidates = Array.from(candidateMap.values()).map((entry) => {
+          const score = entry.stageHits * 100 + entry.overlapCount * 10;
+          return {
+            kind: 'summary' as const,
+            id: entry.summary.id,
+            tokenCount: entry.summary.tokenCount.value,
+            score,
+            stageHits: entry.stageHits,
+            overlapCount: entry.overlapCount,
+            rankTieBreaker: -entry.summary.createdAt.getTime(),
+            summary: entry.summary,
+          };
+        });
         const rankedCandidates: RankedRetrievalCandidate[] = [
-          ...eventCandidateMap.values().map((entry) => {
-            const score = entry.stageHits * 100 + entry.overlapCount * 10;
-            return {
-              kind: 'message' as const,
-              id: entry.event.id,
-              tokenCount: entry.event.tokenCount.value,
-              score,
-              stageHits: entry.stageHits,
-              overlapCount: entry.overlapCount,
-              rankTieBreaker: -entry.event.sequence,
-              modelMessage: {
-                role: entry.event.role,
-                content: entry.event.content,
-              },
-            };
-          }),
-          ...candidateMap.values().map((entry) => {
-            const score = entry.stageHits * 100 + entry.overlapCount * 10;
-            return {
-              kind: 'summary' as const,
-              id: entry.summary.id,
-              tokenCount: entry.summary.tokenCount.value,
-              score,
-              stageHits: entry.stageHits,
-              overlapCount: entry.overlapCount,
-              rankTieBreaker: -entry.summary.createdAt.getTime(),
-              summary: entry.summary,
-            };
-          }),
+          ...rankedEventCandidates,
+          ...rankedSummaryCandidates,
         ].sort((left, right) => {
           if (right.score !== left.score) {
             return right.score - left.score;
@@ -713,6 +905,7 @@ export class MaterializeContextUseCase {
                 score: candidate.score,
                 stageHits: candidate.stageHits,
                 overlapCount: candidate.overlapCount,
+                specificityScore: candidate.specificityScore,
                 tokenCount: candidate.tokenCount,
                 selected: false,
                 reason: 'already_in_context',
@@ -725,6 +918,7 @@ export class MaterializeContextUseCase {
                 score: candidate.score,
                 stageHits: candidate.stageHits,
                 overlapCount: candidate.overlapCount,
+                specificityScore: candidate.specificityScore,
                 tokenCount: candidate.tokenCount,
                 selected: false,
                 reason: 'limit_reached',
@@ -737,6 +931,7 @@ export class MaterializeContextUseCase {
                 score: candidate.score,
                 stageHits: candidate.stageHits,
                 overlapCount: candidate.overlapCount,
+                specificityScore: candidate.specificityScore,
                 tokenCount: candidate.tokenCount,
                 selected: false,
                 reason: 'over_budget',
@@ -755,6 +950,7 @@ export class MaterializeContextUseCase {
               score: candidate.score,
               stageHits: candidate.stageHits,
               overlapCount: candidate.overlapCount,
+              specificityScore: candidate.specificityScore,
               tokenCount: candidate.tokenCount,
               selected: true,
               reason: 'selected',

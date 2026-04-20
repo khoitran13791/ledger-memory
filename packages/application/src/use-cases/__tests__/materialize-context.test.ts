@@ -1154,6 +1154,187 @@ describe('MaterializeContextUseCase', () => {
     );
   });
 
+  it('prefers exact older evidence over newer generic matches when overlap ties', async () => {
+    const exactOlderEvent = createTestMessage({
+      id: createEventId('evt_retrieval_exact_older_evidence'),
+      content:
+        'DATE: 1:56 pm on 8 May, 2023 | ID: D1:3 | Caroline: I went to a LGBTQ support group yesterday and it was so powerful.',
+      tokenCount: 24,
+      role: 'assistant',
+      sequence: 3,
+    });
+    const newerGenericEventOne = createTestMessage({
+      id: createEventId('evt_retrieval_generic_newer_1'),
+      content:
+        'DATE: 12:09 am on 13 September, 2023 | ID: D16:5 | Caroline: The LGBTQ support group inspired my artwork and reminded me to keep going.',
+      tokenCount: 24,
+      role: 'assistant',
+      sequence: 65,
+    });
+    const newerGenericEventTwo = createTestMessage({
+      id: createEventId('evt_retrieval_generic_newer_2'),
+      content:
+        'DATE: 3:19 pm on 28 August, 2023 | ID: D15:3 | Caroline: The LGBTQ support group made me want to show more support in my community.',
+      tokenCount: 24,
+      role: 'assistant',
+      sequence: 54,
+    });
+
+    const state = createState({
+      events: [exactOlderEvent, newerGenericEventOne, newerGenericEventTwo],
+      eventSearchResults: {
+        'When did Caroline go to the LGBTQ support group?': [
+          exactOlderEvent,
+          newerGenericEventOne,
+          newerGenericEventTwo,
+        ],
+        'when did caroline the lgbtq support group': [
+          exactOlderEvent,
+          newerGenericEventOne,
+          newerGenericEventTwo,
+        ],
+        'When Caroline LGBTQ': [exactOlderEvent, newerGenericEventOne, newerGenericEventTwo],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 48,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'When did Caroline go to the LGBTQ support group?', limit: 1 }],
+    });
+
+    expect(state.eventSearchQueries).toEqual([
+      { query: 'When did Caroline go to the LGBTQ support group?' },
+      { query: 'when did caroline the lgbtq support group' },
+      { query: 'When Caroline LGBTQ' },
+    ]);
+    expect(output.modelMessages.map((message) => message.content)).toEqual([exactOlderEvent.content]);
+    expect(output.retrievalAddedCount).toBe(1);
+    expect(output.retrievalAddedMessageCount).toBe(1);
+    expect(output.retrievalAddedSummaryCount).toBe(0);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([exactOlderEvent.id]);
+  });
+
+  it('prefers the most specific raw evidence even when a broader match appears in more retrieval stages', async () => {
+    const exactOlderEvent = createTestMessage({
+      id: createEventId('evt_retrieval_exact_stage_specificity'),
+      content:
+        'DATE: 1:56 pm on 8 May, 2023 | ID: D1:3 | Alice: I visited the community center yesterday and it was really meaningful.',
+      tokenCount: 24,
+      role: 'assistant',
+      sequence: 3,
+    });
+    const broaderNewerEvent = createTestMessage({
+      id: createEventId('evt_retrieval_broader_stage_coverage'),
+      content:
+        'DATE: 12:09 am on 13 September, 2023 | ID: D16:5 | Alice: The community center inspired my artwork and reminded me to keep going.',
+      tokenCount: 24,
+      role: 'assistant',
+      sequence: 65,
+    });
+
+    const state = createState({
+      events: [exactOlderEvent, broaderNewerEvent],
+      eventSearchResults: {
+        'When did Alice visit the community center?': [exactOlderEvent, broaderNewerEvent],
+        'when did alice visit the community center': [broaderNewerEvent],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 48,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'When did Alice visit the community center?', limit: 1 }],
+    });
+
+    expect(output.modelMessages.map((message) => message.content)).toEqual([exactOlderEvent.content]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([exactOlderEvent.id]);
+    expect(output.retrievalDiagnostics?.[0]?.messageDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          messageId: exactOlderEvent.id,
+          selected: true,
+          reason: 'selected',
+        }),
+        expect.objectContaining({
+          messageId: broaderNewerEvent.id,
+          selected: false,
+          reason: 'limit_reached',
+        }),
+      ]),
+    );
+  });
+
+  it('counts inflected retrieval matches once per concept in specificity diagnostics', async () => {
+    const exactEvent = createTestMessage({
+      id: createEventId('evt_retrieval_inflected_specificity_exact'),
+      content:
+        'DATE: 1:56 pm on 8 May, 2023 | ID: D1:3 | Alice: I visited the community center yesterday and it was really meaningful.',
+      tokenCount: 24,
+      role: 'assistant',
+      sequence: 3,
+    });
+    const genericEvent = createTestMessage({
+      id: createEventId('evt_retrieval_inflected_specificity_generic'),
+      content:
+        'DATE: 12:09 am on 13 September, 2023 | ID: D16:5 | Alice: The community center inspired my artwork and reminded me to keep going.',
+      tokenCount: 24,
+      role: 'assistant',
+      sequence: 65,
+    });
+
+    const state = createState({
+      events: [exactEvent, genericEvent],
+      eventSearchResults: {
+        'When was Alice visiting the community center?': [exactEvent, genericEvent],
+        'when was alice visiting the community center': [exactEvent, genericEvent],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 48,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'When was Alice visiting the community center?', limit: 1 }],
+    });
+
+    const selectedDecision = output.retrievalDiagnostics?.[0]?.messageDecisions.find(
+      (decision) => decision.messageId === exactEvent.id,
+    );
+    const genericDecision = output.retrievalDiagnostics?.[0]?.messageDecisions.find(
+      (decision) => decision.messageId === genericEvent.id,
+    );
+
+    expect(output.modelMessages.map((message) => message.content)).toEqual([exactEvent.content]);
+    expect(selectedDecision).toEqual(
+      expect.objectContaining({
+        messageId: exactEvent.id,
+        selected: true,
+        reason: 'selected',
+        specificityScore: 4,
+      }),
+    );
+    expect(genericDecision).toEqual(
+      expect.objectContaining({
+        messageId: genericEvent.id,
+        selected: false,
+        reason: 'limit_reached',
+        specificityScore: 3,
+      }),
+    );
+  });
+
   it('prefers exact raw retrieval messages over generic summaries when hint limit is one', async () => {
     const exactEvent = createTestMessage({
       id: createEventId('evt_retrieval_exact_first'),
