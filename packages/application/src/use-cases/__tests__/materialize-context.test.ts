@@ -139,6 +139,8 @@ type TestState = {
   summaries: Map<SummaryNode['id'], SummaryNode>;
   summarySearchResults: Map<string, readonly SummaryNode[]>;
   searchQueries: Array<{ readonly query: string; readonly scope?: SummaryNode['id'] }>;
+  eventSearchResults: Map<string, readonly LedgerEvent[]>;
+  eventSearchQueries: Array<{ readonly query: string; readonly scope?: SummaryNode['id'] }>;
   artifacts: Map<ArtifactId, Artifact>;
   contextTokenCount: number;
 };
@@ -207,9 +209,11 @@ class TestLedgerReadPort implements LedgerReadPort {
     scope?: SummaryNode['id'],
   ): Promise<readonly LedgerEvent[]> {
     void conversationIdInput;
-    void query;
-    void scope;
-    return [];
+    this.state.eventSearchQueries.push({
+      query,
+      ...(scope === undefined ? {} : { scope }),
+    });
+    return this.state.eventSearchResults.get(query) ?? [];
   }
 
   async regexSearchEvents(
@@ -334,6 +338,7 @@ const createState = (input?: {
   readonly events?: readonly LedgerEvent[];
   readonly summaries?: readonly SummaryNode[];
   readonly summarySearchResults?: Readonly<Record<string, readonly SummaryNode[]>>;
+  readonly eventSearchResults?: Readonly<Record<string, readonly LedgerEvent[]>>;
   readonly artifacts?: readonly Artifact[];
   readonly contextTokenCount?: number;
 }): TestState => {
@@ -346,8 +351,12 @@ const createState = (input?: {
     summarySearchResults: new Map(
       Object.entries(input?.summarySearchResults ?? {}).map(([query, summaries]) => [query, [...summaries]] as const),
     ),
+    eventSearchResults: new Map(
+      Object.entries(input?.eventSearchResults ?? {}).map(([query, events]) => [query, [...events]] as const),
+    ),
     artifacts: new Map((input?.artifacts ?? []).map((artifact) => [artifact.id, artifact] as const)),
     searchQueries: [],
+    eventSearchQueries: [],
     contextTokenCount: input?.contextTokenCount ?? 0,
   };
 };
@@ -1008,6 +1017,103 @@ describe('MaterializeContextUseCase', () => {
     expect(output.summaryReferences.map((reference) => reference.id)).toEqual([primarySummary.id]);
     expect(output.artifactReferences.map((reference) => reference.id)).toEqual([artifact.id]);
     expect(output.budgetUsed.value).toBe(8);
+  });
+
+  it('adds raw retrieval messages when summary retrieval has no match', async () => {
+    const exactEvent = createTestMessage({
+      id: createEventId('evt_retrieval_raw_only'),
+      content: 'DATE: 1 Jan 2026 | ID: D1:7 | Alice: auth token rotation #ZX-41 happens tonight.',
+      tokenCount: 18,
+      role: 'assistant',
+      sequence: 7,
+    });
+
+    const state = createState({
+      events: [exactEvent],
+      eventSearchResults: {
+        'auth token rotation #ZX-41': [exactEvent],
+        'auth token rotation': [exactEvent],
+        'ZX-41': [exactEvent],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 48,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'auth token rotation #ZX-41', limit: 1 }],
+    });
+
+    expect(state.eventSearchQueries).toEqual([
+      { query: 'auth token rotation #ZX-41' },
+      { query: 'auth token rotation' },
+      { query: 'ZX-41' },
+    ]);
+    expect(output.modelMessages.map((message) => message.content)).toEqual([
+      'DATE: 1 Jan 2026 | ID: D1:7 | Alice: auth token rotation #ZX-41 happens tonight.',
+    ]);
+    expect(output.summaryReferences).toEqual([]);
+    expect(output.retrievalAddedCount).toBe(1);
+    expect(output.retrievalMatchCount).toBe(3);
+    expect(output.retrievalDiagnostics?.[0]?.stageQueries).toEqual([
+      {
+        stage: 'primary',
+        query: 'auth token rotation #ZX-41',
+        matchCount: 1,
+      },
+      {
+        stage: 'keywords',
+        query: 'auth token rotation',
+        matchCount: 1,
+      },
+      {
+        stage: 'anchors',
+        query: 'ZX-41',
+        matchCount: 1,
+      },
+    ]);
+    expect(output.budgetUsed.value).toBe(18);
+  });
+
+  it('dedupes raw retrieval events across multiple hints in one materialization run', async () => {
+    const exactEvent = createTestMessage({
+      id: createEventId('evt_retrieval_raw_dedupe'),
+      content: 'DATE: 1 Jan 2026 | ID: D1:8 | Alice: auth token rotation #ZX-41 already covered.',
+      tokenCount: 18,
+      role: 'assistant',
+      sequence: 8,
+    });
+
+    const state = createState({
+      events: [exactEvent],
+      eventSearchResults: {
+        'auth token rotation #ZX-41': [exactEvent],
+        'auth token rotation': [exactEvent],
+        'ZX-41': [exactEvent],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 72,
+      overheadTokens: 0,
+      retrievalHints: [
+        { query: 'auth token rotation #ZX-41', limit: 1 },
+        { query: 'auth token rotation #ZX-41', limit: 1 },
+      ],
+    });
+
+    expect(output.modelMessages.map((message) => message.content)).toEqual([
+      'DATE: 1 Jan 2026 | ID: D1:8 | Alice: auth token rotation #ZX-41 already covered.',
+    ]);
+    expect(output.retrievalAddedCount).toBe(1);
+    expect(output.budgetUsed.value).toBe(18);
   });
 
   it('keeps raw messages under retrieval-reserve pressure before dropping summaries', async () => {

@@ -523,6 +523,11 @@ export class MaterializeContextUseCase {
     let retrievalMatchCount = 0;
     let retrievalAddedCount = 0;
     const retrievalDiagnostics: RetrievalHintDiagnostics[] = [];
+    const selectedRawEventIds = new Set(
+      trimmedBase.selectedItems
+        .filter((item): item is Extract<ResolvedContextItem, { kind: 'message' }> => item.kind === 'message')
+        .map((item) => String(item.contextItem.ref.messageId)),
+    );
 
     if (retrievalHints.length > 0) {
       for (const hint of retrievalHints) {
@@ -550,6 +555,12 @@ export class MaterializeContextUseCase {
           overlapCount: number;
           maxStageMatchCount: number;
         }>();
+        const eventCandidateMap = new Map<string, {
+          readonly event: LedgerEvent;
+          stageHits: number;
+          overlapCount: number;
+          maxStageMatchCount: number;
+        }>();
 
         for (const stageQuery of stageQueries) {
           const matchedSummaries = await this.deps.summaryDag.searchSummaries(
@@ -557,12 +568,18 @@ export class MaterializeContextUseCase {
             stageQuery.query,
             hint.scope,
           );
+          const matchedEvents = await this.deps.ledgerRead.searchEvents(
+            input.conversationId,
+            stageQuery.query,
+            hint.scope,
+          );
+          const stageMatchCount = matchedSummaries.length + matchedEvents.length;
 
-          retrievalMatchCount += matchedSummaries.length;
+          retrievalMatchCount += stageMatchCount;
           stageQueryDiagnostics.push({
             stage: stageQuery.stage,
             query: stageQuery.query,
-            matchCount: matchedSummaries.length,
+            matchCount: stageMatchCount,
           });
 
           for (const summary of matchedSummaries) {
@@ -585,6 +602,29 @@ export class MaterializeContextUseCase {
             }
             if (matchedSummaries.length > existing.maxStageMatchCount) {
               existing.maxStageMatchCount = matchedSummaries.length;
+            }
+          }
+
+          for (const event of matchedEvents) {
+            const key = String(event.id);
+            const overlapCount = toQueryOverlapCount(stageQuery.query, event.content);
+            const existing = eventCandidateMap.get(key);
+            if (existing === undefined) {
+              eventCandidateMap.set(key, {
+                event,
+                stageHits: 1,
+                overlapCount,
+                maxStageMatchCount: matchedEvents.length,
+              });
+              continue;
+            }
+
+            existing.stageHits += 1;
+            if (overlapCount > existing.overlapCount) {
+              existing.overlapCount = overlapCount;
+            }
+            if (matchedEvents.length > existing.maxStageMatchCount) {
+              existing.maxStageMatchCount = matchedEvents.length;
             }
           }
         }
@@ -688,6 +728,55 @@ export class MaterializeContextUseCase {
             selected: true,
             reason: 'selected',
           });
+        }
+
+        if (candidateMap.size === 0) {
+          const rankedEventCandidates = [...eventCandidateMap.values()]
+            .map((entry) => {
+              const score = entry.stageHits * 100 + entry.overlapCount * 10 + entry.maxStageMatchCount;
+              return {
+                ...entry,
+                score,
+              };
+            })
+            .sort((left, right) => {
+              if (right.score !== left.score) {
+                return right.score - left.score;
+              }
+
+              const sequenceDiff = right.event.sequence - left.event.sequence;
+              if (sequenceDiff !== 0) {
+                return sequenceDiff;
+              }
+
+              return String(left.event.id).localeCompare(String(right.event.id));
+            });
+          let addedEventCount = 0;
+
+          for (const candidate of rankedEventCandidates) {
+            const event = candidate.event;
+            const eventId = String(event.id);
+            const tokenCount = event.tokenCount.value;
+
+            if (selectedRawEventIds.has(eventId)) {
+              continue;
+            }
+            if (addedEventCount >= limit) {
+              continue;
+            }
+            if (budgetUsedValue + tokenCount > availableBudget) {
+              continue;
+            }
+
+            modelMessages.push({
+              role: event.role,
+              content: event.content,
+            });
+            selectedRawEventIds.add(eventId);
+            budgetUsedValue += tokenCount;
+            addedEventCount += 1;
+            retrievalAddedCount += 1;
+          }
         }
 
         retrievalDiagnostics.push({
