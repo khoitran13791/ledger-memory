@@ -137,6 +137,7 @@ type TestState = {
   contextVersion: ContextVersion;
   events: LedgerEvent[];
   summaries: Map<SummaryNode['id'], SummaryNode>;
+  expandedSummaryMessages: Map<SummaryNode['id'], readonly LedgerEvent[]>;
   summarySearchResults: Map<string, readonly SummaryNode[]>;
   searchQueries: Array<{ readonly query: string; readonly scope?: SummaryNode['id'] }>;
   eventSearchResults: Map<string, readonly LedgerEvent[]>;
@@ -258,8 +259,8 @@ class TestSummaryDagPort implements SummaryDagPort {
     return [];
   }
 
-  async expandToMessages(): Promise<readonly LedgerEvent[]> {
-    return [];
+  async expandToMessages(id: SummaryNode['id']): Promise<readonly LedgerEvent[]> {
+    return [...(this.state.expandedSummaryMessages.get(id) ?? [])];
   }
 
   async searchSummaries(
@@ -337,6 +338,7 @@ const createState = (input?: {
   readonly contextItems?: readonly ContextItem[];
   readonly events?: readonly LedgerEvent[];
   readonly summaries?: readonly SummaryNode[];
+  readonly expandedSummaryMessages?: Readonly<Record<string, readonly LedgerEvent[]>>;
   readonly summarySearchResults?: Readonly<Record<string, readonly SummaryNode[]>>;
   readonly eventSearchResults?: Readonly<Record<string, readonly LedgerEvent[]>>;
   readonly artifacts?: readonly Artifact[];
@@ -348,6 +350,11 @@ const createState = (input?: {
     contextVersion: createContextVersion(0),
     events: [...(input?.events ?? [])],
     summaries: new Map((input?.summaries ?? []).map((summary) => [summary.id, summary] as const)),
+    expandedSummaryMessages: new Map(
+      Object.entries(input?.expandedSummaryMessages ?? {}).map(
+        ([summaryId, events]) => [summaryId as SummaryNode['id'], [...events]] as const,
+      ),
+    ),
     summarySearchResults: new Map(
       Object.entries(input?.summarySearchResults ?? {}).map(([query, summaries]) => [query, [...summaries]] as const),
     ),
@@ -1401,6 +1408,212 @@ describe('MaterializeContextUseCase', () => {
           summaryId: genericSummary.id,
           selected: false,
           reason: 'limit_reached',
+        }),
+      ]),
+    );
+  });
+
+  it('keeps a retrieved evidence window by dropping stale base messages under budget pressure', async () => {
+    const staleBaseOne = createTestMessage({
+      id: createEventId('evt_base_stale_1'),
+      content: 'recent-base-message-1',
+      tokenCount: 20,
+      sequence: 40,
+    });
+    const staleBaseTwo = createTestMessage({
+      id: createEventId('evt_base_stale_2'),
+      content: 'recent-base-message-2',
+      tokenCount: 20,
+      sequence: 41,
+    });
+    const staleBaseThree = createTestMessage({
+      id: createEventId('evt_base_stale_3'),
+      content: 'recent-base-message-3',
+      tokenCount: 20,
+      sequence: 42,
+    });
+    const staleBaseFour = createTestMessage({
+      id: createEventId('evt_base_stale_4'),
+      content: 'recent-base-message-4',
+      tokenCount: 20,
+      sequence: 43,
+    });
+    const promptTurn = createTestMessage({
+      id: createEventId('evt_focus_prompt_turn'),
+      content:
+        'DATE: 8:14 am on 9 January, 2023 | ID: D1:7 | Maria: Woohoo, John! That is awesome. Any specific areas you want to tackle?',
+      tokenCount: 18,
+      role: 'assistant',
+      sequence: 7,
+    });
+    const answerTurn = createTestMessage({
+      id: createEventId('evt_focus_answer_turn'),
+      content:
+        'DATE: 8:14 am on 9 January, 2023 | ID: D1:8 | John: I am passionate about improving education and infrastructure in our community. Those are my main focuses.',
+      tokenCount: 20,
+      role: 'user',
+      sequence: 8,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({
+          conversationId,
+          position: 0,
+          ref: createMessageContextItemRef(staleBaseOne.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 1,
+          ref: createMessageContextItemRef(staleBaseTwo.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 2,
+          ref: createMessageContextItemRef(staleBaseThree.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 3,
+          ref: createMessageContextItemRef(staleBaseFour.id),
+        }),
+      ],
+      events: [promptTurn, answerTurn, staleBaseOne, staleBaseTwo, staleBaseThree, staleBaseFour],
+      eventSearchResults: {
+        "What is John's main focus in local politics?": [promptTurn],
+        'what is john main focus in local politics': [promptTurn],
+        'What John': [promptTurn],
+      },
+      contextTokenCount: 80,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 100,
+      overheadTokens: 0,
+      retrievalHints: [{ query: "What is John's main focus in local politics?", limit: 1 }],
+    });
+
+    expect(output.modelMessages.map((message) => message.content)).toEqual([
+      'recent-base-message-2',
+      'recent-base-message-3',
+      'recent-base-message-4',
+      promptTurn.content,
+      answerTurn.content,
+    ]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([promptTurn.id, answerTurn.id]);
+    expect(output.budgetUsed.value).toBe(98);
+    expect(output.trimmedToFit).toBe(true);
+    expect(output.droppedMessageCount).toBe(1);
+  });
+
+  it('keeps scoped retrieval windows inside the requested summary scope', async () => {
+    const scopedSummary = createTestSummary({
+      id: createSummaryNodeId('sum_retrieval_scope_window'),
+      content: '[Summary] scoped contract storage context',
+      tokenCount: 10,
+    });
+    const outsidePrevious = createTestMessage({
+      id: createEventId('evt_retrieval_scope_previous'),
+      content: 'DATE: 7:55 am on 9 January, 2023 | ID: D1:6 | Alice: unrelated out-of-scope setup.',
+      tokenCount: 14,
+      role: 'assistant',
+      sequence: 6,
+    });
+    const scopedSeed = createTestMessage({
+      id: createEventId('evt_retrieval_scope_seed'),
+      content:
+        'DATE: 8:14 am on 9 January, 2023 | ID: D1:7 | Alice: I stored the signed contract in the blue archive cabinet.',
+      tokenCount: 18,
+      role: 'assistant',
+      sequence: 7,
+    });
+    const outsideNext = createTestMessage({
+      id: createEventId('evt_retrieval_scope_next'),
+      content: 'DATE: 8:16 am on 9 January, 2023 | ID: D1:8 | Bob: unrelated out-of-scope follow-up.',
+      tokenCount: 14,
+      role: 'user',
+      sequence: 8,
+    });
+
+    const state = createState({
+      events: [outsidePrevious, scopedSeed, outsideNext],
+      summaries: [scopedSummary],
+      expandedSummaryMessages: {
+        [scopedSummary.id]: [scopedSeed],
+      },
+      eventSearchResults: {
+        'Where did Alice store the signed contract?': [scopedSeed],
+        'where did alice store the signed contract': [scopedSeed],
+        'Where Alice': [scopedSeed],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 64,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'Where did Alice store the signed contract?', scope: scopedSummary.id, limit: 1 }],
+    });
+
+    expect(output.modelMessages.map((message) => message.content)).toEqual([scopedSeed.content]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([scopedSeed.id]);
+  });
+
+  it('skips oversized provisional bundles so smaller raw evidence can still be selected', async () => {
+    const oversizedSeed = createTestMessage({
+      id: createEventId('evt_retrieval_oversized_seed'),
+      content:
+        'DATE: 8:14 am on 9 January, 2023 | ID: D1:7 | Alice: The vendor contract is stored in the archive cabinet with every supporting document attached.',
+      tokenCount: 70,
+      role: 'assistant',
+      sequence: 5,
+    });
+    const fittingCandidate = createTestMessage({
+      id: createEventId('evt_retrieval_fitting_seed'),
+      content: 'DATE: 8:20 am on 9 January, 2023 | ID: D1:9 | Alice: The vendor contract is stored in the archive cabinet.',
+      tokenCount: 18,
+      role: 'assistant',
+      sequence: 50,
+    });
+
+    const state = createState({
+      events: [oversizedSeed, fittingCandidate],
+      eventSearchResults: {
+        'Where is the vendor contract stored?': [oversizedSeed, fittingCandidate],
+        'where is the vendor contract stored': [oversizedSeed, fittingCandidate],
+        'Where': [oversizedSeed, fittingCandidate],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 60,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'Where is the vendor contract stored?', limit: 1 }],
+    });
+
+    expect(output.modelMessages.map((message) => message.content)).toEqual([fittingCandidate.content]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([fittingCandidate.id]);
+    expect(output.retrievalDiagnostics?.[0]?.messageDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          messageId: oversizedSeed.id,
+          selected: false,
+          reason: 'over_budget',
+        }),
+        expect.objectContaining({
+          messageId: fittingCandidate.id,
+          selected: true,
+          reason: 'selected',
         }),
       ]),
     );

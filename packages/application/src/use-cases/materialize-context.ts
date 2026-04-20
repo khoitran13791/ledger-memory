@@ -545,6 +545,16 @@ const expandRetrievalHintQueries = (
   return entries;
 };
 
+const buildRetrievedEventWindow = (input: {
+  readonly seed: LedgerEvent;
+  readonly eventsBySequence: ReadonlyMap<number, LedgerEvent>;
+}): readonly LedgerEvent[] => {
+  const previous = input.eventsBySequence.get(input.seed.sequence - 1);
+  const next = input.eventsBySequence.get(input.seed.sequence + 1);
+
+  return [previous, input.seed, next].filter((event): event is LedgerEvent => event !== undefined);
+};
+
 const trimResolvedItemsToBudget = (input: {
   readonly items: readonly ResolvedContextItem[];
   readonly tokenBudget: number;
@@ -676,6 +686,7 @@ export class MaterializeContextUseCase {
 
     const orderedContextItems = [...contextSnapshot.items].sort((left, right) => left.position - right.position);
     const eventsById = new Map(allEvents.map((event) => [event.id, event] as const));
+    const eventsBySequence = new Map(allEvents.map((event) => [event.sequence, event] as const));
 
     const resolvedItems: ResolvedContextItem[] = [];
 
@@ -711,19 +722,35 @@ export class MaterializeContextUseCase {
     const modelMessages: ModelMessage[] = [];
     const summaryReferences: SummaryReference[] = [];
     const summaryArtifactIdsById = new Map<string, readonly ArtifactId[]>();
-
-    for (const item of trimmedBase.selectedItems) {
-      modelMessages.push(item.modelMessage);
-
-      if (item.kind === 'summary') {
-        summaryReferences.push(item.summaryReference);
-        summaryArtifactIdsById.set(String(item.summaryReference.id), item.artifactIds);
-      }
-    }
+    const selectedSummaryIdStrings = new Set(
+      trimmedBase.selectedItems
+        .filter((item): item is Extract<ResolvedContextItem, { kind: 'summary' }> => item.kind === 'summary')
+        .map((item) => {
+          summaryArtifactIdsById.set(String(item.summaryReference.id), item.artifactIds);
+          return String(item.summaryReference.id);
+        }),
+    );
+    const pendingRetrievalAdditions: Array<
+      | {
+          readonly kind: 'summary';
+          readonly selectionOrder: number;
+          readonly tokenCount: number;
+          readonly modelMessage: ModelMessage;
+          readonly summaryReference: SummaryReference;
+          readonly artifactIds: readonly ArtifactId[];
+        }
+      | {
+          readonly kind: 'message_bundle';
+          readonly selectionOrder: number;
+          readonly seedId: LedgerEvent['id'];
+          readonly events: readonly LedgerEvent[];
+        }
+    > = [];
+    let retrievalSelectionOrder = 0;
 
     let retrievalMatchCount = 0;
     const retrievalDiagnostics: RetrievalHintDiagnostics[] = [];
-    const retrievedMessageIdsByIndex = new Map<number, LedgerEvent['id']>();
+    const scopedEventsBySequenceCache = new Map<string, ReadonlyMap<number, LedgerEvent>>();
     const selectedRawEventIds = new Set(
       trimmedBase.selectedItems
         .filter((item): item is Extract<ResolvedContextItem, { kind: 'message' }> => item.kind === 'message')
@@ -738,6 +765,24 @@ export class MaterializeContextUseCase {
           return String(ref.messageId);
         }),
     );
+    const getWindowEventsBySequence = async (
+      scope?: SummaryReference['id'],
+    ): Promise<ReadonlyMap<number, LedgerEvent>> => {
+      if (scope === undefined) {
+        return eventsBySequence;
+      }
+
+      const cacheKey = String(scope);
+      const cached = scopedEventsBySequenceCache.get(cacheKey);
+      if (cached !== undefined) {
+        return cached;
+      }
+
+      const scopedEvents = await this.deps.summaryDag.expandToMessages(scope);
+      const scopedMap = new Map(scopedEvents.map((event) => [event.sequence, event] as const));
+      scopedEventsBySequenceCache.set(cacheKey, scopedMap);
+      return scopedMap;
+    };
 
     if (retrievalHints.length > 0) {
       for (const hint of retrievalHints) {
@@ -925,7 +970,11 @@ export class MaterializeContextUseCase {
               });
               continue;
             }
-            if (budgetUsedValue + candidate.tokenCount > availableBudget) {
+            const seedEvent = eventsById.get(candidate.id);
+            if (seedEvent === undefined) {
+              throw new InvariantViolationError(`Retrieval selected unknown event: ${candidate.id}`);
+            }
+            if (seedEvent.tokenCount.value > availableBudget) {
               messageDecisions.push({
                 messageId: candidate.id,
                 score: candidate.score,
@@ -939,12 +988,38 @@ export class MaterializeContextUseCase {
               continue;
             }
 
-            modelMessages.push(candidate.modelMessage);
-            retrievedMessageIdsByIndex.set(modelMessages.length - 1, candidate.id);
-            selectedRawEventIds.add(eventId);
-            budgetUsedValue += candidate.tokenCount;
+            const windowEventsBySequence = await getWindowEventsBySequence(hint.scope);
+            const scopedSeedEvent = windowEventsBySequence.get(seedEvent.sequence) ?? seedEvent;
+            const bundle = buildRetrievedEventWindow({
+              seed: scopedSeedEvent,
+              eventsBySequence: windowEventsBySequence,
+            }).filter((event) => !selectedRawEventIds.has(String(event.id)));
+
+            if (bundle.length === 0) {
+              messageDecisions.push({
+                messageId: candidate.id,
+                score: candidate.score,
+                stageHits: candidate.stageHits,
+                overlapCount: candidate.overlapCount,
+                specificityScore: candidate.specificityScore,
+                tokenCount: candidate.tokenCount,
+                selected: false,
+                reason: 'already_in_context',
+              });
+              continue;
+            }
+
+            pendingRetrievalAdditions.push({
+              kind: 'message_bundle',
+              selectionOrder: retrievalSelectionOrder++,
+              seedId: candidate.id,
+              events: bundle,
+            });
+            for (const event of bundle) {
+              selectedRawEventIds.add(String(event.id));
+            }
             addedForHint += 1;
-            selectedMessageIds.push(candidate.id);
+            selectedMessageIds.push(...bundle.map((event) => event.id));
             messageDecisions.push({
               messageId: candidate.id,
               score: candidate.score,
@@ -959,7 +1034,7 @@ export class MaterializeContextUseCase {
           }
 
           const summary = candidate.summary;
-          const alreadyInContext = summaryReferences.some((ref) => ref.id === summary.id);
+          const alreadyInContext = selectedSummaryIdStrings.has(String(summary.id));
 
           if (alreadyInContext) {
             candidateDecisions.push({
@@ -1000,20 +1075,28 @@ export class MaterializeContextUseCase {
             continue;
           }
 
-          modelMessages.push({
-            role: 'assistant',
-            content: `[Summary ID: ${summary.id}]\n${summary.content}`,
-          });
-          summaryReferences.push({
+          const summaryReference = {
             id: summary.id,
             kind: summary.kind,
             tokenCount: summary.tokenCount,
+          } satisfies SummaryReference;
+          pendingRetrievalAdditions.push({
+            kind: 'summary',
+            selectionOrder: retrievalSelectionOrder++,
+            tokenCount: candidate.tokenCount,
+            modelMessage: {
+              role: 'assistant',
+              content: `[Summary ID: ${summary.id}]\n${summary.content}`,
+            },
+            summaryReference,
+            artifactIds: summary.artifactIds,
           });
+          selectedSummaryIdStrings.add(String(summary.id));
           summaryArtifactIdsById.set(String(summary.id), summary.artifactIds);
 
           budgetUsedValue += candidate.tokenCount;
           addedForHint += 1;
-          selectedSummaryIds.push(summary.id);
+          selectedSummaryIds.push(summaryReference.id);
 
           candidateDecisions.push({
             summaryId: summary.id,
@@ -1039,85 +1122,122 @@ export class MaterializeContextUseCase {
       }
     }
 
-    let finalSelectedMessageIdStrings: ReadonlySet<string> | undefined;
-    if (budgetUsedValue > availableBudget) {
-      const summaryRefById = new Map(summaryReferences.map((reference) => [reference.id, reference] as const));
-      const selectedWithMeta = modelMessages.map((message, index) => {
-        const summaryIdMatch = message.content.match(/^\[Summary ID: ([^\]]+)\]/m);
-        const summaryId = summaryIdMatch?.[1];
-        const summaryReference = summaryId === undefined ? undefined : summaryRefById.get(summaryId as SummaryReference['id']);
-        const tokenCount =
-          summaryReference?.tokenCount.value ?? Math.max(1, Math.ceil(message.content.length / 4));
-        return {
-          message,
-          tokenCount,
-          summaryId,
-          retrievedMessageId: retrievedMessageIdsByIndex.get(index),
-          index,
-        };
+    type FinalizedMessage = {
+      readonly keepPriority: number;
+      readonly order: number;
+      readonly selectionTieBreaker: number;
+      readonly tokenCount: number;
+      readonly modelMessage: ModelMessage;
+      readonly summaryReference?: SummaryReference;
+      readonly retrievedMessageId?: LedgerEvent['id'];
+    };
+
+    let order = 0;
+    const baseFinalizedMessages: FinalizedMessage[] = trimmedBase.selectedItems.map((item) =>
+      item.kind === 'summary'
+        ? {
+            keepPriority: 3,
+            order: order++,
+            selectionTieBreaker: -item.contextItem.position,
+            tokenCount: item.tokenCount,
+            modelMessage: item.modelMessage,
+            summaryReference: item.summaryReference,
+          }
+        : {
+            keepPriority: 2,
+            order: order++,
+            selectionTieBreaker: -item.contextItem.position,
+            tokenCount: item.tokenCount,
+            modelMessage: item.modelMessage,
+          },
+    );
+    const retrievalFinalizedMessages: FinalizedMessage[] = [...pendingRetrievalAdditions]
+      .sort((left, right) => left.selectionOrder - right.selectionOrder)
+      .flatMap<FinalizedMessage>((addition) => {
+        if (addition.kind === 'summary') {
+          return [
+            {
+              keepPriority: 3,
+              order: order++,
+              selectionTieBreaker: addition.selectionOrder,
+              tokenCount: addition.tokenCount,
+              modelMessage: addition.modelMessage,
+              summaryReference: addition.summaryReference,
+            },
+          ];
+        }
+
+        return addition.events.map((event) => ({
+          keepPriority: event.id === addition.seedId ? 0 : 1,
+          order: order++,
+          selectionTieBreaker: addition.selectionOrder,
+          tokenCount: event.tokenCount.value,
+          modelMessage: {
+            role: event.role,
+            content: event.content,
+          },
+          retrievedMessageId: event.id,
+        }));
       });
+    const finalizedMessages: FinalizedMessage[] = [...baseFinalizedMessages, ...retrievalFinalizedMessages];
 
-      const prioritized = [...selectedWithMeta].sort((left, right) => {
-        const leftKindPriority = left.summaryId === undefined ? 0 : 1;
-        const rightKindPriority = right.summaryId === undefined ? 0 : 1;
-        if (leftKindPriority !== rightKindPriority) {
-          return leftKindPriority - rightKindPriority;
-        }
+    const keptByPriority: FinalizedMessage[] = [];
+    let used = 0;
 
-        return left.index - right.index;
-      });
-
-      const keptSet = new Set<typeof selectedWithMeta[number]>();
-      let used = 0;
-
-      for (const item of prioritized) {
-        if (used + item.tokenCount > availableBudget) {
-          continue;
-        }
-
-        keptSet.add(item);
-        used += item.tokenCount;
+    for (const item of [...finalizedMessages].sort((left, right) => {
+      if (left.keepPriority !== right.keepPriority) {
+        return left.keepPriority - right.keepPriority;
       }
 
-      const kept = selectedWithMeta.filter((item) => keptSet.has(item));
-      for (const item of selectedWithMeta) {
-        if (keptSet.has(item)) {
-          continue;
-        }
-
-        if (item.summaryId !== undefined) {
-          droppedSummaryCount += 1;
-        } else {
-          droppedMessageCount += 1;
-        }
+      if (left.selectionTieBreaker !== right.selectionTieBreaker) {
+        return left.selectionTieBreaker - right.selectionTieBreaker;
       }
 
-      if (kept.length < selectedWithMeta.length) {
-        trimmedToFit = true;
+      return left.order - right.order;
+    })) {
+      if (used + item.tokenCount > availableBudget) {
+        continue;
       }
 
-      modelMessages.splice(0, modelMessages.length, ...kept.map((item) => item.message));
-
-      const keptSummaryIds = new Set(
-        kept
-          .map((item) => item.summaryId)
-          .filter((summaryId): summaryId is string => summaryId !== undefined),
-      );
-      finalSelectedMessageIdStrings = new Set(
-        kept
-          .map((item) => item.retrievedMessageId)
-          .filter((messageId): messageId is LedgerEvent['id'] => messageId !== undefined)
-          .map((messageId) => String(messageId)),
-      );
-
-      summaryReferences.splice(
-        0,
-        summaryReferences.length,
-        ...summaryReferences.filter((reference) => keptSummaryIds.has(reference.id)),
-      );
-
-      budgetUsedValue = used;
+      keptByPriority.push(item);
+      used += item.tokenCount;
     }
+
+    const kept = [...keptByPriority].sort((left, right) => left.order - right.order);
+
+    for (const item of finalizedMessages) {
+      if (keptByPriority.includes(item)) {
+        continue;
+      }
+
+      if (item.summaryReference !== undefined) {
+        droppedSummaryCount += 1;
+      } else {
+        droppedMessageCount += 1;
+      }
+    }
+
+    if (kept.length < finalizedMessages.length) {
+      trimmedToFit = true;
+    }
+
+    modelMessages.splice(0, modelMessages.length, ...kept.map((item) => item.modelMessage));
+    summaryReferences.splice(
+      0,
+      summaryReferences.length,
+      ...kept
+        .map((item) => item.summaryReference)
+        .filter((summaryReference): summaryReference is SummaryReference => summaryReference !== undefined),
+    );
+
+    const finalSelectedMessageIdStrings = new Set(
+      kept
+        .map((item) => item.retrievedMessageId)
+        .filter((messageId): messageId is LedgerEvent['id'] => messageId !== undefined)
+        .map((messageId) => String(messageId)),
+    );
+
+    budgetUsedValue = used;
 
     const keptSummaryIdStrings = new Set(summaryReferences.map((reference) => String(reference.id)));
     const keptMessageIdStrings =
