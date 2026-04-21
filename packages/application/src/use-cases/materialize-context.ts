@@ -880,15 +880,27 @@ const getBridgeSelectionBudget = (input: {
   return input.retrievalReserve + extraSlack;
 };
 
+const canBridgeSummaryCoexistWithPinnedBase = (input: {
+  readonly candidateTokenCount: number;
+  readonly pinnedBaseTokenCount: number;
+  readonly availableBudget: number;
+}): boolean => input.candidateTokenCount + input.pinnedBaseTokenCount <= input.availableBudget;
+
 const chooseBridgeSummaryCandidate = (input: {
   readonly rankedSummaryCandidates: readonly RankedSummaryRetrievalCandidate[];
   readonly selectedSummaryIdStrings: ReadonlySet<string>;
   readonly availableBudget: number;
   readonly bridgeSelectionBudget: number;
+  readonly pinnedBaseTokenCount: number;
 }): RankedSummaryRetrievalCandidate | undefined => {
   const viableCandidates = input.rankedSummaryCandidates.filter(
     (candidate) =>
-      !input.selectedSummaryIdStrings.has(String(candidate.id)) && candidate.tokenCount <= input.availableBudget,
+      !input.selectedSummaryIdStrings.has(String(candidate.id)) &&
+      canBridgeSummaryCoexistWithPinnedBase({
+        candidateTokenCount: candidate.tokenCount,
+        pinnedBaseTokenCount: input.pinnedBaseTokenCount,
+        availableBudget: input.availableBudget,
+      }),
   );
 
   const topCandidate = viableCandidates[0];
@@ -907,7 +919,11 @@ const chooseBridgeSummaryCandidate = (input: {
     )
     .sort(compareFitAwareSummaryCandidates);
 
-  return fitAwareCandidates[0];
+  if (fitAwareCandidates[0] !== undefined) {
+    return fitAwareCandidates[0];
+  }
+
+  return topCandidate;
 };
 
 const compareScoreDensity = (
@@ -1131,6 +1147,9 @@ export class MaterializeContextUseCase {
       selectedBaseItems: trimmedBase.selectedItems,
       pinRules,
     });
+    const pinnedBaseTokenCount = trimmedBase.selectedItems
+      .filter((item) => isItemPinned(item.contextItem, pinRules))
+      .reduce((total, item) => total + item.tokenCount, 0);
 
     let budgetUsedValue = trimmedBase.budgetUsed;
     let trimmedToFit = trimmedBase.trimmedToFit;
@@ -1366,6 +1385,7 @@ export class MaterializeContextUseCase {
           selectedSummaryIdStrings,
           availableBudget,
           bridgeSelectionBudget,
+          pinnedBaseTokenCount,
         });
 
         for (const candidate of rankedCandidates) {
@@ -1499,6 +1519,11 @@ export class MaterializeContextUseCase {
           }
 
           if (!isSelectedBridgeSummary) {
+            const exceedsPinnedCoexistenceBudget = !canBridgeSummaryCoexistWithPinnedBase({
+              candidateTokenCount: candidate.tokenCount,
+              pinnedBaseTokenCount,
+              availableBudget,
+            });
             candidateDecisions.push({
               summaryId: summary.id,
               score: candidate.score,
@@ -1506,7 +1531,10 @@ export class MaterializeContextUseCase {
               overlapCount: candidate.overlapCount,
               tokenCount: candidate.tokenCount,
               selected: false,
-              reason: candidate.tokenCount > availableBudget ? 'over_budget' : 'limit_reached',
+              reason:
+                candidate.tokenCount > availableBudget || exceedsPinnedCoexistenceBudget
+                  ? 'over_budget'
+                  : 'limit_reached',
             });
             continue;
           }
