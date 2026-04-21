@@ -1147,7 +1147,7 @@ describe('MaterializeContextUseCase', () => {
           expect.objectContaining({
             summaryId: genericSummary.id,
             selected: false,
-            reason: 'limit_reached',
+            reason: 'over_budget',
           }),
         ]),
         messageDecisions: [

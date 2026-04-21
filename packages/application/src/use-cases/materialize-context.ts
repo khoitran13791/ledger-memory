@@ -854,9 +854,13 @@ const getBridgeSelectionBudget = (input: {
   readonly retrievalReserve: number;
   readonly selectedBaseItems: readonly ResolvedContextItem[];
   readonly pinRules: readonly PinRule[];
-}): number => {
+}): {
+  readonly bridgeSelectionBudget: number;
+  readonly retainedBaseFloorTokenCount: number;
+} => {
   let extraSlack = 0;
   let usedUnits = 0;
+  const selectedBaseTokenCount = input.selectedBaseItems.reduce((total, item) => total + item.tokenCount, 0);
 
   const candidates = input.selectedBaseItems
     .filter((item) => !isItemPinned(item.contextItem, input.pinRules))
@@ -880,7 +884,10 @@ const getBridgeSelectionBudget = (input: {
     usedUnits += 1;
   }
 
-  return input.retrievalReserve + extraSlack;
+  return {
+    bridgeSelectionBudget: input.retrievalReserve + extraSlack,
+    retainedBaseFloorTokenCount: Math.max(0, selectedBaseTokenCount - extraSlack),
+  };
 };
 
 const canBridgeSummaryCoexistWithPinnedBase = (input: {
@@ -889,12 +896,19 @@ const canBridgeSummaryCoexistWithPinnedBase = (input: {
   readonly availableBudget: number;
 }): boolean => input.candidateTokenCount + input.pinnedBaseTokenCount <= input.availableBudget;
 
+const canBridgeSummaryCoexistWithRetainedBaseFloor = (input: {
+  readonly candidateTokenCount: number;
+  readonly retainedBaseFloorTokenCount: number;
+  readonly availableBudget: number;
+}): boolean => input.candidateTokenCount + input.retainedBaseFloorTokenCount <= input.availableBudget;
+
 const chooseBridgeSummaryCandidate = (input: {
   readonly rankedSummaryCandidates: readonly RankedSummaryRetrievalCandidate[];
   readonly selectedSummaryIdStrings: ReadonlySet<string>;
   readonly availableBudget: number;
   readonly bridgeSelectionBudget: number;
   readonly pinnedBaseTokenCount: number;
+  readonly retainedBaseFloorTokenCount: number;
 }): RankedSummaryRetrievalCandidate | undefined => {
   const viableCandidates = input.rankedSummaryCandidates.filter(
     (candidate) =>
@@ -926,7 +940,17 @@ const chooseBridgeSummaryCandidate = (input: {
     return fitAwareCandidate;
   }
 
-  return topCandidate;
+  if (
+    canBridgeSummaryCoexistWithRetainedBaseFloor({
+      candidateTokenCount: topCandidate.tokenCount,
+      retainedBaseFloorTokenCount: input.retainedBaseFloorTokenCount,
+      availableBudget: input.availableBudget,
+    })
+  ) {
+    return topCandidate;
+  }
+
+  return undefined;
 };
 
 const compareScoreDensity = (
@@ -1145,7 +1169,7 @@ export class MaterializeContextUseCase {
       tokenBudget: baseBudget,
       pinRules,
     });
-    const bridgeSelectionBudget = getBridgeSelectionBudget({
+    const { bridgeSelectionBudget, retainedBaseFloorTokenCount } = getBridgeSelectionBudget({
       retrievalReserve,
       selectedBaseItems: trimmedBase.selectedItems,
       pinRules,
@@ -1388,6 +1412,7 @@ export class MaterializeContextUseCase {
           availableBudget,
           bridgeSelectionBudget,
           pinnedBaseTokenCount,
+          retainedBaseFloorTokenCount,
         });
 
         for (const candidate of rankedCandidates) {
