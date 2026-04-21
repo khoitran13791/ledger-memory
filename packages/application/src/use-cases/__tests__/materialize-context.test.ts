@@ -1738,6 +1738,7 @@ describe('MaterializeContextUseCase', () => {
 
     expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([smallerViableSummary.id]);
     expect(output.summaryReferences.map((reference) => reference.id)).toEqual([smallerViableSummary.id]);
+    expect(output.modelMessages.some((message) => message.content === pinnedBase.content)).toBe(true);
     expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
