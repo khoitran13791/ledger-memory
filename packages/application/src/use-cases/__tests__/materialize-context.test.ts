@@ -1637,6 +1637,107 @@ describe('MaterializeContextUseCase', () => {
     );
   });
 
+  it('does not count pinned base context as bridge-fit slack', async () => {
+    const pinnedBase = createTestMessage({
+      id: createEventId('evt_bridge_pinned_slack'),
+      content: 'base-pinned-context',
+      tokenCount: 16,
+      sequence: 401,
+    });
+    const bridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_pinned_slack'),
+      content:
+        '[Summary] DATE: 8:10 am | ID:D1:16 | Andrew | Eagles have always mesmerized me because they are so strong and graceful.',
+      tokenCount: 24,
+    });
+
+    const state = createState({
+      contextItems: [createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(pinnedBase.id) })],
+      events: [pinnedBase],
+      summaries: [bridgeSummary],
+      summarySearchResults: {
+        'Which specific type of bird mesmerizes Andrew?': [bridgeSummary],
+        'which specific type bird mesmerizes andrew': [bridgeSummary],
+        'Which Andrew': [bridgeSummary],
+      },
+      contextTokenCount: 16,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 32,
+      overheadTokens: 0,
+      pinRules: [{ type: 'position', position: 0 }],
+      retrievalHints: [{ query: 'Which specific type of bird mesmerizes Andrew?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences).toEqual([]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([]);
+  });
+
+  it('does not choose a compact bridge when it would need more than the capped base slack', async () => {
+    const baseOne = createTestMessage({
+      id: createEventId('evt_bridge_slack_cap_1'),
+      content: 'base-slack-cap-1',
+      tokenCount: 16,
+      sequence: 501,
+    });
+    const baseTwo = createTestMessage({
+      id: createEventId('evt_bridge_slack_cap_2'),
+      content: 'base-slack-cap-2',
+      tokenCount: 16,
+      sequence: 502,
+    });
+    const baseThree = createTestMessage({
+      id: createEventId('evt_bridge_slack_cap_3'),
+      content: 'base-slack-cap-3',
+      tokenCount: 16,
+      sequence: 503,
+    });
+
+    const oversizedTopBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_slack_cap_top'),
+      content: '[Summary] Andrew talked about birds in detail, but this summary is much too large.',
+      tokenCount: 96,
+    });
+    const stillTooLargeCompactBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_slack_cap_compact'),
+      content:
+        '[Summary] DATE: 8:10 am | ID:D1:16 | Andrew | Eagles have always mesmerized me. DATE: 8:11 am | ID:D1:17 | Andrew | Birds of prey feel powerful and graceful to me.',
+      tokenCount: 52,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(baseOne.id) }),
+        createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(baseTwo.id) }),
+        createContextItem({ conversationId, position: 2, ref: createMessageContextItemRef(baseThree.id) }),
+      ],
+      events: [baseOne, baseTwo, baseThree],
+      summaries: [oversizedTopBridgeSummary, stillTooLargeCompactBridgeSummary],
+      summarySearchResults: {
+        'Which specific type of bird mesmerizes Andrew?': [oversizedTopBridgeSummary, stillTooLargeCompactBridgeSummary],
+        'which specific type bird mesmerizes andrew': [oversizedTopBridgeSummary, stillTooLargeCompactBridgeSummary],
+        'Which Andrew': [oversizedTopBridgeSummary, stillTooLargeCompactBridgeSummary],
+      },
+      contextTokenCount: 48,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 64,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'Which specific type of bird mesmerizes Andrew?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences).toEqual([]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([]);
+  });
+
   it('keeps a retrieved evidence window by dropping stale base messages under budget pressure', async () => {
     const staleBaseOne = createTestMessage({
       id: createEventId('evt_base_stale_1'),
