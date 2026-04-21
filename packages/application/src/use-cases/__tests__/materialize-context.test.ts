@@ -1147,7 +1147,7 @@ describe('MaterializeContextUseCase', () => {
           expect.objectContaining({
             summaryId: genericSummary.id,
             selected: false,
-            reason: 'limit_reached',
+            reason: 'over_budget',
           }),
         ]),
         messageDecisions: [
@@ -1677,7 +1677,138 @@ describe('MaterializeContextUseCase', () => {
     expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([]);
   });
 
-  it('does not choose a compact bridge when it would need more than the capped base slack', async () => {
+  it('selects the next viable bridge when the top fallback cannot coexist with pinned base', async () => {
+    const pinnedBase = createTestMessage({
+      id: createEventId('evt_bridge_pinned_fallback_base_1'),
+      content: 'pinned-base-context',
+      tokenCount: 16,
+      sequence: 601,
+    });
+    const newerBaseOne = createTestMessage({
+      id: createEventId('evt_bridge_pinned_fallback_base_2'),
+      content: 'newer-base-context-1',
+      tokenCount: 16,
+      sequence: 602,
+    });
+    const newerBaseTwo = createTestMessage({
+      id: createEventId('evt_bridge_pinned_fallback_base_3'),
+      content: 'newer-base-context-2',
+      tokenCount: 16,
+      sequence: 603,
+    });
+
+    const topFallbackSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_pinned_fallback_top'),
+      content:
+        '[Summary] Andrew described the specific type of bird that mesmerizes him in vivid detail, naming the eagle and why it feels powerful and graceful.',
+      tokenCount: 52,
+    });
+    const smallerViableSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_pinned_fallback_viable'),
+      content:
+        '[Summary] DATE: 8:10 am | ID:D1:16 | Andrew | Eagles have always mesmerized me because they feel strong and graceful.',
+      tokenCount: 48,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(pinnedBase.id) }),
+        createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(newerBaseOne.id) }),
+        createContextItem({ conversationId, position: 2, ref: createMessageContextItemRef(newerBaseTwo.id) }),
+      ],
+      events: [pinnedBase, newerBaseOne, newerBaseTwo],
+      summaries: [topFallbackSummary, smallerViableSummary],
+      summarySearchResults: {
+        'Which specific type of bird mesmerizes Andrew?': [topFallbackSummary, smallerViableSummary],
+        'which specific type bird mesmerizes andrew': [topFallbackSummary, smallerViableSummary],
+        'Which Andrew': [topFallbackSummary, smallerViableSummary],
+      },
+      contextTokenCount: 48,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 64,
+      overheadTokens: 0,
+      pinRules: [{ type: 'position', position: 0 }],
+      retrievalHints: [{ query: 'Which specific type of bird mesmerizes Andrew?', limit: 1 }],
+    });
+
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([smallerViableSummary.id]);
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([smallerViableSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summaryId: topFallbackSummary.id,
+          selected: false,
+          reason: 'over_budget',
+        }),
+        expect.objectContaining({
+          summaryId: smallerViableSummary.id,
+          selected: true,
+          reason: 'selected',
+        }),
+      ]),
+    );
+  });
+
+  it('keeps pinned base context in final output when a bridge summary is selected', async () => {
+    const pinnedBase = createTestMessage({
+      id: createEventId('evt_bridge_pinned_keep_base'),
+      content: 'pinned-base-context',
+      tokenCount: 16,
+      sequence: 701,
+    });
+    const newerUnpinnedBase = createTestMessage({
+      id: createEventId('evt_bridge_pinned_keep_unpinned'),
+      content: 'newer-unpinned-base-context',
+      tokenCount: 16,
+      sequence: 702,
+    });
+
+    const bridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_pinned_keep'),
+      content:
+        '[Summary] DATE: 8:10 am | ID:D1:16 | Andrew | Eagles have always mesmerized me because they are so strong and graceful.',
+      tokenCount: 24,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(pinnedBase.id) }),
+        createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(newerUnpinnedBase.id) }),
+      ],
+      events: [pinnedBase, newerUnpinnedBase],
+      summaries: [bridgeSummary],
+      summarySearchResults: {
+        'Which specific type of bird mesmerizes Andrew?': [bridgeSummary],
+        'which specific type bird mesmerizes andrew': [bridgeSummary],
+        'Which Andrew': [bridgeSummary],
+      },
+      contextTokenCount: 32,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 40,
+      overheadTokens: 0,
+      pinRules: [{ type: 'position', position: 0 }],
+      retrievalHints: [{ query: 'Which specific type of bird mesmerizes Andrew?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([bridgeSummary.id]);
+    expect(output.modelMessages.map((message) => message.content)).toEqual([
+      pinnedBase.content,
+      `[Summary ID: ${bridgeSummary.id}]\n${bridgeSummary.content}`,
+    ]);
+    expect(output.modelMessages.some((message) => message.content === newerUnpinnedBase.content)).toBe(false);
+  });
+
+  it('falls back to the top viable bridge when no summary fits the capped base slack', async () => {
     const baseOne = createTestMessage({
       id: createEventId('evt_bridge_slack_cap_1'),
       content: 'base-slack-cap-1',
@@ -1734,8 +1865,21 @@ describe('MaterializeContextUseCase', () => {
       retrievalHints: [{ query: 'Which specific type of bird mesmerizes Andrew?', limit: 1 }],
     });
 
-    expect(output.summaryReferences).toEqual([]);
-    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([]);
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([stillTooLargeCompactBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([stillTooLargeCompactBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summaryId: oversizedTopBridgeSummary.id,
+          selected: false,
+        }),
+        expect.objectContaining({
+          summaryId: stillTooLargeCompactBridgeSummary.id,
+          selected: true,
+          reason: 'selected',
+        }),
+      ]),
+    );
   });
 
   it('keeps a retrieved evidence window by dropping stale base messages under budget pressure', async () => {
