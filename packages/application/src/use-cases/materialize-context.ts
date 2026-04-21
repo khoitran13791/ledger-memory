@@ -1760,6 +1760,7 @@ export class MaterializeContextUseCase {
     }
 
     const kept = [...keptUnits].sort((left, right) => left.order - right.order);
+    const totalPackableUnitCount = rankedUnits.length + pinnedBaseUnits.length;
 
     for (const unit of rankedUnits) {
       if (keptUnits.includes(unit)) {
@@ -1780,7 +1781,7 @@ export class MaterializeContextUseCase {
       }
     }
 
-    if (kept.length < rankedUnits.length) {
+    if (kept.length < totalPackableUnitCount) {
       trimmedToFit = true;
     }
 

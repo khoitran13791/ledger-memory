@@ -1806,6 +1806,8 @@ describe('MaterializeContextUseCase', () => {
       `[Summary ID: ${bridgeSummary.id}]\n${bridgeSummary.content}`,
     ]);
     expect(output.modelMessages.some((message) => message.content === newerUnpinnedBase.content)).toBe(false);
+    expect(output.trimmedToFit).toBe(true);
+    expect(output.droppedMessageCount).toBe(1);
   });
 
   it('does not choose a compact bridge when it would need more than the capped base slack', async () => {
