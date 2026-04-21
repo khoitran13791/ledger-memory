@@ -1637,6 +1637,81 @@ describe('MaterializeContextUseCase', () => {
     );
   });
 
+  it('falls back to the top viable unpinned bridge when no summary fits the soft bridge budget', async () => {
+    const baseOne = createTestMessage({
+      id: createEventId('evt_bridge_unpinned_fallback_base_1'),
+      content: 'base-unpinned-context-1',
+      tokenCount: 16,
+      sequence: 801,
+    });
+    const baseTwo = createTestMessage({
+      id: createEventId('evt_bridge_unpinned_fallback_base_2'),
+      content: 'base-unpinned-context-2',
+      tokenCount: 16,
+      sequence: 802,
+    });
+    const baseThree = createTestMessage({
+      id: createEventId('evt_bridge_unpinned_fallback_base_3'),
+      content: 'base-unpinned-context-3',
+      tokenCount: 16,
+      sequence: 803,
+    });
+
+    const strongBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_unpinned_fallback_top'),
+      content:
+        "[Summary] DATE: 3:47 pm | ID:D1:8 | James | I've worked with Python and C++. I've built a website and some game mods.",
+      tokenCount: 64,
+    });
+    const weakCompactSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_unpinned_fallback_compact'),
+      content: '[Summary] James enjoys programming projects with John.',
+      tokenCount: 24,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(baseOne.id) }),
+        createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(baseTwo.id) }),
+        createContextItem({ conversationId, position: 2, ref: createMessageContextItemRef(baseThree.id) }),
+      ],
+      events: [baseOne, baseTwo, baseThree],
+      summaries: [strongBridgeSummary, weakCompactSummary],
+      summarySearchResults: {
+        'What programming languages has James worked with?': [strongBridgeSummary],
+        'what programming languages has james worked with': [strongBridgeSummary],
+        'What James': [strongBridgeSummary, weakCompactSummary],
+      },
+      contextTokenCount: 48,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 80,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'What programming languages has James worked with?', limit: 1 }],
+    });
+
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([strongBridgeSummary.id]);
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([strongBridgeSummary.id]);
+    expect(output.modelMessages.some((message) => message.content.includes('Python and C++'))).toBe(true);
+    expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summaryId: strongBridgeSummary.id,
+          selected: true,
+          reason: 'selected',
+        }),
+        expect.objectContaining({
+          summaryId: weakCompactSummary.id,
+          selected: false,
+        }),
+      ]),
+    );
+  });
+
   it('does not count pinned base context as bridge-fit slack', async () => {
     const pinnedBase = createTestMessage({
       id: createEventId('evt_bridge_pinned_slack'),
