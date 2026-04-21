@@ -923,7 +923,12 @@ const chooseBridgeSummaryCandidate = (input: {
     return fitAwareCandidates[0];
   }
 
-  return topCandidate;
+  // Only apply the beyond-slack fallback when we have pinned base context that must be preserved.
+  if (input.pinnedBaseTokenCount > 0) {
+    return topCandidate;
+  }
+
+  return undefined;
 };
 
 const compareScoreDensity = (
