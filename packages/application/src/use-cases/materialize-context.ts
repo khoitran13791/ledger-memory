@@ -850,18 +850,47 @@ const compareBridgeBaseSlackCandidates = (
   return 0;
 };
 
+const compareBridgeBaseReclaimCandidates = (
+  left: BridgeBaseSlackCandidate,
+  right: BridgeBaseSlackCandidate,
+): number => {
+  if (left.kind !== right.kind) {
+    return left.kind === 'summary' ? -1 : 1;
+  }
+
+  if (left.recencyScore !== right.recencyScore) {
+    return left.recencyScore - right.recencyScore;
+  }
+
+  if (left.tokenCount !== right.tokenCount) {
+    return left.tokenCount - right.tokenCount;
+  }
+
+  return 0;
+};
+
+const getDroppableBridgeBaseCandidates = (input: {
+  readonly selectedBaseItems: readonly ResolvedContextItem[];
+  readonly pinRules: readonly PinRule[];
+}): readonly BridgeBaseSlackCandidate[] =>
+  input.selectedBaseItems
+    .filter((item) => !isItemPinned(item.contextItem, input.pinRules))
+    .map((item) => ({
+      kind: item.kind,
+      tokenCount: item.tokenCount,
+      recencyScore: item.recencyScore,
+    }))
+    .sort(compareBridgeBaseReclaimCandidates);
+
 const getBridgeSelectionBudget = (input: {
   readonly retrievalReserve: number;
   readonly selectedBaseItems: readonly ResolvedContextItem[];
   readonly pinRules: readonly PinRule[];
 }): {
   readonly bridgeSelectionBudget: number;
-  readonly retainedBaseFloorTokenCount: number;
 } => {
   let extraSlack = 0;
   let usedUnits = 0;
-  const selectedBaseTokenCount = input.selectedBaseItems.reduce((total, item) => total + item.tokenCount, 0);
-
   const candidates = input.selectedBaseItems
     .filter((item) => !isItemPinned(item.contextItem, input.pinRules))
     .map((item) => ({
@@ -886,7 +915,6 @@ const getBridgeSelectionBudget = (input: {
 
   return {
     bridgeSelectionBudget: input.retrievalReserve + extraSlack,
-    retainedBaseFloorTokenCount: Math.max(0, selectedBaseTokenCount - extraSlack),
   };
 };
 
@@ -896,11 +924,29 @@ const canBridgeSummaryCoexistWithPinnedBase = (input: {
   readonly availableBudget: number;
 }): boolean => input.candidateTokenCount + input.pinnedBaseTokenCount <= input.availableBudget;
 
-const canBridgeSummaryCoexistWithRetainedBaseFloor = (input: {
+const canBridgeSummaryCoexistWithReclaimedBasePrefix = (input: {
   readonly candidateTokenCount: number;
-  readonly retainedBaseFloorTokenCount: number;
+  readonly selectedBaseItems: readonly ResolvedContextItem[];
+  readonly pinRules: readonly PinRule[];
   readonly availableBudget: number;
-}): boolean => input.candidateTokenCount + input.retainedBaseFloorTokenCount <= input.availableBudget;
+}): boolean => {
+  let retainedBaseTokenCount = input.selectedBaseItems.reduce((total, item) => total + item.tokenCount, 0);
+  if (input.candidateTokenCount + retainedBaseTokenCount <= input.availableBudget) {
+    return true;
+  }
+
+  for (const candidate of getDroppableBridgeBaseCandidates({
+    selectedBaseItems: input.selectedBaseItems,
+    pinRules: input.pinRules,
+  })) {
+    retainedBaseTokenCount -= candidate.tokenCount;
+    if (input.candidateTokenCount + retainedBaseTokenCount <= input.availableBudget) {
+      return true;
+    }
+  }
+
+  return false;
+};
 
 const chooseBridgeSummaryCandidate = (input: {
   readonly rankedSummaryCandidates: readonly RankedSummaryRetrievalCandidate[];
@@ -908,7 +954,8 @@ const chooseBridgeSummaryCandidate = (input: {
   readonly availableBudget: number;
   readonly bridgeSelectionBudget: number;
   readonly pinnedBaseTokenCount: number;
-  readonly retainedBaseFloorTokenCount: number;
+  readonly selectedBaseItems: readonly ResolvedContextItem[];
+  readonly pinRules: readonly PinRule[];
 }): RankedSummaryRetrievalCandidate | undefined => {
   const viableCandidates = input.rankedSummaryCandidates.filter(
     (candidate) =>
@@ -941,9 +988,10 @@ const chooseBridgeSummaryCandidate = (input: {
   }
 
   if (
-    canBridgeSummaryCoexistWithRetainedBaseFloor({
+    canBridgeSummaryCoexistWithReclaimedBasePrefix({
       candidateTokenCount: topCandidate.tokenCount,
-      retainedBaseFloorTokenCount: input.retainedBaseFloorTokenCount,
+      selectedBaseItems: input.selectedBaseItems,
+      pinRules: input.pinRules,
       availableBudget: input.availableBudget,
     })
   ) {
@@ -1169,7 +1217,7 @@ export class MaterializeContextUseCase {
       tokenBudget: baseBudget,
       pinRules,
     });
-    const { bridgeSelectionBudget, retainedBaseFloorTokenCount } = getBridgeSelectionBudget({
+    const { bridgeSelectionBudget } = getBridgeSelectionBudget({
       retrievalReserve,
       selectedBaseItems: trimmedBase.selectedItems,
       pinRules,
@@ -1412,7 +1460,8 @@ export class MaterializeContextUseCase {
           availableBudget,
           bridgeSelectionBudget,
           pinnedBaseTokenCount,
-          retainedBaseFloorTokenCount,
+          selectedBaseItems: trimmedBase.selectedItems,
+          pinRules,
         });
 
         for (const candidate of rankedCandidates) {

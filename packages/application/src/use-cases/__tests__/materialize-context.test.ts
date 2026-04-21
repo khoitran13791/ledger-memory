@@ -1886,36 +1886,37 @@ describe('MaterializeContextUseCase', () => {
     expect(output.droppedMessageCount).toBe(1);
   });
 
-  it('does not choose a compact bridge when it would need more than the capped base slack', async () => {
+  it('selects the top bridge when reclaiming a longer unpinned base prefix makes it fit', async () => {
     const baseOne = createTestMessage({
-      id: createEventId('evt_bridge_slack_cap_1'),
-      content: 'base-slack-cap-1',
-      tokenCount: 16,
-      sequence: 501,
+      id: createEventId('evt_bridge_long_reclaim_1'),
+      content: 'older-base-context-1',
+      tokenCount: 20,
+      sequence: 901,
     });
     const baseTwo = createTestMessage({
-      id: createEventId('evt_bridge_slack_cap_2'),
-      content: 'base-slack-cap-2',
-      tokenCount: 16,
-      sequence: 502,
+      id: createEventId('evt_bridge_long_reclaim_2'),
+      content: 'older-base-context-2',
+      tokenCount: 20,
+      sequence: 902,
     });
     const baseThree = createTestMessage({
-      id: createEventId('evt_bridge_slack_cap_3'),
-      content: 'base-slack-cap-3',
-      tokenCount: 16,
-      sequence: 503,
+      id: createEventId('evt_bridge_long_reclaim_3'),
+      content: 'older-base-context-3',
+      tokenCount: 20,
+      sequence: 903,
+    });
+    const baseFour = createTestMessage({
+      id: createEventId('evt_bridge_long_reclaim_4'),
+      content: 'newest-base-context',
+      tokenCount: 20,
+      sequence: 904,
     });
 
-    const oversizedTopBridgeSummary = createTestSummary({
-      id: createSummaryNodeId('sum_bridge_slack_cap_top'),
-      content: '[Summary] Andrew talked about birds in detail, but this summary is much too large.',
-      tokenCount: 96,
-    });
-    const stillTooLargeCompactBridgeSummary = createTestSummary({
-      id: createSummaryNodeId('sum_bridge_slack_cap_compact'),
+    const topBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_long_reclaim_top'),
       content:
-        '[Summary] DATE: 8:10 am | ID:D1:16 | Andrew | Eagles have always mesmerized me. DATE: 8:11 am | ID:D1:17 | Andrew | Birds of prey feel powerful and graceful to me.',
-      tokenCount: 52,
+        "[Summary] DATE: 3:47 pm | ID:D1:8 | James | I've worked with Python and C++. I've built a website and some game mods.",
+      tokenCount: 72,
     });
 
     const state = createState({
@@ -1923,28 +1924,46 @@ describe('MaterializeContextUseCase', () => {
         createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(baseOne.id) }),
         createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(baseTwo.id) }),
         createContextItem({ conversationId, position: 2, ref: createMessageContextItemRef(baseThree.id) }),
+        createContextItem({ conversationId, position: 3, ref: createMessageContextItemRef(baseFour.id) }),
       ],
-      events: [baseOne, baseTwo, baseThree],
-      summaries: [oversizedTopBridgeSummary, stillTooLargeCompactBridgeSummary],
+      events: [baseOne, baseTwo, baseThree, baseFour],
+      summaries: [topBridgeSummary],
       summarySearchResults: {
-        'Which specific type of bird mesmerizes Andrew?': [oversizedTopBridgeSummary, stillTooLargeCompactBridgeSummary],
-        'which specific type bird mesmerizes andrew': [oversizedTopBridgeSummary, stillTooLargeCompactBridgeSummary],
-        'Which Andrew': [oversizedTopBridgeSummary, stillTooLargeCompactBridgeSummary],
+        'What programming languages has James worked with?': [topBridgeSummary],
+        'what programming languages has james worked with': [topBridgeSummary],
+        'What James': [topBridgeSummary],
       },
-      contextTokenCount: 48,
+      contextTokenCount: 80,
     });
 
     const { useCase } = createUseCase({ state });
 
     const output = await useCase.execute({
       conversationId,
-      budgetTokens: 64,
+      budgetTokens: 100,
       overheadTokens: 0,
-      retrievalHints: [{ query: 'Which specific type of bird mesmerizes Andrew?', limit: 1 }],
+      retrievalHints: [{ query: 'What programming languages has James worked with?', limit: 1 }],
     });
 
-    expect(output.summaryReferences).toEqual([]);
-    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([topBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([]);
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([topBridgeSummary.id]);
+    expect(output.modelMessages.map((message) => message.content)).toEqual([
+      baseFour.content,
+      `[Summary ID: ${topBridgeSummary.id}]\n${topBridgeSummary.content}`,
+    ]);
+    expect(output.modelMessages.some((message) => message.content.includes('Python and C++'))).toBe(true);
+    expect(output.droppedMessageCount).toBe(3);
+    expect(output.trimmedToFit).toBe(true);
+    expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summaryId: topBridgeSummary.id,
+          selected: true,
+          reason: 'selected',
+        }),
+      ]),
+    );
   });
 
   it('keeps a retrieved evidence window by dropping stale base messages under budget pressure', async () => {
