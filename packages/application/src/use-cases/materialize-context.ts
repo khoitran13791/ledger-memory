@@ -131,12 +131,14 @@ type PackableUnit =
       readonly kind: 'base_message';
       readonly tokenCount: number;
       readonly order: number;
+      readonly pinned: boolean;
       readonly modelMessages: readonly ModelMessage[];
     }
   | {
       readonly kind: 'base_summary';
       readonly tokenCount: number;
       readonly order: number;
+      readonly pinned: boolean;
       readonly modelMessages: readonly ModelMessage[];
       readonly summaryReferences: readonly SummaryReference[];
     }
@@ -174,6 +176,7 @@ type PackableUnit =
 type RetrievalBridgeSummaryUnit = Extract<PackableUnit, { kind: 'retrieval_bridge_summary' }>;
 type RetrievalRawBundleUnit = Extract<PackableUnit, { kind: 'retrieval_raw_bundle' }>;
 type RankedSummaryRetrievalCandidate = Extract<RankedRetrievalCandidate, { kind: 'summary' }>;
+type BasePackableUnit = Extract<PackableUnit, { kind: 'base_message' | 'base_summary' }>;
 
 const assertValidBudgetInput = (input: MaterializeContextInput): void => {
   if (!Number.isSafeInteger(input.budgetTokens) || input.budgetTokens <= 0) {
@@ -891,6 +894,7 @@ const chooseBridgeSummaryCandidate = (input: {
   readonly selectedSummaryIdStrings: ReadonlySet<string>;
   readonly availableBudget: number;
   readonly bridgeSelectionBudget: number;
+  readonly hasPinnedBaseItems: boolean;
   readonly pinnedBaseTokenCount: number;
 }): RankedSummaryRetrievalCandidate | undefined => {
   const viableCandidates = input.rankedSummaryCandidates.filter(
@@ -924,7 +928,7 @@ const chooseBridgeSummaryCandidate = (input: {
   }
 
   // Only apply the beyond-slack fallback when we have pinned base context that must be preserved.
-  if (input.pinnedBaseTokenCount > 0) {
+  if (input.hasPinnedBaseItems) {
     return topCandidate;
   }
 
@@ -1152,9 +1156,9 @@ export class MaterializeContextUseCase {
       selectedBaseItems: trimmedBase.selectedItems,
       pinRules,
     });
-    const pinnedBaseTokenCount = trimmedBase.selectedItems
-      .filter((item) => isItemPinned(item.contextItem, pinRules))
-      .reduce((total, item) => total + item.tokenCount, 0);
+    const pinnedBaseItems = trimmedBase.selectedItems.filter((item) => isItemPinned(item.contextItem, pinRules));
+    const hasPinnedBaseItems = pinnedBaseItems.length > 0;
+    const pinnedBaseTokenCount = pinnedBaseItems.reduce((total, item) => total + item.tokenCount, 0);
 
     let budgetUsedValue = trimmedBase.budgetUsed;
     let trimmedToFit = trimmedBase.trimmedToFit;
@@ -1390,6 +1394,7 @@ export class MaterializeContextUseCase {
           selectedSummaryIdStrings,
           availableBudget,
           bridgeSelectionBudget,
+          hasPinnedBaseItems,
           pinnedBaseTokenCount,
         });
 
@@ -1611,12 +1616,15 @@ export class MaterializeContextUseCase {
     }
 
     let order = 0;
-    const baseUnits: PackableUnit[] = trimmedBase.selectedItems.map((item) =>
-      item.kind === 'summary'
+    const baseUnits: BasePackableUnit[] = trimmedBase.selectedItems.map((item) => {
+      const pinned = isItemPinned(item.contextItem, pinRules);
+
+      return item.kind === 'summary'
         ? {
             kind: 'base_summary',
             tokenCount: item.tokenCount,
             order: order++,
+            pinned,
             modelMessages: [item.modelMessage],
             summaryReferences: [item.summaryReference],
           }
@@ -1624,9 +1632,10 @@ export class MaterializeContextUseCase {
             kind: 'base_message',
             tokenCount: item.tokenCount,
             order: order++,
+            pinned,
             modelMessages: [item.modelMessage],
-          },
-    );
+          };
+    });
     const retrievalUnits: Array<Extract<PackableUnit, { kind: 'retrieval_bridge_summary' | 'retrieval_raw_bundle' }>> =
       [...coalesceRawRetrievalContenders(pendingRetrievalContenders)]
         .sort((left, right) => left.selectionOrder - right.selectionOrder)
@@ -1667,19 +1676,33 @@ export class MaterializeContextUseCase {
               },
         );
 
+    const pinnedBaseUnits = [...baseUnits]
+      .filter((unit) => unit.pinned)
+      .sort((left, right) => left.order - right.order);
+
     const rankedUnits: PackableUnit[] = [
       ...[...retrievalUnits].sort(compareRetrievalUnits),
       ...[...baseUnits]
         .filter((unit): unit is Extract<PackableUnit, { kind: 'base_message' }> => unit.kind === 'base_message')
+        .filter((unit) => !unit.pinned)
         .sort((left, right) => right.order - left.order),
       ...[...baseUnits]
         .filter((unit): unit is Extract<PackableUnit, { kind: 'base_summary' }> => unit.kind === 'base_summary')
+        .filter((unit) => !unit.pinned)
         .sort((left, right) => right.order - left.order),
     ];
 
-    const keptUnits: PackableUnit[] = [];
+    const keptUnits: PackableUnit[] = [...pinnedBaseUnits];
     const keptHintCounts = new Map<number, number>();
-    let used = 0;
+    let used = pinnedBaseUnits.reduce((total, unit) => total + unit.tokenCount, 0);
+
+    if (used > availableBudget) {
+      throw new MaterializeContextBudgetExceededError(
+        availableBudget,
+        used,
+        'Pinned context items exceed available budget during final packing.',
+      );
+    }
 
     for (const unit of rankedUnits) {
       if (unit.kind === 'retrieval_bridge_summary' || unit.kind === 'retrieval_raw_bundle') {
