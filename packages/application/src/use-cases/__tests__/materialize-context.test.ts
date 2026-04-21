@@ -1413,13 +1413,6 @@ describe('MaterializeContextUseCase', () => {
     );
   });
 
-
-
-
-
-
-
-
   it('selects a bridge summary that fits after borrowing one base message worth of slack', async () => {
     const baseOne = createTestMessage({
       id: createEventId('evt_bridge_base_slack_1'),
@@ -1559,6 +1552,19 @@ describe('MaterializeContextUseCase', () => {
 
     expect(output.summaryReferences.map((reference) => reference.id)).toEqual([twoUnitBridgeSummary.id]);
     expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([twoUnitBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summaryId: oversizedTopBridgeSummary.id,
+          selected: false,
+        }),
+        expect.objectContaining({
+          summaryId: twoUnitBridgeSummary.id,
+          selected: true,
+          reason: 'selected',
+        }),
+      ]),
+    );
     expect(output.modelMessages.some((message) => message.content.includes('Eagles have always mesmerized me'))).toBe(
       true,
     );
@@ -1616,8 +1622,20 @@ describe('MaterializeContextUseCase', () => {
 
     expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([topBridgeSummary.id]);
     expect(output.summaryReferences.map((reference) => reference.id)).toEqual([topBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summaryId: topBridgeSummary.id,
+          selected: true,
+          reason: 'selected',
+        }),
+        expect.objectContaining({
+          summaryId: smallerBridgeSummary.id,
+          selected: false,
+        }),
+      ]),
+    );
   });
-
 
   it('keeps a retrieved evidence window by dropping stale base messages under budget pressure', async () => {
     const staleBaseOne = createTestMessage({
