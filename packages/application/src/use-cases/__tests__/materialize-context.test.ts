@@ -1147,7 +1147,7 @@ describe('MaterializeContextUseCase', () => {
           expect.objectContaining({
             summaryId: genericSummary.id,
             selected: false,
-            reason: 'over_budget',
+            reason: 'limit_reached',
           }),
         ]),
         messageDecisions: [
@@ -1808,7 +1808,7 @@ describe('MaterializeContextUseCase', () => {
     expect(output.modelMessages.some((message) => message.content === newerUnpinnedBase.content)).toBe(false);
   });
 
-  it('falls back to the top viable bridge when no summary fits the capped base slack', async () => {
+  it('does not choose a compact bridge when it would need more than the capped base slack', async () => {
     const baseOne = createTestMessage({
       id: createEventId('evt_bridge_slack_cap_1'),
       content: 'base-slack-cap-1',
@@ -1865,18 +1865,19 @@ describe('MaterializeContextUseCase', () => {
       retrievalHints: [{ query: 'Which specific type of bird mesmerizes Andrew?', limit: 1 }],
     });
 
-    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([stillTooLargeCompactBridgeSummary.id]);
-    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([stillTooLargeCompactBridgeSummary.id]);
+    expect(output.summaryReferences).toEqual([]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([]);
     expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           summaryId: oversizedTopBridgeSummary.id,
           selected: false,
+          reason: 'over_budget',
         }),
         expect.objectContaining({
           summaryId: stillTooLargeCompactBridgeSummary.id,
-          selected: true,
-          reason: 'selected',
+          selected: false,
+          reason: 'over_budget',
         }),
       ]),
     );
