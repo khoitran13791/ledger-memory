@@ -894,7 +894,6 @@ const chooseBridgeSummaryCandidate = (input: {
   readonly selectedSummaryIdStrings: ReadonlySet<string>;
   readonly availableBudget: number;
   readonly bridgeSelectionBudget: number;
-  readonly hasPinnedBaseItems: boolean;
   readonly pinnedBaseTokenCount: number;
 }): RankedSummaryRetrievalCandidate | undefined => {
   const viableCandidates = input.rankedSummaryCandidates.filter(
@@ -916,23 +915,18 @@ const chooseBridgeSummaryCandidate = (input: {
     return topCandidate;
   }
 
-  const fitAwareCandidates = viableCandidates
+  const fitAwareCandidate = viableCandidates
     .filter(
       (candidate) =>
         candidate.tokenCount <= input.bridgeSelectionBudget && candidate.score >= topCandidate.score - 10,
     )
-    .sort(compareFitAwareSummaryCandidates);
+    .sort(compareFitAwareSummaryCandidates)[0];
 
-  if (fitAwareCandidates[0] !== undefined) {
-    return fitAwareCandidates[0];
+  if (fitAwareCandidate !== undefined) {
+    return fitAwareCandidate;
   }
 
-  // Only apply the beyond-slack fallback when we have pinned base context that must be preserved.
-  if (input.hasPinnedBaseItems) {
-    return topCandidate;
-  }
-
-  return undefined;
+  return topCandidate;
 };
 
 const compareScoreDensity = (
@@ -1157,7 +1151,6 @@ export class MaterializeContextUseCase {
       pinRules,
     });
     const pinnedBaseItems = trimmedBase.selectedItems.filter((item) => isItemPinned(item.contextItem, pinRules));
-    const hasPinnedBaseItems = pinnedBaseItems.length > 0;
     const pinnedBaseTokenCount = pinnedBaseItems.reduce((total, item) => total + item.tokenCount, 0);
 
     let budgetUsedValue = trimmedBase.budgetUsed;
@@ -1394,7 +1387,6 @@ export class MaterializeContextUseCase {
           selectedSummaryIdStrings,
           availableBudget,
           bridgeSelectionBudget,
-          hasPinnedBaseItems,
           pinnedBaseTokenCount,
         });
 
