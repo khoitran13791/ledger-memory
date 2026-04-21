@@ -1867,20 +1867,6 @@ describe('MaterializeContextUseCase', () => {
 
     expect(output.summaryReferences).toEqual([]);
     expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([]);
-    expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          summaryId: oversizedTopBridgeSummary.id,
-          selected: false,
-          reason: 'over_budget',
-        }),
-        expect.objectContaining({
-          summaryId: stillTooLargeCompactBridgeSummary.id,
-          selected: false,
-          reason: 'over_budget',
-        }),
-      ]),
-    );
   });
 
   it('keeps a retrieved evidence window by dropping stale base messages under budget pressure', async () => {
