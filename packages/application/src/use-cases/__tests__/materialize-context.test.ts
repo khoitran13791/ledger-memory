@@ -1147,7 +1147,7 @@ describe('MaterializeContextUseCase', () => {
           expect.objectContaining({
             summaryId: genericSummary.id,
             selected: false,
-            reason: 'limit_reached',
+            reason: 'over_budget',
           }),
         ]),
         messageDecisions: [
@@ -1410,6 +1410,863 @@ describe('MaterializeContextUseCase', () => {
           reason: 'limit_reached',
         }),
       ]),
+    );
+  });
+
+  it('keeps a bridge summary contender even when provisional slack is exhausted', async () => {
+    const baseOne = createTestMessage({
+      id: createEventId('evt_bridge_base_1'),
+      content: 'base-context-1',
+      tokenCount: 16,
+      sequence: 101,
+    });
+    const baseTwo = createTestMessage({
+      id: createEventId('evt_bridge_base_2'),
+      content: 'base-context-2',
+      tokenCount: 16,
+      sequence: 102,
+    });
+    const baseThree = createTestMessage({
+      id: createEventId('evt_bridge_base_3'),
+      content: 'base-context-3',
+      tokenCount: 16,
+      sequence: 103,
+    });
+    const baseFour = createTestMessage({
+      id: createEventId('evt_bridge_base_4'),
+      content: 'base-context-4',
+      tokenCount: 16,
+      sequence: 104,
+    });
+
+    const bridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_bird_answer'),
+      content:
+        '[Summary] Andrew loves animals, especially birds, and says eagles have always mesmerized him.',
+      tokenCount: 24,
+    });
+
+    const rawPrevious = createTestMessage({
+      id: createEventId('evt_bridge_raw_prev'),
+      content: 'DATE: 9:02 am | ID: D28:5 | Audrey: How are your dogs doing now?',
+      tokenCount: 8,
+      sequence: 201,
+    });
+    const rawSeed = createTestMessage({
+      id: createEventId('evt_bridge_raw_seed'),
+      content: 'DATE: 9:02 am | ID: D28:6 | Andrew: We adopted another dog recently.',
+      tokenCount: 8,
+      sequence: 202,
+    });
+    const rawNext = createTestMessage({
+      id: createEventId('evt_bridge_raw_next'),
+      content: 'DATE: 9:02 am | ID: D28:7 | Andrew: Dogs bring us so much joy.',
+      tokenCount: 8,
+      sequence: 203,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({
+          conversationId,
+          position: 0,
+          ref: createMessageContextItemRef(baseOne.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 1,
+          ref: createMessageContextItemRef(baseTwo.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 2,
+          ref: createMessageContextItemRef(baseThree.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 3,
+          ref: createMessageContextItemRef(baseFour.id),
+        }),
+      ],
+      events: [baseOne, baseTwo, baseThree, baseFour, rawPrevious, rawSeed, rawNext],
+      summaries: [bridgeSummary],
+      summarySearchResults: {
+        'Which specific type of bird mesmerizes Andrew?': [bridgeSummary],
+        'which specific type bird mesmerizes andrew': [bridgeSummary],
+        'Which Andrew': [bridgeSummary],
+      },
+      eventSearchResults: {
+        'Which specific type of bird mesmerizes Andrew?': [rawSeed],
+        'which specific type bird mesmerizes andrew': [rawSeed],
+        'Which Andrew': [rawSeed],
+      },
+      contextTokenCount: 64,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 80,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'Which specific type of bird mesmerizes Andrew?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([bridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([bridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([]);
+    expect(
+      output.modelMessages.some((message) => message.content.includes('eagles have always mesmerized him')),
+    ).toBe(true);
+  });
+
+  it('keeps exact raw evidence over a weaker bridge summary after unit packing', async () => {
+    const baseOne = createTestMessage({
+      id: createEventId('evt_bridge_guardrail_base_1'),
+      content: 'base-context-a',
+      tokenCount: 16,
+      sequence: 301,
+    });
+    const baseTwo = createTestMessage({
+      id: createEventId('evt_bridge_guardrail_base_2'),
+      content: 'base-context-b',
+      tokenCount: 16,
+      sequence: 302,
+    });
+    const baseThree = createTestMessage({
+      id: createEventId('evt_bridge_guardrail_base_3'),
+      content: 'base-context-c',
+      tokenCount: 16,
+      sequence: 303,
+    });
+    const baseFour = createTestMessage({
+      id: createEventId('evt_bridge_guardrail_base_4'),
+      content: 'base-context-d',
+      tokenCount: 16,
+      sequence: 304,
+    });
+
+    const bridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_programming_generic'),
+      content: '[Summary] James and John discussed programming projects together.',
+      tokenCount: 24,
+    });
+
+    const rawPrevious = createTestMessage({
+      id: createEventId('evt_bridge_guardrail_prev'),
+      content: 'DATE: 3:47 pm | ID: D1:7 | John: What else have you built?',
+      tokenCount: 8,
+      sequence: 401,
+    });
+    const rawSeed = createTestMessage({
+      id: createEventId('evt_bridge_guardrail_seed'),
+      content:
+        "DATE: 3:47 pm | ID: D1:8 | James: I've worked with Python and C++. I've built a website and some game mods.",
+      tokenCount: 12,
+      sequence: 402,
+    });
+    const rawNext = createTestMessage({
+      id: createEventId('evt_bridge_guardrail_next'),
+      content: 'DATE: 3:47 pm | ID: D1:9 | John: That sounds awesome.',
+      tokenCount: 8,
+      sequence: 403,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({
+          conversationId,
+          position: 0,
+          ref: createMessageContextItemRef(baseOne.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 1,
+          ref: createMessageContextItemRef(baseTwo.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 2,
+          ref: createMessageContextItemRef(baseThree.id),
+        }),
+        createContextItem({
+          conversationId,
+          position: 3,
+          ref: createMessageContextItemRef(baseFour.id),
+        }),
+      ],
+      events: [baseOne, baseTwo, baseThree, baseFour, rawPrevious, rawSeed, rawNext],
+      summaries: [bridgeSummary],
+      summarySearchResults: {
+        'What programming languages has James worked with?': [bridgeSummary],
+        'what programming languages has james worked with': [bridgeSummary],
+        'What James': [bridgeSummary],
+      },
+      eventSearchResults: {
+        'What programming languages has James worked with?': [rawSeed],
+        'what programming languages has james worked with': [rawSeed],
+        'What James': [rawSeed],
+      },
+      contextTokenCount: 64,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 80,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'What programming languages has James worked with?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences).toEqual([]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([rawPrevious.id, rawSeed.id, rawNext.id]);
+    expect(output.modelMessages.some((message) => message.content.includes('Python and C++'))).toBe(true);
+  });
+
+  it('coalesces touching raw bundles so an answer-bearing bridge summary survives hint packing', async () => {
+    const bridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_programming_coalesced_survival'),
+      content:
+        '[Summary]\n' +
+        '[assistant] | 3:47 pm on 17 March, 2022 | James | [Summary]\n' +
+        '[user] | 3:47 pm on 17 March, 2022 | John | DATE: 3:47 pm on 17 March, 2022 | ID: D1:7 | John: What languages do you like most and what have you built?\n' +
+        "[assistant] | 3:47 pm on 17 March, 2022 | James | DATE: 3:47 pm on 17 March, 2022 | ID: D1:8 | James: I've worked with Python and C++. I've built a website and also created some game mods.\n" +
+        '[user] | 3:47 pm on 17 March, 2022 | John | DATE: 3:47 pm on 17 March, 2022 | ID: D1:9 | John: That mod looks amazing.',
+      tokenCount: 20,
+    });
+
+    const rawClusterOnePrev = createTestMessage({
+      id: createEventId('evt_bridge_cluster_one_prev'),
+      content: 'DATE: 10:00 am | ID: D20:3 | John: Programming classmates chatted about side projects.',
+      tokenCount: 4,
+      sequence: 401,
+    });
+    const rawClusterOneSeed = createTestMessage({
+      id: createEventId('evt_bridge_cluster_one_seed'),
+      content:
+        'DATE: 10:00 am | ID: D20:4 | James: I worked with gaming friends on a collaborative programming project.',
+      tokenCount: 4,
+      sequence: 402,
+    });
+    const rawClusterShared = createTestMessage({
+      id: createEventId('evt_bridge_cluster_shared'),
+      content: 'DATE: 10:00 am | ID: D20:5 | John: Collaborative programming projects are fun.',
+      tokenCount: 4,
+      sequence: 403,
+    });
+    const rawClusterTwoSeed = createTestMessage({
+      id: createEventId('evt_bridge_cluster_two_seed'),
+      content: 'DATE: 10:00 am | ID: D20:6 | James: Another programming meetup helped me work through ideas.',
+      tokenCount: 4,
+      sequence: 404,
+    });
+    const rawClusterTwoNext = createTestMessage({
+      id: createEventId('evt_bridge_cluster_two_next'),
+      content: 'DATE: 10:00 am | ID: D20:7 | John: Sharing project ideas sounds helpful.',
+      tokenCount: 4,
+      sequence: 405,
+    });
+    const rawOtherPrev = createTestMessage({
+      id: createEventId('evt_bridge_other_prev'),
+      content: 'DATE: 2:10 pm | ID: D28:10 | John: What does your programming group focus on?',
+      tokenCount: 3,
+      sequence: 501,
+    });
+    const rawOtherSeed = createTestMessage({
+      id: createEventId('evt_bridge_other_seed'),
+      content: 'DATE: 2:10 pm | ID: D28:11 | James: The group shares programming workflows and project updates.',
+      tokenCount: 4,
+      sequence: 502,
+    });
+    const rawOtherNext = createTestMessage({
+      id: createEventId('evt_bridge_other_next'),
+      content: 'DATE: 2:10 pm | ID: D28:12 | John: That sounds like a supportive group.',
+      tokenCount: 3,
+      sequence: 503,
+    });
+
+    const state = createState({
+      events: [
+        rawClusterOnePrev,
+        rawClusterOneSeed,
+        rawClusterShared,
+        rawClusterTwoSeed,
+        rawClusterTwoNext,
+        rawOtherPrev,
+        rawOtherSeed,
+        rawOtherNext,
+      ],
+      summaries: [bridgeSummary],
+      summarySearchResults: {
+        'What programming languages has James worked with?': [bridgeSummary],
+        'what programming languages has james worked with': [bridgeSummary],
+        'What James': [bridgeSummary],
+      },
+      eventSearchResults: {
+        'What programming languages has James worked with?': [
+          rawClusterOneSeed,
+          rawClusterTwoSeed,
+          rawOtherSeed,
+        ],
+        'what programming languages has james worked with': [
+          rawClusterOneSeed,
+          rawClusterTwoSeed,
+          rawOtherSeed,
+        ],
+        'What James': [rawClusterOneSeed, rawClusterTwoSeed, rawOtherSeed],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 60,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'What programming languages has James worked with?', limit: 3 }],
+    });
+
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([bridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([bridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([
+      rawClusterOnePrev.id,
+      rawClusterOneSeed.id,
+      rawClusterShared.id,
+      rawClusterTwoSeed.id,
+      rawClusterTwoNext.id,
+      rawOtherPrev.id,
+      rawOtherSeed.id,
+      rawOtherNext.id,
+    ]);
+    expect(output.modelMessages.some((message) => message.content.includes('Python and C++'))).toBe(true);
+  });
+
+  it('rescues a stronger bridge summary by swapping out the weakest same-hint raw region', async () => {
+    const bridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_programming_swap_rescue'),
+      content:
+        '[Summary]\n' +
+        '[assistant] | 3:47 pm on 17 March, 2022 | James | [Summary]\n' +
+        "[assistant] | 3:47 pm on 17 March, 2022 | James | DATE: 3:47 pm on 17 March, 2022 | ID: D1:8 | James: I've worked with Python and C++ programming languages. I've built a website and also created some game mods.",
+      tokenCount: 20,
+    });
+
+    const rawPrev = createTestMessage({
+      id: createEventId('evt_bridge_swap_prev'),
+      content: 'DATE: 3:47 pm | ID: D9:1 | John: What else are you building lately?',
+      tokenCount: 4,
+      sequence: 601,
+    });
+    const rawSeed = createTestMessage({
+      id: createEventId('evt_bridge_swap_seed'),
+      content: 'DATE: 3:47 pm | ID: D9:2 | James: I worked on programming side projects with friends.',
+      tokenCount: 4,
+      sequence: 602,
+    });
+    const rawNext = createTestMessage({
+      id: createEventId('evt_bridge_swap_next'),
+      content: 'DATE: 3:47 pm | ID: D9:3 | John: That sounds fun.',
+      tokenCount: 4,
+      sequence: 603,
+    });
+
+    const state = createState({
+      events: [rawPrev, rawSeed, rawNext],
+      summaries: [bridgeSummary],
+      summarySearchResults: {
+        'What programming languages has James worked with?': [bridgeSummary],
+        'what programming languages has james worked with': [bridgeSummary],
+        'What James': [bridgeSummary],
+      },
+      eventSearchResults: {
+        'What programming languages has James worked with?': [rawSeed],
+        'what programming languages has james worked with': [rawSeed],
+        'What James': [rawSeed],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 24,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'What programming languages has James worked with?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([bridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([bridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([]);
+    expect(output.modelMessages.some((message) => message.content.includes('Python and C++'))).toBe(true);
+  });
+
+  it('does not swap in a bridge summary when all kept raw regions are more specific', async () => {
+    const bridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_programming_generic_no_swap'),
+      content: '[Summary] James and John talked about programming projects together.',
+      tokenCount: 18,
+    });
+
+    const rawOnePrev = createTestMessage({
+      id: createEventId('evt_bridge_no_swap_one_prev'),
+      content: 'DATE: 3:47 pm | ID: D1:7 | John: What languages do you like most and what have you built?',
+      tokenCount: 4,
+      sequence: 701,
+    });
+    const rawOneSeed = createTestMessage({
+      id: createEventId('evt_bridge_no_swap_one_seed'),
+      content:
+        "DATE: 3:47 pm | ID: D1:8 | James: I've worked with Python and C++. I've built a website and some game mods.",
+      tokenCount: 4,
+      sequence: 702,
+    });
+    const rawOneNext = createTestMessage({
+      id: createEventId('evt_bridge_no_swap_one_next'),
+      content: 'DATE: 3:47 pm | ID: D1:9 | John: That mod looks amazing.',
+      tokenCount: 4,
+      sequence: 703,
+    });
+    const rawTwoPrev = createTestMessage({
+      id: createEventId('evt_bridge_no_swap_two_prev'),
+      content: 'DATE: 7:33 pm | ID: D12:10 | John: What made the project challenging?',
+      tokenCount: 4,
+      sequence: 801,
+    });
+    const rawTwoSeed = createTestMessage({
+      id: createEventId('evt_bridge_no_swap_two_seed'),
+      content:
+        'DATE: 7:33 pm | ID: D12:11 | James: I worked through a new programming language course and many project details.',
+      tokenCount: 4,
+      sequence: 802,
+    });
+    const rawTwoNext = createTestMessage({
+      id: createEventId('evt_bridge_no_swap_two_next'),
+      content: 'DATE: 7:33 pm | ID: D12:12 | John: That sounds like a lot to juggle.',
+      tokenCount: 4,
+      sequence: 803,
+    });
+
+    const state = createState({
+      events: [rawOnePrev, rawOneSeed, rawOneNext, rawTwoPrev, rawTwoSeed, rawTwoNext],
+      summaries: [bridgeSummary],
+      summarySearchResults: {
+        'What programming languages has James worked with?': [bridgeSummary],
+        'what programming languages has james worked with': [bridgeSummary],
+        'What James': [bridgeSummary],
+      },
+      eventSearchResults: {
+        'What programming languages has James worked with?': [rawOneSeed, rawTwoSeed],
+        'what programming languages has james worked with': [rawOneSeed, rawTwoSeed],
+        'What James': [rawOneSeed, rawTwoSeed],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 44,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'What programming languages has James worked with?', limit: 2 }],
+    });
+
+    expect(output.summaryReferences).toEqual([]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([
+      rawTwoPrev.id,
+      rawTwoSeed.id,
+      rawTwoNext.id,
+      rawOnePrev.id,
+      rawOneSeed.id,
+      rawOneNext.id,
+    ]);
+    expect(output.modelMessages.some((message) => message.content.includes('Python and C++'))).toBe(true);
+  });
+
+  it('prefers a richer answer-bearing bridge summary over a tiny question-echo summary', async () => {
+    const misleadingBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_programming_negated_echo'),
+      content:
+        '[Summary]\n' +
+        '[assistant] | 3:47 pm on 17 March, 2022 | John | [Summary]\n' +
+        "[assistant] | 3:47 pm on 17 March, 2022 | James | DATE: 3:47 pm on 17 March, 2022 | ID: D1:10 | James: I haven't worked with any other programming languages, but I hope to work in the future.",
+      tokenCount: 14,
+    });
+    const answerBearingBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_programming_answer_rich'),
+      content:
+        '[Summary]\n' +
+        '[assistant] | 3:47 pm on 17 March, 2022 | James | [Summary]\n' +
+        '[assistant] | 3:47 pm on 17 March, 2022 | James | DATE: 3:47 pm on 17 March, 2022 | ID: D1:6 | James: Programming is an awesome skill.\n' +
+        '[user] | 3:47 pm on 17 March, 2022 | John | DATE: 3:47 pm on 17 March, 2022 | ID: D1:7 | John: What languages do you like most and any projects you have done?\n' +
+        "[assistant] | 3:47 pm on 17 March, 2022 | James | DATE: 3:47 pm on 17 March, 2022 | ID: D1:8 | James: I've worked with Python and C++. I've built a website and also created some game mods.\n" +
+        '[user] | 3:47 pm on 17 March, 2022 | John | DATE: 3:47 pm on 17 March, 2022 | ID: D1:9 | John: That mod looks amazing.',
+      tokenCount: 36,
+    });
+
+    const state = createState({
+      summaries: [misleadingBridgeSummary, answerBearingBridgeSummary],
+      summarySearchResults: {
+        'What programming languages has James worked with?': [
+          misleadingBridgeSummary,
+          answerBearingBridgeSummary,
+        ],
+        'what programming languages has james worked with': [
+          misleadingBridgeSummary,
+          answerBearingBridgeSummary,
+        ],
+        'What James': [misleadingBridgeSummary, answerBearingBridgeSummary],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 96,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'What programming languages has James worked with?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([answerBearingBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([answerBearingBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summaryId: misleadingBridgeSummary.id,
+          selected: false,
+        }),
+        expect.objectContaining({
+          summaryId: answerBearingBridgeSummary.id,
+          selected: true,
+          reason: 'selected',
+        }),
+      ]),
+    );
+    expect(output.modelMessages.some((message) => message.content.includes('Python and C++'))).toBe(true);
+  });
+
+  it('still selects a single-message bridge summary when no richer alternative exists', async () => {
+    const singleMessageBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_single_message'),
+      content:
+        '[Summary]\n' +
+        "[assistant] | 3:47 pm on 17 March, 2022 | James | DATE: 3:47 pm on 17 March, 2022 | ID: D1:10 | James: I haven't worked with any other programming languages, but I hope to work in the future.",
+      tokenCount: 14,
+    });
+
+    const state = createState({
+      summaries: [singleMessageBridgeSummary],
+      summarySearchResults: {
+        'What programming languages has James worked with?': [singleMessageBridgeSummary],
+        'what programming languages has james worked with': [singleMessageBridgeSummary],
+        'What James': [singleMessageBridgeSummary],
+      },
+      contextTokenCount: 0,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 80,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'What programming languages has James worked with?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([singleMessageBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([singleMessageBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([]);
+  });
+
+  it('selects a bridge summary that fits after borrowing one base message worth of slack', async () => {
+    const baseOne = createTestMessage({
+      id: createEventId('evt_bridge_base_slack_1'),
+      content: 'base-slack-context-1',
+      tokenCount: 16,
+      sequence: 101,
+    });
+    const baseTwo = createTestMessage({
+      id: createEventId('evt_bridge_base_slack_2'),
+      content: 'base-slack-context-2',
+      tokenCount: 16,
+      sequence: 102,
+    });
+    const baseThree = createTestMessage({
+      id: createEventId('evt_bridge_base_slack_3'),
+      content: 'base-slack-context-3',
+      tokenCount: 16,
+      sequence: 103,
+    });
+
+    const oversizedTopBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_base_slack_top'),
+      content:
+        '[Summary] Andrew talked broadly about animals, birds, and outdoor interests without naming the bird.',
+      tokenCount: 72,
+    });
+    const fitCapableBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_base_slack_compact'),
+      content:
+        '[Summary] DATE: 8:10 am | ID:D1:16 | Andrew | Eagles have always mesmerized me because they are so strong and graceful.',
+      tokenCount: 40,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(baseOne.id) }),
+        createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(baseTwo.id) }),
+        createContextItem({ conversationId, position: 2, ref: createMessageContextItemRef(baseThree.id) }),
+      ],
+      events: [baseOne, baseTwo, baseThree],
+      summaries: [oversizedTopBridgeSummary, fitCapableBridgeSummary],
+      summarySearchResults: {
+        'Which specific type of bird mesmerizes Andrew?': [oversizedTopBridgeSummary, fitCapableBridgeSummary],
+        'which specific type bird mesmerizes andrew': [oversizedTopBridgeSummary, fitCapableBridgeSummary],
+        'Which Andrew': [oversizedTopBridgeSummary, fitCapableBridgeSummary],
+      },
+      contextTokenCount: 48,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 64,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'Which specific type of bird mesmerizes Andrew?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([fitCapableBridgeSummary.id]);
+    expect(output.modelMessages.map((message) => message.content)).toEqual([
+      baseThree.content,
+      `[Summary ID: ${fitCapableBridgeSummary.id}]\n${fitCapableBridgeSummary.content}`,
+    ]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([fitCapableBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summaryId: oversizedTopBridgeSummary.id,
+          selected: false,
+        }),
+        expect.objectContaining({
+          summaryId: fitCapableBridgeSummary.id,
+          selected: true,
+          reason: 'selected',
+        }),
+      ]),
+    );
+  });
+
+  it('selects a compact bridge summary when two base messages make it fit', async () => {
+    const baseOne = createTestMessage({
+      id: createEventId('evt_bridge_base_two_unit_1'),
+      content: 'base-two-unit-context-1',
+      tokenCount: 16,
+      sequence: 201,
+    });
+    const baseTwo = createTestMessage({
+      id: createEventId('evt_bridge_base_two_unit_2'),
+      content: 'base-two-unit-context-2',
+      tokenCount: 16,
+      sequence: 202,
+    });
+    const baseThree = createTestMessage({
+      id: createEventId('evt_bridge_base_two_unit_3'),
+      content: 'base-two-unit-context-3',
+      tokenCount: 16,
+      sequence: 203,
+    });
+
+    const oversizedTopBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_base_two_unit_top'),
+      content:
+        '[Summary] Andrew talked about birds repeatedly, but this top summary is too large to fit the allowed bridge slack.',
+      tokenCount: 80,
+    });
+    const twoUnitBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_base_two_unit_compact'),
+      content:
+        '[Summary] DATE: 8:10 am | ID:D1:16 | Andrew | Eagles have always mesmerized me. DATE: 8:11 am | ID:D1:17 | Andrew | Birds of prey feel powerful and graceful to me.',
+      tokenCount: 44,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(baseOne.id) }),
+        createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(baseTwo.id) }),
+        createContextItem({ conversationId, position: 2, ref: createMessageContextItemRef(baseThree.id) }),
+      ],
+      events: [baseOne, baseTwo, baseThree],
+      summaries: [oversizedTopBridgeSummary, twoUnitBridgeSummary],
+      summarySearchResults: {
+        'Which specific type of bird mesmerizes Andrew?': [oversizedTopBridgeSummary, twoUnitBridgeSummary],
+        'which specific type bird mesmerizes andrew': [oversizedTopBridgeSummary, twoUnitBridgeSummary],
+        'Which Andrew': [oversizedTopBridgeSummary, twoUnitBridgeSummary],
+      },
+      contextTokenCount: 48,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 68,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'Which specific type of bird mesmerizes Andrew?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([twoUnitBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([twoUnitBridgeSummary.id]);
+    expect(output.modelMessages.some((message) => message.content.includes('Eagles have always mesmerized me'))).toBe(
+      true,
+    );
+  });
+
+  it('keeps the top bridge summary when it already fits inside the reserve', async () => {
+    const baseOne = createTestMessage({
+      id: createEventId('evt_bridge_reserve_fit_1'),
+      content: 'base-reserve-fit-1',
+      tokenCount: 16,
+      sequence: 301,
+    });
+    const baseTwo = createTestMessage({
+      id: createEventId('evt_bridge_reserve_fit_2'),
+      content: 'base-reserve-fit-2',
+      tokenCount: 16,
+      sequence: 302,
+    });
+
+    const topBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_reserve_fit_top'),
+      content:
+        '[Summary] DATE: 8:10 am | ID:D1:16 | Andrew | Eagles have always mesmerized me because they are strong and graceful.',
+      tokenCount: 12,
+    });
+    const smallerBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_reserve_fit_smaller'),
+      content: '[Summary] Andrew likes birds.',
+      tokenCount: 8,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(baseOne.id) }),
+        createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(baseTwo.id) }),
+      ],
+      events: [baseOne, baseTwo],
+      summaries: [topBridgeSummary, smallerBridgeSummary],
+      summarySearchResults: {
+        'Which specific type of bird mesmerizes Andrew?': [topBridgeSummary, smallerBridgeSummary],
+        'which specific type bird mesmerizes andrew': [topBridgeSummary, smallerBridgeSummary],
+        'Which Andrew': [topBridgeSummary, smallerBridgeSummary],
+      },
+      contextTokenCount: 32,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 64,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'Which specific type of bird mesmerizes Andrew?', limit: 1 }],
+    });
+
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([topBridgeSummary.id]);
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([topBridgeSummary.id]);
+  });
+
+  it('keeps a much stronger bridge summary when a smaller alternative is outside the score window', async () => {
+    const baseOne = createTestMessage({
+      id: createEventId('evt_bridge_fit_window_base_1'),
+      content: 'base-fit-window-1',
+      tokenCount: 18,
+      sequence: 1101,
+    });
+    const baseTwo = createTestMessage({
+      id: createEventId('evt_bridge_fit_window_base_2'),
+      content: 'base-fit-window-2',
+      tokenCount: 18,
+      sequence: 1102,
+    });
+    const baseThree = createTestMessage({
+      id: createEventId('evt_bridge_fit_window_base_3'),
+      content: 'base-fit-window-3',
+      tokenCount: 18,
+      sequence: 1103,
+    });
+
+    const strongBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_fit_window_strong'),
+      content:
+        '[Summary]\n' +
+        '[summary_fact] | DATE:1:10 pm on 27 March, 2023 | ID:D1:11 | Audrey | Birds always calm me down.\n' +
+        "[summary_fact] | DATE:1:10 pm on 27 March, 2023 | ID:D1:12 | Andrew | I've always been awed by birds.\n" +
+        '[summary_fact] | DATE:1:10 pm on 27 March, 2023 | ID:D1:13 | Audrey | Which type stands out the most to you?\n' +
+        '[summary_fact] | DATE:1:10 pm on 27 March, 2023 | ID:D1:14 | Andrew | Birds with sharp eyes amaze me.\n' +
+        '[summary_fact] | DATE:1:10 pm on 27 March, 2023 | ID:D1:15 | Audrey | Birds are amazing.\n' +
+        "[summary_fact] | DATE:1:10 pm on 27 March, 2023 | ID:D1:16 | Andrew | Eagles have always mesmerized me; they're so strong and graceful.",
+      tokenCount: 52,
+    });
+    const weakFitCapableSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_fit_window_weak'),
+      content:
+        '[Summary]\n' +
+        '[summary_fact] | DATE:1:10 pm on 27 March, 2023 | ID:D1:15 | Audrey | Birds are special.\n' +
+        '[summary_fact] | DATE:1:10 pm on 27 March, 2023 | ID:D1:16 | Andrew | A certain bird always stands out to me.',
+      tokenCount: 30,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(baseOne.id) }),
+        createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(baseTwo.id) }),
+        createContextItem({ conversationId, position: 2, ref: createMessageContextItemRef(baseThree.id) }),
+      ],
+      events: [baseOne, baseTwo, baseThree],
+      summaries: [strongBridgeSummary, weakFitCapableSummary],
+      summarySearchResults: {
+        'Which specific type of bird mesmerizes Andrew?': [strongBridgeSummary, weakFitCapableSummary],
+        'which specific type bird mesmerizes andrew': [strongBridgeSummary, weakFitCapableSummary],
+        'Which Andrew': [strongBridgeSummary, weakFitCapableSummary],
+      },
+      contextTokenCount: 54,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 96,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'Which specific type of bird mesmerizes Andrew?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([strongBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([strongBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summaryId: strongBridgeSummary.id,
+          selected: true,
+          reason: 'selected',
+        }),
+        expect.objectContaining({
+          summaryId: weakFitCapableSummary.id,
+          selected: false,
+          reason: 'limit_reached',
+        }),
+      ]),
+    );
+    expect(output.modelMessages.some((message) => message.content.includes('Eagles have always mesmerized me'))).toBe(
+      true,
     );
   });
 
