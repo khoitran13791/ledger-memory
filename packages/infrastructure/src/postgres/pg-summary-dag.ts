@@ -32,6 +32,7 @@ interface SummaryNodeRow {
   readonly conversation_id: string;
   readonly kind: 'leaf' | 'condensed';
   readonly content: string;
+  readonly retrieval_text: string;
   readonly token_count: number;
   readonly artifact_ids: unknown;
   readonly created_at: string | Date;
@@ -110,6 +111,7 @@ const toSummaryNode = (row: SummaryNodeRow): SummaryNode => {
     conversationId: row.conversation_id as ConversationId,
     kind: row.kind,
     content: row.content,
+    retrievalText: row.retrieval_text,
     tokenCount: createTokenCount(row.token_count),
     artifactIds: toJsonStringArray(row.artifact_ids).map((artifactId) => artifactId as never),
     createdAt: createTimestamp(row.created_at instanceof Date ? row.created_at : new Date(row.created_at)),
@@ -282,17 +284,19 @@ export class PgSummaryDag implements SummaryDagPort {
           conversation_id,
           kind,
           content,
+          retrieval_text,
           token_count,
           artifact_ids,
           created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
         ON CONFLICT (id) DO NOTHING`,
         [
           node.id,
           node.conversationId,
           node.kind,
           node.content,
+          node.retrievalText,
           node.tokenCount.value,
           JSON.stringify([...node.artifactIds]),
           node.createdAt,
@@ -306,7 +310,7 @@ export class PgSummaryDag implements SummaryDagPort {
   async getNode(id: SummaryNodeId): Promise<SummaryNode | null> {
     try {
       const result = await this.executor.query<SummaryNodeRow>(
-        `SELECT id, conversation_id, kind, content, token_count, artifact_ids, created_at
+        `SELECT id, conversation_id, kind, content, retrieval_text, token_count, artifact_ids, created_at
          FROM summary_nodes
          WHERE id = $1`,
         [id],
@@ -498,11 +502,11 @@ export class PgSummaryDag implements SummaryDagPort {
           JOIN scoped_summaries ss ON spe.parent_summary_id = ss.id
           WHERE child.conversation_id = $1
         )
-        SELECT id, conversation_id, kind, content, token_count, artifact_ids, created_at
+        SELECT id, conversation_id, kind, content, retrieval_text, token_count, artifact_ids, created_at
         FROM summary_nodes
         WHERE conversation_id = $1
           AND ($3::text IS NULL OR id IN (SELECT id FROM scoped_summaries))
-          AND to_tsvector('english', content) @@ plainto_tsquery('english', $2)
+          AND to_tsvector('english', retrieval_text) @@ plainto_tsquery('english', $2)
         ORDER BY created_at ASC`,
         [conversationId, normalized, scope ?? null],
       );
@@ -765,7 +769,7 @@ export class PgSummaryDag implements SummaryDagPort {
       const artifactIssues: string[] = [];
       for (const row of lineageResult.rows) {
         const nodeResult = await this.executor.query<SummaryNodeRow>(
-          `SELECT id, conversation_id, kind, content, token_count, artifact_ids, created_at
+          `SELECT id, conversation_id, kind, content, retrieval_text, token_count, artifact_ids, created_at
            FROM summary_nodes
            WHERE id = $1`,
           [row.summary_id],

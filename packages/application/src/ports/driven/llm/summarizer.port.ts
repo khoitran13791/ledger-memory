@@ -16,6 +16,7 @@ export interface SummarizationInput {
 
 export interface SummarizationOutput {
   readonly content: string;
+  readonly retrievalText?: string;
   readonly tokenCount: TokenCount;
   readonly preservedArtifactIds: readonly ArtifactId[];
 }

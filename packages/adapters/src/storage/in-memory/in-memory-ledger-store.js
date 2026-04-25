@@ -3,7 +3,26 @@ import { createInMemoryPersistenceState } from './state';
 const sortEventsBySequence = (events) => {
     return [...events].sort((left, right) => left.sequence - right.sequence);
 };
-const toLowerCase = (value) => value.toLocaleLowerCase();
+const toSearchTokens = (value) => {
+    return value
+        .toLocaleLowerCase()
+        .split(/[^a-z0-9]+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length > 1);
+};
+const hasTokenOverlap = (content, query) => {
+    const queryTokens = new Set(toSearchTokens(query));
+    if (queryTokens.size === 0) {
+        return false;
+    }
+    const contentTokens = new Set(toSearchTokens(content));
+    for (const token of queryTokens) {
+        if (contentTokens.has(token)) {
+            return true;
+        }
+    }
+    return false;
+};
 const getRangeBounds = (range) => {
     if (!range) {
         return {};
@@ -109,7 +128,7 @@ export class InMemoryLedgerStore {
         });
     }
     async searchEvents(conversationId, query, scope) {
-        const normalizedQuery = toLowerCase(query.trim());
+        const normalizedQuery = query.trim();
         if (normalizedQuery.length === 0) {
             return [];
         }
@@ -119,7 +138,7 @@ export class InMemoryLedgerStore {
             if (scopedMessageIds !== null && !scopedMessageIds.has(event.id)) {
                 return false;
             }
-            return toLowerCase(event.content).includes(normalizedQuery);
+            return hasTokenOverlap(event.content, normalizedQuery);
         });
     }
     async regexSearchEvents(conversationId, pattern, page) {

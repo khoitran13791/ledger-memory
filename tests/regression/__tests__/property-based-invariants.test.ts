@@ -179,6 +179,7 @@ const createRuntime = async (fixture: ConversationFixture): Promise<Runtime> => 
       summaryDag,
       ledgerRead,
       artifactStore,
+      tokenizer,
       runCompaction: (input) => runCompactionUseCase.execute(input),
     }),
     checkIntegrityUseCase: new CheckIntegrityUseCase({

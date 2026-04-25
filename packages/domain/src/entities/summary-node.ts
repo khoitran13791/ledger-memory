@@ -16,6 +16,7 @@ export interface SummaryNode {
   readonly conversationId: ConversationId;
   readonly kind: SummaryKind;
   readonly content: string;
+  readonly retrievalText: string;
   readonly tokenCount: TokenCount;
   readonly artifactIds: readonly ArtifactId[];
   readonly createdAt: Timestamp;
@@ -26,6 +27,7 @@ export interface CreateSummaryNodeInput {
   readonly conversationId: ConversationId;
   readonly kind: SummaryKind;
   readonly content: string;
+  readonly retrievalText?: string;
   readonly tokenCount: TokenCount;
   readonly artifactIds?: readonly ArtifactId[];
   readonly createdAt?: Timestamp;
@@ -51,6 +53,7 @@ export const createSummaryNode = (input: CreateSummaryNodeInput): SummaryNode =>
     conversationId: input.conversationId,
     kind: input.kind,
     content: input.content,
+    retrievalText: input.retrievalText ?? input.content,
     tokenCount: input.tokenCount,
     artifactIds,
     createdAt: input.createdAt ?? createTimestamp(new Date()),

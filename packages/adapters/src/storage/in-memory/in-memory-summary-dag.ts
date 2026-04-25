@@ -631,7 +631,7 @@ export class InMemorySummaryDag implements SummaryDagPort {
       .map((node, index) => ({
         node,
         index,
-        score: scoreTokenOverlap(node.content, normalized),
+        score: scoreTokenOverlap(node.retrievalText, normalized),
       }))
       .filter((entry) => entry.score > 0)
       .sort((left, right) => {

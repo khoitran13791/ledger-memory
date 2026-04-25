@@ -2,6 +2,7 @@ import { InvariantViolationError, createTokenCount, type ArtifactId, type Contex
 
 import { ConversationNotFoundError, InvalidReferenceError } from '../errors/application-errors';
 import type { EventPublisherPort } from '../ports/driven/events/event-publisher.port';
+import type { TokenizerPort } from '../ports/driven/llm/tokenizer.port';
 import type { ArtifactStorePort } from '../ports/driven/persistence/artifact-store.port';
 import type { ContextProjectionPort } from '../ports/driven/persistence/context-projection.port';
 import type { ConversationPort } from '../ports/driven/persistence/conversation.port';
@@ -46,6 +47,7 @@ export interface MaterializeContextUseCaseDeps {
   readonly summaryDag: SummaryDagPort;
   readonly ledgerRead: LedgerReadPort;
   readonly artifactStore: ArtifactStorePort;
+  readonly tokenizer: TokenizerPort;
   readonly runCompaction: (input: RunCompactionInput) => Promise<RunCompactionOutput>;
   readonly eventPublisher?: EventPublisherPort;
 }
@@ -92,6 +94,7 @@ type RankedRetrievalCandidate =
       readonly rankTieBreaker: number;
       readonly summary: SummaryReference & {
         readonly content: string;
+        readonly retrievalText: string;
         readonly artifactIds: readonly ArtifactId[];
         readonly createdAt: Date;
       };
@@ -121,6 +124,8 @@ type RetrievalContender =
       readonly specificityScore: number;
       readonly tokenCount: number;
       readonly seedId: LedgerEvent['id'];
+      readonly source: 'generic' | 'bridge_scoped';
+      readonly anchorCoverageCount: number;
       readonly windowStartSequence: number;
       readonly windowEndSequence: number;
       readonly events: readonly LedgerEvent[];
@@ -167,6 +172,8 @@ type PackableUnit =
       readonly order: number;
       readonly selectionOrder: number;
       readonly seedId: LedgerEvent['id'];
+      readonly source: 'generic' | 'bridge_scoped';
+      readonly anchorCoverageCount: number;
       readonly windowStartSequence: number;
       readonly windowEndSequence: number;
       readonly messageIds: readonly LedgerEvent['id'][];
@@ -177,6 +184,11 @@ type RetrievalBridgeSummaryUnit = Extract<PackableUnit, { kind: 'retrieval_bridg
 type RetrievalRawBundleUnit = Extract<PackableUnit, { kind: 'retrieval_raw_bundle' }>;
 type RankedSummaryRetrievalCandidate = Extract<RankedRetrievalCandidate, { kind: 'summary' }>;
 type BasePackableUnit = Extract<PackableUnit, { kind: 'base_message' | 'base_summary' }>;
+type MaterializedBridgeSummarySelection = {
+  readonly candidate: RankedSummaryRetrievalCandidate;
+  readonly tokenCount: number;
+  readonly content: string;
+};
 
 const assertValidBudgetInput = (input: MaterializeContextInput): void => {
   if (!Number.isSafeInteger(input.budgetTokens) || input.budgetTokens <= 0) {
@@ -638,6 +650,267 @@ const buildRetrievedEventWindow = (input: {
   return [previous, input.seed, next].filter((event): event is LedgerEvent => event !== undefined);
 };
 
+const countAnchorCoverage = (query: string, content: string): number => {
+  const anchors = extractAnchorTokens(query);
+  if (anchors.length === 0) {
+    return 0;
+  }
+
+  const normalizedContent = content.toLocaleLowerCase();
+  return anchors.filter((anchor) => normalizedContent.includes(anchor.toLocaleLowerCase())).length;
+};
+
+const buildSummaryModelMessage = (summaryId: SummaryReference['id'], content: string): ModelMessage => ({
+  role: 'assistant',
+  content: `[Summary ID: ${summaryId}]\n${content}`,
+});
+
+const SUMMARY_FACT_PREFIX = '[summary_fact]';
+
+const normalizeBridgeFactAnchors = (value: string): string =>
+  value
+    .replace(/\|\s*shared:([^\s|]+)/gi, ' | [shared $1]')
+    .replace(/\|\s*shared_caption:([^\s|]+)/gi, ' | [shared_caption $1]');
+
+const parseBridgeFactParts = (
+  line: string,
+): {
+  readonly date?: string;
+  readonly id: string;
+  readonly speaker: string;
+  readonly fact: string;
+  readonly sharedId?: string;
+  readonly sharedCaptionId?: string;
+} | undefined => {
+  const sharedMatch = line.match(/\[shared\s+([^\]]+)\]/i);
+  const sharedCaptionMatch = line.match(/\[shared_caption\s+([^\]]+)\]/i);
+  const lineWithoutAnchors = line
+    .replace(/\s*\|\s*\[shared\s+[^\]]+\]/gi, '')
+    .replace(/\s*\|\s*\[shared_caption\s+[^\]]+\]/gi, '');
+  const segments = lineWithoutAnchors
+    .split('|')
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+  const idIndex = segments.findIndex((segment) => /^ID:/i.test(segment));
+
+  if (idIndex < 0) {
+    return undefined;
+  }
+
+  const id = segments[idIndex]?.replace(/^ID:\s*/i, '').trim();
+  const date = segments.find((segment) => /^DATE:/i.test(segment))?.replace(/^DATE:\s*/i, '').trim();
+  const factSegments = segments.slice(idIndex + 1);
+  const firstFactSegment = factSegments[0];
+
+  if (id === undefined || id.length === 0 || firstFactSegment === undefined) {
+    return undefined;
+  }
+
+  const separatorIndex = firstFactSegment.indexOf(':');
+  let speaker: string;
+  let fact: string;
+
+  if (separatorIndex > 0) {
+    speaker = firstFactSegment.slice(0, separatorIndex).trim();
+    fact = [firstFactSegment.slice(separatorIndex + 1).trim(), ...factSegments.slice(1)]
+      .filter((segment) => segment.length > 0)
+      .join(' | ')
+      .trim();
+  } else {
+    speaker = firstFactSegment.replace(/:\s*$/u, '').trim();
+    fact = factSegments.slice(1).join(' | ').trim();
+  }
+
+  if (speaker.length === 0 || fact.length === 0) {
+    return undefined;
+  }
+
+  return {
+    ...(date === undefined || date.length === 0 ? {} : { date }),
+    id,
+    speaker,
+    fact,
+    ...(sharedMatch?.[1] === undefined ? {} : { sharedId: sharedMatch[1].trim() }),
+    ...(sharedCaptionMatch?.[1] === undefined ? {} : { sharedCaptionId: sharedCaptionMatch[1].trim() }),
+  };
+};
+
+const extractBridgeFactLines = (text: string): readonly string[] => {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawLine of text.split('\n')) {
+    const line = normalizeBridgeFactAnchors(rawLine.trim());
+    if (line.length === 0 || !line.includes('ID:')) {
+      continue;
+    }
+
+    if (line.startsWith(SUMMARY_FACT_PREFIX)) {
+      if (!seen.has(line)) {
+        seen.add(line);
+        lines.push(line);
+      }
+      continue;
+    }
+
+    const parsed = parseBridgeFactParts(line);
+    if (parsed === undefined) {
+      continue;
+    }
+
+    const normalized = [
+      SUMMARY_FACT_PREFIX,
+      parsed.date === undefined ? undefined : `DATE:${parsed.date}`,
+      `ID:${parsed.id}`,
+      parsed.speaker,
+      parsed.fact,
+      parsed.sharedId === undefined ? undefined : `[shared ${parsed.sharedId}]`,
+      parsed.sharedCaptionId === undefined ? undefined : `[shared_caption ${parsed.sharedCaptionId}]`,
+    ]
+      .filter((part): part is string => part !== undefined && part.length > 0)
+      .join(' | ');
+
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      lines.push(normalized);
+    }
+  }
+
+  return lines;
+};
+
+const truncateTextToTokenBudget = (
+  text: string,
+  maxTokens: number,
+  tokenizer: TokenizerPort,
+): string => {
+  const normalized = text.trim();
+  if (normalized.length === 0) {
+    return normalized;
+  }
+
+  if (tokenizer.countTokens(normalized).value <= maxTokens) {
+    return normalized;
+  }
+
+  let cutoff = Math.max(1, Math.floor((normalized.length * maxTokens) / Math.max(1, tokenizer.countTokens(normalized).value)));
+  let truncated = normalized.slice(0, cutoff).trim();
+
+  while (truncated.length > 1 && tokenizer.countTokens(truncated).value > maxTokens) {
+    cutoff = Math.max(1, Math.floor(cutoff * 0.9));
+    truncated = normalized.slice(0, cutoff).trim();
+    const boundary = truncated.lastIndexOf(' ');
+    if (boundary > 0) {
+      truncated = truncated.slice(0, boundary).trim();
+    }
+  }
+
+  return truncated;
+};
+
+const compressBridgeSummaryContent = (input: {
+  readonly candidate: RankedSummaryRetrievalCandidate;
+  readonly query: string;
+  readonly maxTokens: number;
+  readonly tokenizer: TokenizerPort;
+}): { readonly content: string; readonly tokenCount: number } | undefined => {
+  if (input.maxTokens <= 0) {
+    return undefined;
+  }
+
+  if (input.candidate.tokenCount <= input.maxTokens) {
+    return {
+      content: input.candidate.summary.content,
+      tokenCount: input.candidate.tokenCount,
+    };
+  }
+
+  const prefix = input.candidate.summary.content.startsWith('[Aggressive Summary]')
+    ? '[Aggressive Summary]'
+    : '[Summary]';
+  const synopsis = input.candidate.summary.content
+    .split('\n')
+    .map((line) => line.trim())
+    .find(
+      (line) =>
+        line.length > 0 &&
+        line !== '[Summary]' &&
+        line !== '[Aggressive Summary]' &&
+        !line.startsWith('summary_call:') &&
+        !line.includes('ID:'),
+    );
+  const baseLine = synopsis === undefined ? prefix : `${prefix} ${synopsis.replace(/^\[(?:Aggressive )?Summary\]\s*/u, '')}`.trim();
+  const factLines = extractBridgeFactLines(input.candidate.summary.retrievalText ?? input.candidate.summary.content)
+    .map((line, index) => ({
+      line,
+      index,
+      specificityScore: toQuerySpecificityOverlapCount(input.query, line),
+      overlapCount: toQueryOverlapCount(input.query, line),
+      anchorCoverageCount: countAnchorCoverage(input.query, line),
+    }))
+    .sort((left, right) => {
+      if (right.specificityScore !== left.specificityScore) {
+        return right.specificityScore - left.specificityScore;
+      }
+      if (right.anchorCoverageCount !== left.anchorCoverageCount) {
+        return right.anchorCoverageCount - left.anchorCoverageCount;
+      }
+      if (right.overlapCount !== left.overlapCount) {
+        return right.overlapCount - left.overlapCount;
+      }
+      return left.index - right.index;
+    });
+
+  const selectedFacts = factLines.slice(0, Math.max(1, Math.min(6, factLines.length)));
+  const orderedFacts = [...selectedFacts].sort((left, right) => left.index - right.index);
+  const selectedLines: string[] = [];
+  const bestFactLine = factLines[0]?.line;
+
+  const tryBuild = (lines: readonly string[]): string => [baseLine, ...lines].filter((line) => line.trim().length > 0).join('\n');
+  let content = tryBuild([]);
+  let preservedFact = false;
+
+  if (factLines.length === 0 && input.tokenizer.countTokens(content).value > input.maxTokens) {
+    const truncatedBase = truncateTextToTokenBudget(baseLine, input.maxTokens, input.tokenizer);
+    if (truncatedBase.length > 0) {
+      content = truncatedBase;
+    }
+  } else if (factLines.length === 0) {
+    content = tryBuild([]);
+  } else {
+    for (const fact of orderedFacts) {
+      const nextContent = tryBuild([...selectedLines, fact.line]);
+      if (input.tokenizer.countTokens(nextContent).value > input.maxTokens) {
+        continue;
+      }
+
+      selectedLines.push(fact.line);
+      content = nextContent;
+      preservedFact = true;
+    }
+  }
+
+  if (!preservedFact && bestFactLine !== undefined) {
+    if (input.tokenizer.countTokens(bestFactLine).value <= input.maxTokens) {
+      content = bestFactLine;
+      preservedFact = true;
+    } else {
+      const truncatedFact = truncateTextToTokenBudget(bestFactLine, input.maxTokens, input.tokenizer);
+      if (truncatedFact.length > 0 && input.tokenizer.countTokens(truncatedFact).value <= input.maxTokens) {
+        content = truncatedFact;
+        preservedFact = true;
+      }
+    }
+  }
+
+  if (!preservedFact && factLines.length > 0) {
+    return undefined;
+  }
+
+  const tokenCount = input.tokenizer.countTokens(content).value;
+  return tokenCount > input.maxTokens ? undefined : { content, tokenCount };
+};
+
 const getEventBundleTokenCount = (events: readonly LedgerEvent[]): number =>
   events.reduce((total, event) => total + event.tokenCount.value, 0);
 
@@ -649,6 +922,8 @@ type RawBundleAccumulator = {
   overlapCount: number;
   specificityScore: number;
   seedId: LedgerEvent['id'];
+  source: 'generic' | 'bridge_scoped';
+  anchorCoverageCount: number;
   windowStartSequence: number;
   windowEndSequence: number;
   eventsById: Map<string, LedgerEvent>;
@@ -673,6 +948,8 @@ const toRawBundleAccumulator = (
   overlapCount: contender.overlapCount,
   specificityScore: contender.specificityScore,
   seedId: contender.seedId,
+  source: contender.source,
+  anchorCoverageCount: contender.anchorCoverageCount,
   windowStartSequence: contender.windowStartSequence,
   windowEndSequence: contender.windowEndSequence,
   eventsById: new Map(contender.events.map((event) => [String(event.id), event] as const)),
@@ -693,6 +970,8 @@ const finalizeRawBundleAccumulator = (
     specificityScore: accumulator.specificityScore,
     tokenCount: getEventBundleTokenCount(events),
     seedId: accumulator.seedId,
+    source: accumulator.source,
+    anchorCoverageCount: accumulator.anchorCoverageCount,
     windowStartSequence: accumulator.windowStartSequence,
     windowEndSequence: accumulator.windowEndSequence,
     events,
@@ -748,6 +1027,10 @@ const coalesceRawRetrievalContenders = (contenders: readonly RetrievalContender[
         current.score = Math.max(current.score, next.score);
         current.overlapCount = Math.max(current.overlapCount, next.overlapCount);
         current.specificityScore = Math.max(current.specificityScore, next.specificityScore);
+        current.anchorCoverageCount = Math.max(current.anchorCoverageCount, next.anchorCoverageCount);
+        if (current.source !== 'bridge_scoped' && next.source === 'bridge_scoped') {
+          current.source = next.source;
+        }
         if (next.selectionOrder < current.selectionOrder) {
           current.selectionOrder = next.selectionOrder;
           current.seedId = next.seedId;
@@ -924,28 +1207,82 @@ const canBridgeSummaryCoexistWithPinnedBase = (input: {
   readonly availableBudget: number;
 }): boolean => input.candidateTokenCount + input.pinnedBaseTokenCount <= input.availableBudget;
 
-const canBridgeSummaryCoexistWithReclaimedBasePrefix = (input: {
-  readonly candidateTokenCount: number;
+const getBridgeFitBudgets = (input: {
   readonly selectedBaseItems: readonly ResolvedContextItem[];
   readonly pinRules: readonly PinRule[];
   readonly availableBudget: number;
-}): boolean => {
+}): readonly number[] => {
   let retainedBaseTokenCount = input.selectedBaseItems.reduce((total, item) => total + item.tokenCount, 0);
-  if (input.candidateTokenCount + retainedBaseTokenCount <= input.availableBudget) {
-    return true;
-  }
+  const budgets: number[] = [];
+  const seen = new Set<number>();
+
+  const pushBudget = (tokenBudget: number): void => {
+    if (tokenBudget <= 0 || seen.has(tokenBudget)) {
+      return;
+    }
+
+    seen.add(tokenBudget);
+    budgets.push(tokenBudget);
+  };
+
+  pushBudget(input.availableBudget - retainedBaseTokenCount);
 
   for (const candidate of getDroppableBridgeBaseCandidates({
     selectedBaseItems: input.selectedBaseItems,
     pinRules: input.pinRules,
   })) {
     retainedBaseTokenCount -= candidate.tokenCount;
-    if (input.candidateTokenCount + retainedBaseTokenCount <= input.availableBudget) {
-      return true;
+    pushBudget(input.availableBudget - retainedBaseTokenCount);
+  }
+
+  return budgets;
+};
+
+const materializeBridgeSummarySelection = (input: {
+  readonly candidate: RankedSummaryRetrievalCandidate;
+  readonly selectedBaseItems: readonly ResolvedContextItem[];
+  readonly pinRules: readonly PinRule[];
+  readonly availableBudget: number;
+  readonly query: string;
+  readonly tokenizer: TokenizerPort;
+}): MaterializedBridgeSummarySelection | undefined => {
+  const fitBudgets = getBridgeFitBudgets({
+    selectedBaseItems: input.selectedBaseItems,
+    pinRules: input.pinRules,
+    availableBudget: input.availableBudget,
+  });
+  const maxFitBudget = fitBudgets[fitBudgets.length - 1];
+
+  if (maxFitBudget === undefined) {
+    return undefined;
+  }
+
+  if (input.candidate.tokenCount <= maxFitBudget) {
+    return {
+      candidate: input.candidate,
+      tokenCount: input.candidate.tokenCount,
+      content: input.candidate.summary.content,
+    };
+  }
+
+  for (const fitBudget of [...fitBudgets].sort((left, right) => right - left)) {
+    const compressed = compressBridgeSummaryContent({
+      candidate: input.candidate,
+      query: input.query,
+      maxTokens: fitBudget,
+      tokenizer: input.tokenizer,
+    });
+
+    if (compressed !== undefined) {
+      return {
+        candidate: input.candidate,
+        tokenCount: compressed.tokenCount,
+        content: compressed.content,
+      };
     }
   }
 
-  return false;
+  return undefined;
 };
 
 const chooseBridgeSummaryCandidate = (input: {
@@ -956,15 +1293,18 @@ const chooseBridgeSummaryCandidate = (input: {
   readonly pinnedBaseTokenCount: number;
   readonly selectedBaseItems: readonly ResolvedContextItem[];
   readonly pinRules: readonly PinRule[];
-}): RankedSummaryRetrievalCandidate | undefined => {
+  readonly query: string;
+  readonly tokenizer: TokenizerPort;
+}): MaterializedBridgeSummarySelection | undefined => {
   const viableCandidates = input.rankedSummaryCandidates.filter(
     (candidate) =>
       !input.selectedSummaryIdStrings.has(String(candidate.id)) &&
-      canBridgeSummaryCoexistWithPinnedBase({
+      (canBridgeSummaryCoexistWithPinnedBase({
         candidateTokenCount: candidate.tokenCount,
         pinnedBaseTokenCount: input.pinnedBaseTokenCount,
         availableBudget: input.availableBudget,
-      }),
+      }) ||
+        input.pinnedBaseTokenCount === 0),
   );
 
   const topCandidate = viableCandidates[0];
@@ -972,33 +1312,145 @@ const chooseBridgeSummaryCandidate = (input: {
     return undefined;
   }
 
-  if (topCandidate.tokenCount <= input.bridgeSelectionBudget) {
-    return topCandidate;
-  }
+  const preferredCandidate =
+    topCandidate.tokenCount <= input.bridgeSelectionBudget
+      ? topCandidate
+      : viableCandidates
+          .filter(
+            (candidate) =>
+              candidate.tokenCount <= input.bridgeSelectionBudget && candidate.score >= topCandidate.score - 10,
+          )
+          .sort(compareFitAwareSummaryCandidates)[0];
 
-  const fitAwareCandidate = viableCandidates
-    .filter(
-      (candidate) =>
-        candidate.tokenCount <= input.bridgeSelectionBudget && candidate.score >= topCandidate.score - 10,
-    )
-    .sort(compareFitAwareSummaryCandidates)[0];
-
-  if (fitAwareCandidate !== undefined) {
-    return fitAwareCandidate;
-  }
-
-  if (
-    canBridgeSummaryCoexistWithReclaimedBasePrefix({
-      candidateTokenCount: topCandidate.tokenCount,
+  const triedCandidateIds = new Set<string>();
+  if (preferredCandidate !== undefined) {
+    triedCandidateIds.add(String(preferredCandidate.id));
+    const materialized = materializeBridgeSummarySelection({
+      candidate: preferredCandidate,
       selectedBaseItems: input.selectedBaseItems,
       pinRules: input.pinRules,
       availableBudget: input.availableBudget,
-    })
-  ) {
-    return topCandidate;
+      query: input.query,
+      tokenizer: input.tokenizer,
+    });
+
+    if (materialized !== undefined) {
+      return materialized;
+    }
+  }
+
+  for (const candidate of viableCandidates) {
+    if (triedCandidateIds.has(String(candidate.id))) {
+      continue;
+    }
+
+    const materialized = materializeBridgeSummarySelection({
+      candidate,
+      selectedBaseItems: input.selectedBaseItems,
+      pinRules: input.pinRules,
+      availableBudget: input.availableBudget,
+      query: input.query,
+      tokenizer: input.tokenizer,
+    });
+
+    if (materialized !== undefined) {
+      return materialized;
+    }
   }
 
   return undefined;
+};
+
+const buildBridgeScopedRawContender = (input: {
+  readonly hintIndex: number;
+  readonly limit: number;
+  readonly query: string;
+  readonly stageQueries: readonly { readonly stage: RetrievalStageLabel; readonly query: string }[];
+  readonly selectionOrder: number;
+  readonly bridgeCandidate: RankedSummaryRetrievalCandidate;
+  readonly scopedEventsBySequence: ReadonlyMap<number, LedgerEvent>;
+  readonly selectedRawEventIds: ReadonlySet<string>;
+  readonly availableBudget: number;
+}): Extract<RetrievalContender, { kind: 'raw_bundle' }> | undefined => {
+  const scopedCandidates = [...input.scopedEventsBySequence.values()]
+    .filter((event) => !input.selectedRawEventIds.has(String(event.id)))
+    .map((event) => {
+      let stageHits = 0;
+      let overlapCount = 0;
+      let specificityScore = 0;
+
+      for (const stageQuery of input.stageQueries) {
+        const stageOverlap = toQueryOverlapCount(stageQuery.query, event.content);
+        const stageSpecificity = toQuerySpecificityOverlapCount(stageQuery.query, event.content);
+        if (stageOverlap > 0 || stageSpecificity > 0) {
+          stageHits += 1;
+        }
+        if (stageOverlap > overlapCount) {
+          overlapCount = stageOverlap;
+        }
+        if (stageSpecificity > specificityScore) {
+          specificityScore = stageSpecificity;
+        }
+      }
+
+      const anchorCoverageCount = countAnchorCoverage(input.query, event.content);
+      const score =
+        specificityScore * 180 +
+        stageHits * 10 +
+        overlapCount +
+        anchorCoverageCount * 5;
+
+      return {
+        event,
+        stageHits,
+        overlapCount,
+        specificityScore,
+        anchorCoverageCount,
+        score,
+      };
+    })
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      if (right.specificityScore !== left.specificityScore) {
+        return right.specificityScore - left.specificityScore;
+      }
+      return left.event.sequence - right.event.sequence;
+    });
+
+  const topCandidate = scopedCandidates[0];
+  if (topCandidate === undefined) {
+    return undefined;
+  }
+
+  const bundle = buildRetrievedEventWindow({
+    seed: topCandidate.event,
+    eventsBySequence: input.scopedEventsBySequence,
+  }).filter((event) => !input.selectedRawEventIds.has(String(event.id)));
+  const bundleTokenCount = getEventBundleTokenCount(bundle);
+
+  if (bundle.length === 0 || bundleTokenCount > input.availableBudget) {
+    return undefined;
+  }
+
+  return {
+    kind: 'raw_bundle',
+    hintIndex: input.hintIndex,
+    limit: input.limit,
+    selectionOrder: input.selectionOrder,
+    score: Math.max(topCandidate.score, input.bridgeCandidate.score),
+    overlapCount: Math.max(topCandidate.overlapCount, input.bridgeCandidate.overlapCount),
+    specificityScore: Math.max(topCandidate.specificityScore, input.bridgeCandidate.specificityScore),
+    tokenCount: bundleTokenCount,
+    seedId: topCandidate.event.id,
+    source: 'bridge_scoped',
+    anchorCoverageCount: Math.max(topCandidate.anchorCoverageCount, input.bridgeCandidate.anchorCount),
+    windowStartSequence: topCandidate.event.sequence - 1,
+    windowEndSequence: topCandidate.event.sequence + 1,
+    events: bundle,
+  };
 };
 
 const compareScoreDensity = (
@@ -1021,6 +1473,26 @@ const compareRetrievalUnits = (
   left: Extract<PackableUnit, { kind: 'retrieval_bridge_summary' | 'retrieval_raw_bundle' }>,
   right: Extract<PackableUnit, { kind: 'retrieval_bridge_summary' | 'retrieval_raw_bundle' }>,
 ): number => {
+  if (left.kind === 'retrieval_raw_bundle' && right.kind === 'retrieval_raw_bundle') {
+    if (
+      left.source === 'bridge_scoped' &&
+      right.source !== 'bridge_scoped' &&
+      (left.specificityScore > right.specificityScore ||
+        (left.specificityScore === right.specificityScore && left.anchorCoverageCount > right.anchorCoverageCount))
+    ) {
+      return -1;
+    }
+
+    if (
+      right.source === 'bridge_scoped' &&
+      left.source !== 'bridge_scoped' &&
+      (right.specificityScore > left.specificityScore ||
+        (right.specificityScore === left.specificityScore && right.anchorCoverageCount > left.anchorCoverageCount))
+    ) {
+      return 1;
+    }
+  }
+
   const density = compareScoreDensity(left.score, left.tokenCount, right.score, right.tokenCount);
   if (density !== 0) {
     return density;
@@ -1036,6 +1508,9 @@ const compareRetrievalUnits = (
 const compareWeakestRawRetrievalUnits = (left: RetrievalRawBundleUnit, right: RetrievalRawBundleUnit): number => {
   if (left.specificityScore !== right.specificityScore) {
     return left.specificityScore - right.specificityScore;
+  }
+  if (left.anchorCoverageCount !== right.anchorCoverageCount) {
+    return left.anchorCoverageCount - right.anchorCoverageCount;
   }
   if (left.overlapCount !== right.overlapCount) {
     return left.overlapCount - right.overlapCount;
@@ -1299,6 +1774,7 @@ export class MaterializeContextUseCase {
         const candidateMap = new Map<string, {
           readonly summary: SummaryReference & {
             readonly content: string;
+            readonly retrievalText: string;
             readonly artifactIds: readonly ArtifactId[];
             readonly createdAt: Date;
           };
@@ -1336,9 +1812,10 @@ export class MaterializeContextUseCase {
 
           for (const summary of matchedSummaries) {
             const key = String(summary.id);
-            const overlapCount = toQueryOverlapCount(stageQuery.query, summary.content);
-            const specificityScore = toQuerySpecificityOverlapCount(stageQuery.query, summary.content);
-            const anchorCount = toSummaryAnchorCount(summary.content);
+            const retrievalText = summary.retrievalText ?? summary.content;
+            const overlapCount = toQueryOverlapCount(stageQuery.query, retrievalText);
+            const specificityScore = toQuerySpecificityOverlapCount(stageQuery.query, retrievalText);
+            const anchorCount = toSummaryAnchorCount(retrievalText);
             const existing = candidateMap.get(key);
             if (existing === undefined) {
               candidateMap.set(key, {
@@ -1462,7 +1939,35 @@ export class MaterializeContextUseCase {
           pinnedBaseTokenCount,
           selectedBaseItems: trimmedBase.selectedItems,
           pinRules,
+          query: retrievalQuery,
+          tokenizer: this.deps.tokenizer,
         });
+
+        if (selectedBridgeSummaryCandidate !== undefined && rawContenders.length < limit) {
+          const bridgeScopedEventsBySequence = await getWindowEventsBySequence(
+            selectedBridgeSummaryCandidate.candidate.summary.id,
+          );
+          const bridgeScopedRawContender = buildBridgeScopedRawContender({
+            hintIndex,
+            limit,
+            query: retrievalQuery,
+            stageQueries,
+            selectionOrder: retrievalSelectionOrder,
+            bridgeCandidate: selectedBridgeSummaryCandidate.candidate,
+            scopedEventsBySequence: bridgeScopedEventsBySequence,
+            selectedRawEventIds,
+            availableBudget,
+          });
+
+          if (bridgeScopedRawContender !== undefined) {
+            retrievalSelectionOrder += 1;
+            rawContenders.push(bridgeScopedRawContender);
+            for (const event of bridgeScopedRawContender.events) {
+              selectedRawEventIds.add(String(event.id));
+            }
+            selectedMessageIds.push(...bridgeScopedRawContender.events.map((event) => event.id));
+          }
+        }
 
         for (const candidate of rankedCandidates) {
           if (candidate.kind === 'message') {
@@ -1556,6 +2061,8 @@ export class MaterializeContextUseCase {
               specificityScore: candidate.specificityScore,
               tokenCount: bundleTokenCount,
               seedId: candidate.id,
+              source: 'generic',
+              anchorCoverageCount: countAnchorCoverage(retrievalQuery, bundle.map((event) => event.content).join('\n')),
               windowStartSequence: scopedSeedEvent.sequence - 1,
               windowEndSequence: scopedSeedEvent.sequence + 1,
               events: bundle,
@@ -1579,7 +2086,7 @@ export class MaterializeContextUseCase {
 
           const summary = candidate.summary;
           const alreadyInContext = selectedSummaryIdStrings.has(String(summary.id));
-          const isSelectedBridgeSummary = selectedBridgeSummaryCandidate?.id === summary.id;
+          const isSelectedBridgeSummary = selectedBridgeSummaryCandidate?.candidate.id === summary.id;
 
           if (alreadyInContext) {
             candidateDecisions.push({
@@ -1615,7 +2122,7 @@ export class MaterializeContextUseCase {
             continue;
           }
 
-          if (bridgeSummaryContender !== undefined || candidate.tokenCount > availableBudget) {
+          if (bridgeSummaryContender !== undefined) {
             candidateDecisions.push({
               summaryId: summary.id,
               score: candidate.score,
@@ -1623,7 +2130,7 @@ export class MaterializeContextUseCase {
               overlapCount: candidate.overlapCount,
               tokenCount: candidate.tokenCount,
               selected: false,
-              reason: bridgeSummaryContender !== undefined ? 'limit_reached' : 'over_budget',
+              reason: 'limit_reached',
             });
             continue;
           }
@@ -1641,13 +2148,10 @@ export class MaterializeContextUseCase {
             score: candidate.score,
             overlapCount: candidate.overlapCount,
             specificityScore: candidate.specificityScore,
-            tokenCount: candidate.tokenCount,
+            tokenCount: selectedBridgeSummaryCandidate.tokenCount,
             summaryReference,
             artifactIds: summary.artifactIds,
-            modelMessage: {
-              role: 'assistant',
-              content: `[Summary ID: ${summary.id}]\n${summary.content}`,
-            },
+            modelMessage: buildSummaryModelMessage(summary.id, selectedBridgeSummaryCandidate.content),
           };
           selectedSummaryIdStrings.add(String(summary.id));
           summaryArtifactIdsById.set(String(summary.id), summary.artifactIds);
@@ -1732,6 +2236,8 @@ export class MaterializeContextUseCase {
                 order: order++,
                 selectionOrder: contender.selectionOrder,
                 seedId: contender.seedId,
+                source: contender.source,
+                anchorCoverageCount: contender.anchorCoverageCount,
                 windowStartSequence: contender.windowStartSequence,
                 windowEndSequence: contender.windowEndSequence,
                 messageIds: contender.events.map((event) => event.id),

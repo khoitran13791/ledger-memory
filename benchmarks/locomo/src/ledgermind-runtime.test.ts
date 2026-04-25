@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createMimeType } from '@ledgermind/domain';
@@ -54,6 +56,35 @@ const fairness = {
   overheadTokens: 16,
   maxAnswerTokens: 32,
 } as const;
+
+const benchmarkFairness = {
+  modelName: 'gpt-5.4-mini',
+  promptTemplate:
+    'Based on the above context, write an answer in the form of a short phrase for the following question. Answer with exact words from the context whenever possible. If no information is available to answer the question, write "No information available".',
+  temperature: 0,
+  topP: 1,
+  tokenBudget: 3000,
+  overheadTokens: 300,
+  maxAnswerTokens: 50,
+} as const;
+
+let locomoDatasetPromise: Promise<readonly LocomoConversationSample[]> | undefined;
+
+const loadLocomoDataset = async (): Promise<readonly LocomoConversationSample[]> => {
+  locomoDatasetPromise ??= readFile(new URL('../data/locomo10.json', import.meta.url), 'utf8').then(
+    (content) => JSON.parse(content) as readonly LocomoConversationSample[],
+  );
+
+  return locomoDatasetPromise;
+};
+
+const loadLocomoSample = async (sampleId: string): Promise<LocomoConversationSample> => {
+  const dataset = await loadLocomoDataset();
+  const sample = dataset.find((entry) => entry.sample_id === sampleId);
+
+  expect(sample).toBeDefined();
+  return sample!;
+};
 
 describe('createLedgermindRuntime summarizer selection', () => {
   afterEach(() => {
@@ -344,6 +375,83 @@ describe('createLedgermindRuntime summarizer selection', () => {
     expect(runtimeTrace[0]?.outputContent).toContain('ZX-41');
     expect(runtimeTrace[0]?.outputContent).toContain('commitments');
     expect(fetchMock).toHaveBeenCalled();
+
+    await runtime.destroy();
+  });
+
+  it('keeps nested aggressive-summary evidence when later summaries are composed', async () => {
+    const runtime = await createLedgermindRuntime({
+      sample: await loadLocomoSample('conv-47'),
+      fairness: benchmarkFairness,
+      runtimeMode: 'static_materialize',
+      summarizerType: 'locomo_deterministic_head_tail_v1',
+      llmBaseUrl: undefined,
+      llmApiKey: undefined,
+      llmTimeoutMs: 1_000,
+      precompact: true,
+      artifactsEnabled: true,
+    });
+
+    const trace = runtime.flushSummarizationTrace();
+    const descendantSummary = trace.find(
+      (entry) => entry.outputContent.includes('ID: D1:10') && entry.outputContent.includes('ID: D1:11'),
+    );
+
+    expect(descendantSummary).toBeDefined();
+    expect(descendantSummary?.outputContent).toContain('[summary_fact]');
+    expect(descendantSummary?.outputContent).toContain('ID:D1:8');
+    expect(descendantSummary?.outputContent).toContain('Python and C++');
+    expect(descendantSummary?.outputContent).toContain('[shared file_1e489f041e489f041e489f041e489f041e489f041e489f041e489f041e489f04]');
+
+    await runtime.destroy();
+  });
+
+  it('keeps bird-answer evidence in later descendant summaries', async () => {
+    const runtime = await createLedgermindRuntime({
+      sample: await loadLocomoSample('conv-44'),
+      fairness: benchmarkFairness,
+      runtimeMode: 'static_materialize',
+      summarizerType: 'locomo_deterministic_head_tail_v1',
+      llmBaseUrl: undefined,
+      llmApiKey: undefined,
+      llmTimeoutMs: 1_000,
+      precompact: true,
+      artifactsEnabled: true,
+    });
+
+    const trace = runtime.flushSummarizationTrace();
+    const descendantSummary = trace.find(
+      (entry) => entry.outputContent.includes('ID: D1:19') && entry.outputContent.includes('ID:D1:16'),
+    );
+
+    expect(descendantSummary).toBeDefined();
+    expect(descendantSummary?.outputContent).toContain('[summary_fact]');
+    expect(descendantSummary?.outputContent).toContain('ID:D1:16');
+    expect(descendantSummary?.outputContent).toContain('Eagles have always mesmerized me');
+
+    await runtime.destroy();
+  });
+
+  it('keeps raw message formatting unchanged in deterministic summaries', async () => {
+    const runtime = await createLedgermindRuntime({
+      sample: await loadLocomoSample('conv-47'),
+      fairness: benchmarkFairness,
+      runtimeMode: 'static_materialize',
+      summarizerType: 'locomo_deterministic_head_tail_v1',
+      llmBaseUrl: undefined,
+      llmApiKey: undefined,
+      llmTimeoutMs: 1_000,
+      precompact: true,
+      artifactsEnabled: true,
+    });
+
+    const trace = runtime.flushSummarizationTrace();
+
+    expect(trace.length).toBeGreaterThan(0);
+    expect(trace[0]?.outputContent).toContain(
+      '[assistant] | 3:47 pm on 17 March, 2022 | James | DATE: 3:47 pm on 17 March, 2022 | ID: D1:8 | James: I\'ve worked with Python and C++',
+    );
+    expect(trace[0]?.outputContent).not.toContain('[summary_fact]');
 
     await runtime.destroy();
   });

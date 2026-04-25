@@ -128,6 +128,7 @@ const createEngine = (input: {
     summaryDag: deps.summaryDag,
     ledgerRead: deps.ledgerRead,
     artifactStore: deps.artifactStore,
+    tokenizer: sharedTokenizer,
     runCompaction: (compactionInput) => runCompactionUseCase.execute(compactionInput),
   });
 

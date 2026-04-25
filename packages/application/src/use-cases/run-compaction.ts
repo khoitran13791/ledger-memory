@@ -103,12 +103,14 @@ interface ResolvedContextItem {
   readonly tokenCount: TokenCount;
   readonly role?: MessageRole;
   readonly content: string;
+  readonly retrievalText: string;
   readonly artifactIds: readonly ArtifactId[];
 }
 
 type EscalationOutput = {
   readonly level: 1 | 2 | 3;
   readonly content: string;
+  readonly retrievalText?: string;
   readonly tokenCount: TokenCount;
   readonly preservedArtifactIds: readonly ArtifactId[];
 };
@@ -242,6 +244,195 @@ const uniqueSummaryIds = (summaryIds: readonly SummaryNodeId[]): readonly Summar
   }
 
   return ordered;
+};
+
+const SUMMARY_FACT_PREFIX = '[summary_fact]';
+const MAX_RETRIEVAL_SUMMARY_FACT_LINES_NORMAL = 6;
+const MAX_RETRIEVAL_SUMMARY_FACT_LINES_AGGRESSIVE = 4;
+const MAX_RETRIEVAL_TOTAL_FACT_LINES = 24;
+
+const normalizeRetrievalAnchors = (value: string): string =>
+  value
+    .replace(/\|\s*shared:([^\s|]+)/gi, ' | [shared $1]')
+    .replace(/\|\s*shared_caption:([^\s|]+)/gi, ' | [shared_caption $1]');
+
+const parseRetrievalFactParts = (
+  line: string,
+): {
+  readonly date?: string;
+  readonly id: string;
+  readonly speaker: string;
+  readonly fact: string;
+  readonly sharedId?: string;
+  readonly sharedCaptionId?: string;
+} | undefined => {
+  const sharedMatch = line.match(/\[shared\s+([^\]]+)\]/i);
+  const sharedCaptionMatch = line.match(/\[shared_caption\s+([^\]]+)\]/i);
+  const lineWithoutAnchors = line
+    .replace(/\s*\|\s*\[shared\s+[^\]]+\]/gi, '')
+    .replace(/\s*\|\s*\[shared_caption\s+[^\]]+\]/gi, '');
+  const segments = lineWithoutAnchors
+    .split('|')
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+  const idIndex = segments.findIndex((segment) => /^ID:/i.test(segment));
+
+  if (idIndex < 0) {
+    return undefined;
+  }
+
+  const id = segments[idIndex]?.replace(/^ID:\s*/i, '').trim();
+  const date = segments.find((segment) => /^DATE:/i.test(segment))?.replace(/^DATE:\s*/i, '').trim();
+  const factSegments = segments.slice(idIndex + 1);
+  const firstFactSegment = factSegments[0];
+
+  if (id === undefined || id.length === 0 || firstFactSegment === undefined) {
+    return undefined;
+  }
+
+  const separatorIndex = firstFactSegment.indexOf(':');
+  let speaker: string;
+  let fact: string;
+
+  if (separatorIndex > 0) {
+    speaker = firstFactSegment.slice(0, separatorIndex).trim();
+    fact = [firstFactSegment.slice(separatorIndex + 1).trim(), ...factSegments.slice(1)]
+      .filter((segment) => segment.length > 0)
+      .join(' | ')
+      .trim();
+  } else {
+    speaker = firstFactSegment.replace(/:\s*$/u, '').trim();
+    fact = factSegments.slice(1).join(' | ').trim();
+  }
+
+  if (speaker.length === 0 || fact.length === 0) {
+    return undefined;
+  }
+
+  return {
+    ...(date === undefined || date.length === 0 ? {} : { date }),
+    id,
+    speaker,
+    fact,
+    ...(sharedMatch?.[1] === undefined ? {} : { sharedId: sharedMatch[1].trim() }),
+    ...(sharedCaptionMatch?.[1] === undefined ? {} : { sharedCaptionId: sharedCaptionMatch[1].trim() }),
+  };
+};
+
+const toCarryForwardFactLine = (line: string): string | undefined => {
+  const trimmed = line.trim();
+  if (trimmed.length === 0 || !trimmed.includes('ID:')) {
+    return undefined;
+  }
+
+  const normalizedAnchors = normalizeRetrievalAnchors(trimmed);
+  if (normalizedAnchors.startsWith(SUMMARY_FACT_PREFIX)) {
+    return normalizedAnchors;
+  }
+
+  const parsed = parseRetrievalFactParts(normalizedAnchors);
+  if (parsed === undefined) {
+    return undefined;
+  }
+
+  const parts = [
+    SUMMARY_FACT_PREFIX,
+    parsed.date === undefined ? undefined : `DATE:${parsed.date}`,
+    `ID:${parsed.id}`,
+    parsed.speaker,
+    parsed.fact,
+    parsed.sharedId === undefined ? undefined : `[shared ${parsed.sharedId}]`,
+    parsed.sharedCaptionId === undefined ? undefined : `[shared_caption ${parsed.sharedCaptionId}]`,
+  ].filter((part): part is string => part !== undefined && part.length > 0);
+
+  return parts.join(' | ');
+};
+
+const extractCarryForwardFactLines = (input: {
+  readonly text: string;
+  readonly maxLines: number;
+}): readonly string[] => {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+
+  for (const line of input.text.split('\n')) {
+    const factLine = toCarryForwardFactLine(line);
+    if (factLine === undefined || seen.has(factLine)) {
+      continue;
+    }
+
+    seen.add(factLine);
+    lines.push(factLine);
+
+    if (lines.length >= input.maxLines) {
+      break;
+    }
+  }
+
+  return lines;
+};
+
+const buildDerivedRetrievalText = (input: {
+  readonly content: string;
+  readonly sourceItems: readonly ResolvedContextItem[];
+  readonly mode: 'normal' | 'aggressive';
+}): string => {
+  const perSummaryLimit =
+    input.mode === 'normal'
+      ? MAX_RETRIEVAL_SUMMARY_FACT_LINES_NORMAL
+      : MAX_RETRIEVAL_SUMMARY_FACT_LINES_AGGRESSIVE;
+  const carriedLines: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of input.sourceItems) {
+      const lines =
+      item.item.ref.type === 'summary'
+        ? extractCarryForwardFactLines({
+            text: item.retrievalText ?? item.content,
+            maxLines: perSummaryLimit,
+          })
+        : extractCarryForwardFactLines({
+            text: item.content,
+            maxLines: 1,
+          });
+
+    for (const line of lines) {
+      if (seen.has(line)) {
+        continue;
+      }
+
+      seen.add(line);
+      carriedLines.push(line);
+
+      if (carriedLines.length >= MAX_RETRIEVAL_TOTAL_FACT_LINES) {
+        break;
+      }
+    }
+
+    if (carriedLines.length >= MAX_RETRIEVAL_TOTAL_FACT_LINES) {
+      break;
+    }
+  }
+
+  if (carriedLines.length === 0) {
+    return input.content;
+  }
+
+  const contentLines = input.content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const combined = [...contentLines];
+  const existing = new Set(contentLines);
+
+  for (const line of carriedLines) {
+    if (!existing.has(line)) {
+      combined.push(line);
+      existing.add(line);
+    }
+  }
+
+  return combined.join('\n');
 };
 
 const describeTokenizerOutput = (output: unknown): string => {
@@ -579,6 +770,13 @@ export class RunCompactionUseCase {
           conversationId,
           kind: summaryKind,
           content: escalationOutput.content,
+          retrievalText:
+            escalationOutput.retrievalText ??
+            buildDerivedRetrievalText({
+              content: escalationOutput.content,
+              sourceItems: blockItems,
+              mode: escalationOutput.level === 1 ? 'normal' : 'aggressive',
+            }),
           tokenCount: escalationOutput.tokenCount,
           artifactIds: uniqueArtifactIds([
             ...sourceArtifactIds,
@@ -645,6 +843,7 @@ export class RunCompactionUseCase {
     readonly conversationId: RunCompactionInput['conversationId'];
     readonly kind: SummaryKind;
     readonly content: string;
+    readonly retrievalText: string;
     readonly tokenCount: TokenCount;
     readonly artifactIds: readonly ArtifactId[];
   }): SummaryNode {
@@ -659,6 +858,7 @@ export class RunCompactionUseCase {
       conversationId: input.conversationId,
       kind: input.kind,
       content: input.content,
+      retrievalText: input.retrievalText,
       tokenCount: input.tokenCount,
       artifactIds: input.artifactIds,
       createdAt: this.deps.clock.now(),
@@ -696,6 +896,7 @@ export class RunCompactionUseCase {
           tokenCount: event.tokenCount,
           role: event.role,
           content: event.content,
+          retrievalText: event.content,
           artifactIds: extractArtifactIdsFromMetadata(event.metadata),
         });
         continue;
@@ -712,6 +913,7 @@ export class RunCompactionUseCase {
         item,
         tokenCount: summary.tokenCount,
         content: summary.content,
+        retrievalText: summary.retrievalText,
         artifactIds: summary.artifactIds,
       });
     }
@@ -779,6 +981,7 @@ export class RunCompactionUseCase {
       return {
         level: 1,
         content: normalOutput.content,
+        ...(normalOutput.retrievalText === undefined ? {} : { retrievalText: normalOutput.retrievalText }),
         tokenCount: normalOutput.tokenCount,
         preservedArtifactIds: normalOutput.preservedArtifactIds,
       };
@@ -795,6 +998,9 @@ export class RunCompactionUseCase {
       return {
         level: 2,
         content: aggressiveOutput.content,
+        ...(aggressiveOutput.retrievalText === undefined
+          ? {}
+          : { retrievalText: aggressiveOutput.retrievalText }),
         tokenCount: aggressiveOutput.tokenCount,
         preservedArtifactIds: aggressiveOutput.preservedArtifactIds,
       };

@@ -443,6 +443,7 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
     summaryDag: persistenceDeps.summaryDag,
     ledgerRead: persistenceDeps.ledgerRead,
     artifactStore: persistenceDeps.artifactStore,
+    tokenizer,
     runCompaction: (input) => runCompactionUseCase.execute(input),
   });
 

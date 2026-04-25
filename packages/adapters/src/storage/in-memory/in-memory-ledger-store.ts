@@ -24,7 +24,29 @@ const sortEventsBySequence = (events: readonly LedgerEvent[]): LedgerEvent[] => 
   return [...events].sort((left, right) => left.sequence - right.sequence);
 };
 
-const toLowerCase = (value: string): string => value.toLocaleLowerCase();
+const toSearchTokens = (value: string): readonly string[] => {
+  return value
+    .toLocaleLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1);
+};
+
+const hasTokenOverlap = (content: string, query: string): boolean => {
+  const queryTokens = new Set(toSearchTokens(query));
+  if (queryTokens.size === 0) {
+    return false;
+  }
+
+  const contentTokens = new Set(toSearchTokens(content));
+  for (const token of queryTokens) {
+    if (contentTokens.has(token)) {
+      return true;
+    }
+  }
+
+  return false;
+};
 
 const getRangeBounds = (range?: SequenceRange): { start?: number; end?: number } => {
   if (!range) {
@@ -177,7 +199,7 @@ export class InMemoryLedgerStore implements LedgerAppendPort, LedgerReadPort {
     query: string,
     scope?: SummaryNodeId,
   ): Promise<readonly LedgerEvent[]> {
-    const normalizedQuery = toLowerCase(query.trim());
+    const normalizedQuery = query.trim();
     if (normalizedQuery.length === 0) {
       return [];
     }
@@ -190,7 +212,7 @@ export class InMemoryLedgerStore implements LedgerAppendPort, LedgerReadPort {
         return false;
       }
 
-      return toLowerCase(event.content).includes(normalizedQuery);
+      return hasTokenOverlap(event.content, normalizedQuery);
     });
   }
 

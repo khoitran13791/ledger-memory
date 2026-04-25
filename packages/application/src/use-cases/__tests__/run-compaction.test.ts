@@ -117,6 +117,7 @@ const createSummaryForTest = (input: {
   readonly tokenCount?: number;
   readonly kind?: SummaryNode['kind'];
   readonly content?: string;
+  readonly retrievalText?: string;
   readonly artifactIds?: readonly ArtifactId[];
 }): SummaryNode => {
   return createSummaryNode({
@@ -124,6 +125,7 @@ const createSummaryForTest = (input: {
     conversationId,
     kind: input.kind ?? 'leaf',
     content: input.content ?? `[Summary] ${input.id}`,
+    ...(input.retrievalText === undefined ? {} : { retrievalText: input.retrievalText }),
     tokenCount: createTokenCount(input.tokenCount ?? 12),
     ...(input.artifactIds === undefined ? {} : { artifactIds: input.artifactIds }),
     createdAt: createTimestamp(new Date('2026-01-01T00:00:30.000Z')),
@@ -215,6 +217,7 @@ class InvalidOutputTokenizer implements TokenizerPort {
 
 type PlannedSummaryOutput = {
   readonly content: string;
+  readonly retrievalText?: string;
   readonly tokenCount: number;
   readonly preservedArtifactIds?: readonly ArtifactId[];
 };
@@ -239,6 +242,7 @@ class TestSummarizer implements SummarizerPort {
 
     return {
       content: next.content,
+      ...(next.retrievalText === undefined ? {} : { retrievalText: next.retrievalText }),
       tokenCount: createTokenCount(next.tokenCount),
       preservedArtifactIds: next.preservedArtifactIds ?? input.artifactIdsToPreserve,
     };
@@ -1169,6 +1173,102 @@ describe('RunCompactionUseCase', () => {
       createArtifactId('file_c'),
       createArtifactId('file_d'),
     ]);
+  });
+
+  it('persists summarizer-provided retrievalText on created summary nodes', async () => {
+    const first = createEventForTest({ id: 'evt_retrieval_text_1', sequence: 1, tokenCount: 10 });
+    const second = createEventForTest({ id: 'evt_retrieval_text_2', sequence: 2, tokenCount: 10 });
+    const third = createEventForTest({ id: 'evt_retrieval_text_3', sequence: 3, tokenCount: 10 });
+    const fourth = createEventForTest({ id: 'evt_retrieval_text_4', sequence: 4, tokenCount: 10 });
+    const tailA = createEventForTest({ id: 'evt_retrieval_text_5', sequence: 5, tokenCount: 10 });
+    const tailB = createEventForTest({ id: 'evt_retrieval_text_6', sequence: 6, tokenCount: 10 });
+    const tailC = createEventForTest({ id: 'evt_retrieval_text_7', sequence: 7, tokenCount: 10 });
+
+    const state = createState({
+      events: [first, second, third, fourth, tailA, tailB, tailC],
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(first.id) }),
+        createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(second.id) }),
+        createContextItem({ conversationId, position: 2, ref: createMessageContextItemRef(third.id) }),
+        createContextItem({ conversationId, position: 3, ref: createMessageContextItemRef(fourth.id) }),
+        createContextItem({ conversationId, position: 4, ref: createMessageContextItemRef(tailA.id) }),
+        createContextItem({ conversationId, position: 5, ref: createMessageContextItemRef(tailB.id) }),
+        createContextItem({ conversationId, position: 6, ref: createMessageContextItemRef(tailC.id) }),
+      ],
+    });
+
+    const summarizer = new TestSummarizer([
+      {
+        content: '[Summary] retrieval bridge',
+        retrievalText: '[Summary] retrieval bridge\n[summary_fact] ID:D1:8 | James | Python and C++',
+        tokenCount: 8,
+      },
+    ]);
+
+    const { useCase, dagControls } = createUseCase({ state, summarizer });
+
+    await useCase.execute({
+      conversationId,
+      trigger: 'soft',
+    });
+
+    expect(dagControls.createNodeCalls[0]?.retrievalText).toBe(
+      '[Summary] retrieval bridge\n[summary_fact] ID:D1:8 | James | Python and C++',
+    );
+  });
+
+  it('derives retrievalText from carried raw and nested summary evidence when summarizer omits it', async () => {
+    const rawEvidence = createEventForTest({
+      id: 'evt_derived_retrieval_raw',
+      sequence: 1,
+      tokenCount: 10,
+      content: "DATE: 3:47 pm | ID:D1:8 | James | I've worked with Python and C++.",
+    });
+    const bridgeSummary = createSummaryForTest({
+      id: 'sum_derived_retrieval_parent',
+      tokenCount: 10,
+      content: '[Summary] generic nested summary',
+      retrievalText:
+        '[Summary] generic nested summary\n[summary_fact] ID:D1:16 | Andrew | Eagles have always mesmerized me. | [shared file_eagle]',
+    });
+    const third = createEventForTest({ id: 'evt_derived_retrieval_3', sequence: 3, tokenCount: 10 });
+    const fourth = createEventForTest({ id: 'evt_derived_retrieval_4', sequence: 4, tokenCount: 10 });
+    const tailA = createEventForTest({ id: 'evt_derived_retrieval_5', sequence: 5, tokenCount: 10 });
+    const tailB = createEventForTest({ id: 'evt_derived_retrieval_6', sequence: 6, tokenCount: 10 });
+    const tailC = createEventForTest({ id: 'evt_derived_retrieval_7', sequence: 7, tokenCount: 10 });
+
+    const state = createState({
+      events: [rawEvidence, third, fourth, tailA, tailB, tailC],
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(rawEvidence.id) }),
+        createContextItem({ conversationId, position: 1, ref: createSummaryContextItemRef(bridgeSummary.id) }),
+        createContextItem({ conversationId, position: 2, ref: createMessageContextItemRef(third.id) }),
+        createContextItem({ conversationId, position: 3, ref: createMessageContextItemRef(fourth.id) }),
+        createContextItem({ conversationId, position: 4, ref: createMessageContextItemRef(tailA.id) }),
+        createContextItem({ conversationId, position: 5, ref: createMessageContextItemRef(tailB.id) }),
+        createContextItem({ conversationId, position: 6, ref: createMessageContextItemRef(tailC.id) }),
+      ],
+      summaries: [bridgeSummary],
+    });
+
+    const summarizer = new TestSummarizer([
+      {
+        content: '[Summary] derived retrieval bridge',
+        tokenCount: 8,
+      },
+    ]);
+
+    const { useCase, dagControls } = createUseCase({ state, summarizer });
+
+    await useCase.execute({
+      conversationId,
+      trigger: 'soft',
+    });
+
+    expect(dagControls.createNodeCalls[0]?.retrievalText).toContain('ID:D1:8 | James | I\'ve worked with Python and C++.');
+    expect(dagControls.createNodeCalls[0]?.retrievalText).toContain(
+      '[summary_fact] ID:D1:16 | Andrew | Eagles have always mesmerized me. | [shared file_eagle]',
+    );
   });
 
   it('creates condensed summaries and parent edges when candidate contains only summaries', async () => {

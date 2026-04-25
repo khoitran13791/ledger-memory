@@ -101,7 +101,8 @@ describe('InMemorySummaryDag', () => {
       id: createSummaryNodeId('sum_alpha'),
       conversationId,
       kind: 'leaf',
-      content: 'Auth system summary with token rotation notes',
+      content: 'General bridge summary',
+      retrievalText: 'Auth system summary with token rotation notes',
       tokenCount: createTokenCount(8),
       createdAt: createTimestamp(new Date('2026-01-01T00:10:00.000Z')),
     });
@@ -109,7 +110,8 @@ describe('InMemorySummaryDag', () => {
       id: createSummaryNodeId('sum_beta'),
       conversationId,
       kind: 'leaf',
-      content: 'Payments summary with retry notes',
+      content: 'General bridge summary',
+      retrievalText: 'Payments summary with retry notes',
       tokenCount: createTokenCount(6),
       createdAt: createTimestamp(new Date('2026-01-01T00:11:00.000Z')),
     });
@@ -117,7 +119,8 @@ describe('InMemorySummaryDag', () => {
       id: createSummaryNodeId('sum_gamma'),
       conversationId,
       kind: 'leaf',
-      content: 'Auth system summary',
+      content: 'General bridge summary',
+      retrievalText: 'Auth system summary',
       tokenCount: createTokenCount(4),
       createdAt: createTimestamp(new Date('2026-01-01T00:12:00.000Z')),
     });

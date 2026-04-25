@@ -45,7 +45,7 @@ From repo root:
 pnpm benchmark:locomo
 pnpm benchmark:locomo:smoke
 pnpm benchmark:locomo:canary
-pnpm benchmark:locomo -- --prediction-mode llm --model gpt-5.4 --llm-base-url http://localhost:8317/v1 --llm-api-key proxypal-local --llm-timeout-ms 120000
+pnpm benchmark:locomo -- --prediction-mode llm --model gpt-5.4-mini --llm-base-url http://localhost:8317/v1 --llm-api-key proxypal-local --llm-timeout-ms 120000
 ```
 
 Direct package commands:
@@ -59,7 +59,7 @@ pnpm --filter @ledgermind/benchmark-locomo benchmark --smoke --include-ledgermin
 pnpm --filter @ledgermind/benchmark-locomo benchmark --smoke --baselines ledgermind_static_materialize,ledgermind_static_materialize_raw_turn_injection,rag --seeds 0
 pnpm --filter @ledgermind/benchmark-locomo benchmark --smoke --runtime-mode agentic_loop --baselines ledgermind,ledgermind_raw_turn_injection,rag --seeds 0
 pnpm --filter @ledgermind/benchmark-locomo benchmark --smoke --include-ledgermind-diagnostics --seeds 0 --ledgermind-raw-turn-injection-top-k 4 --ledgermind-raw-turn-injection-max-tokens 256
-pnpm --filter @ledgermind/benchmark-locomo benchmark --prediction-mode llm --model gpt-5.4 --llm-base-url http://localhost:8317/v1 --llm-api-key proxypal-local --baselines ledgermind_static_materialize,truncation,rag --max-examples 200
+pnpm --filter @ledgermind/benchmark-locomo benchmark --prediction-mode llm --model gpt-5.4-mini --llm-base-url http://localhost:8317/v1 --llm-api-key proxypal-local --baselines ledgermind_static_materialize,truncation,rag --max-examples 200
 ```
 
 ### Useful flags

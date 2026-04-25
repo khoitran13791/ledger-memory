@@ -222,6 +222,7 @@ const createUseCases = (deps: {
       summaryDag: deps.summaryDag,
       ledgerRead: deps.ledgerRead,
       artifactStore: deps.artifactStore,
+      tokenizer,
       runCompaction: (input) => runCompactionUseCase.execute(input),
     }),
     checkIntegrityUseCase: new CheckIntegrityUseCase({

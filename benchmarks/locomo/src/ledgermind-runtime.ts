@@ -13,6 +13,7 @@ import {
   type ConversationPort,
   type LedgerReadPort,
   type MemoryEngine,
+  type SummarizationMode,
   type SummarizerPort,
   type SummaryDagPort,
   type UnitOfWorkPort,
@@ -138,6 +139,57 @@ const toHeadTailMessages = (input: {
   return deduped;
 };
 
+const isDeterministicSummaryContent = (content: string): boolean => {
+  return content.startsWith('[Summary]') || content.startsWith('[Aggressive Summary]');
+};
+
+const normalizeNestedAnchor = (input: string): string => {
+  return input
+    .replace(/\|\s*shared:([^\s|]+)/gi, ' | [shared $1]')
+    .replace(/\|\s*shared_caption:([^\s|]+)/gi, ' | [shared_caption $1]');
+};
+
+const toCarryForwardSummaryFactLine = (line: string): string | undefined => {
+  const trimmed = line.trim();
+  if (trimmed.length === 0 || !trimmed.includes('ID:')) {
+    return undefined;
+  }
+
+  if (trimmed.startsWith('[summary_fact]')) {
+    return normalizeNestedAnchor(trimmed);
+  }
+
+  const normalizedAnchors = normalizeNestedAnchor(trimmed);
+  const sharedMatch = normalizedAnchors.match(/\[shared\s+([^\]]+)\]/i);
+  const sharedCaptionMatch = normalizedAnchors.match(/\[shared_caption\s+([^\]]+)\]/i);
+  const lineWithoutAnchors = normalizedAnchors
+    .replace(/\s*\|\s*\[shared\s+[^\]]+\]/gi, '')
+    .replace(/\s*\|\s*\[shared_caption\s+[^\]]+\]/gi, '');
+
+  const idMatch = lineWithoutAnchors.match(/\|\s*ID:\s*([^|]+)/i);
+  const dateMatch = lineWithoutAnchors.match(/DATE:\s*([^|]+)/i);
+  const speakerAndFactMatch = lineWithoutAnchors.match(/\|\s*ID:[^|]+\|\s*([^:|]+):\s*(.+)$/);
+
+  const id = idMatch?.[1]?.trim();
+  const speaker = speakerAndFactMatch?.[1]?.trim();
+  const fact = speakerAndFactMatch?.[2]?.trim();
+  if (id === undefined || speaker === undefined || fact === undefined || fact.length === 0) {
+    return undefined;
+  }
+
+  const parts = [
+    '[summary_fact]',
+    dateMatch?.[1] === undefined ? undefined : `DATE:${dateMatch[1].trim()}`,
+    `ID:${id}`,
+    speaker,
+    fact,
+    sharedMatch?.[1] === undefined ? undefined : `[shared ${sharedMatch[1].trim()}]`,
+    sharedCaptionMatch?.[1] === undefined ? undefined : `[shared_caption ${sharedCaptionMatch[1].trim()}]`,
+  ].filter((part): part is string => part !== undefined && part.length > 0);
+
+  return parts.join(' | ');
+};
+
 const toDeterministicSummaryLine = (message: { readonly role: string; readonly content: string }): string => {
   const dateMatch = message.content.match(/DATE:\s*([^|]+)/);
   const speakerMatch = message.content.match(/\|\s*ID:[^|]*\|\s*([^:]+):/);
@@ -161,6 +213,43 @@ const toDeterministicSummaryLine = (message: { readonly role: string; readonly c
   return parts.join(' | ');
 };
 
+const toDeterministicSummaryLines = (input: {
+  readonly message: { readonly role: string; readonly content: string };
+  readonly mode: SummarizationMode;
+}): readonly string[] => {
+  if (!isDeterministicSummaryContent(input.message.content)) {
+    return [toDeterministicSummaryLine(input.message)];
+  }
+
+  const carriedFactLimit = input.mode === 'normal' ? 6 : 4;
+  const carriedFacts: string[] = [];
+
+  for (const line of input.message.content.split('\n')) {
+    const trimmed = line.trim();
+    if (
+      trimmed.length === 0 ||
+      trimmed === '[Summary]' ||
+      trimmed === '[Aggressive Summary]' ||
+      trimmed.startsWith('summary_call:')
+    ) {
+      continue;
+    }
+
+    const carryForwardLine = toCarryForwardSummaryFactLine(trimmed);
+    if (carryForwardLine === undefined) {
+      continue;
+    }
+
+    carriedFacts.push(carryForwardLine);
+  }
+
+  if (carriedFacts.length > 0) {
+    return carriedFacts.slice(-carriedFactLimit);
+  }
+
+  return [toDeterministicSummaryLine(input.message)];
+};
+
 const createDeterministicHeadTailSummarizer = (input: {
   readonly traceCollector: LocomoSummarizationTraceCollector;
 }): SummarizerPort => {
@@ -176,7 +265,12 @@ const createDeterministicHeadTailSummarizer = (input: {
         limit,
       });
 
-      const lines = deduped.map((message) => toDeterministicSummaryLine(message));
+      const lines = deduped.flatMap((message) =>
+        toDeterministicSummaryLines({
+          message,
+          mode: summarizationInput.mode,
+        }),
+      );
       const prefix = summarizationInput.mode === 'normal' ? '[Summary]' : '[Aggressive Summary]';
       const content = `${prefix}\nsummary_call:${summarizeCallCount}\n${lines.join('\n')}`;
       const tokenCount = sharedTokenizer.countTokens(content);
@@ -726,6 +820,7 @@ const createEngine = (input: {
     summaryDag: deps.summaryDag,
     ledgerRead: deps.ledgerRead,
     artifactStore: deps.artifactStore,
+    tokenizer: sharedTokenizer,
     runCompaction: (input) => runCompactionUseCase.execute(input),
   });
 

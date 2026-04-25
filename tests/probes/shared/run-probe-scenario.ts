@@ -111,6 +111,7 @@ const createEngine = (input: CreateUseCasesInput): MemoryEngine => {
     summaryDag: input.summaryDag,
     ledgerRead: input.ledgerRead,
     artifactStore: input.artifactStore,
+    tokenizer,
     runCompaction: (runInput) => runCompactionUseCase.execute(runInput),
   });
 

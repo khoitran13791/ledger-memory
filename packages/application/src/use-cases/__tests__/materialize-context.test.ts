@@ -36,6 +36,7 @@ import {
 
 import { InvalidReferenceError } from '../../errors/application-errors';
 import type { EventPublisherPort } from '../../ports/driven/events/event-publisher.port';
+import type { TokenizerPort } from '../../ports/driven/llm/tokenizer.port';
 import type { ArtifactStorePort } from '../../ports/driven/persistence/artifact-store.port';
 import type { ContextProjectionPort } from '../../ports/driven/persistence/context-projection.port';
 import type { ConversationPort } from '../../ports/driven/persistence/conversation.port';
@@ -98,6 +99,7 @@ const createTestMessage = (input?: {
 const createTestSummary = (input?: {
   readonly id?: SummaryNode['id'];
   readonly content?: string;
+  readonly retrievalText?: string;
   readonly tokenCount?: number;
   readonly artifactIds?: readonly ArtifactId[];
 }): SummaryNode => {
@@ -106,6 +108,7 @@ const createTestSummary = (input?: {
     conversationId,
     kind: 'leaf',
     content: input?.content ?? '[Summary] summary-content',
+    ...(input?.retrievalText === undefined ? {} : { retrievalText: input.retrievalText }),
     tokenCount: createTokenCount(input?.tokenCount ?? 10),
     ...(input?.artifactIds === undefined ? {} : { artifactIds: input.artifactIds }),
     createdAt: createTimestamp(new Date('2026-01-01T00:00:02.000Z')),
@@ -326,6 +329,16 @@ class TestRunCompaction {
   }
 }
 
+class TestTokenizer implements TokenizerPort {
+  countTokens(text: string) {
+    return createTokenCount(Math.max(1, Math.ceil(text.length / 4)));
+  }
+
+  estimateFromBytes(byteLength: number) {
+    return createTokenCount(Math.max(1, Math.ceil(byteLength / 4)));
+  }
+}
+
 class SpyEventPublisher implements EventPublisherPort {
   readonly events: DomainEvent[] = [];
   publish(event: DomainEvent): void {
@@ -389,6 +402,7 @@ const createUseCase = (input?: {
     summaryDag: new TestSummaryDagPort(state),
     ledgerRead: new TestLedgerReadPort(state),
     artifactStore: new TestArtifactStorePort(state),
+    tokenizer: new TestTokenizer(),
     runCompaction: (compactionInput) => runCompaction.execute(compactionInput),
     ...(input?.eventPublisher === undefined ? {} : { eventPublisher: input.eventPublisher }),
   };
@@ -1964,6 +1978,207 @@ describe('MaterializeContextUseCase', () => {
         }),
       ]),
     );
+  });
+
+  it('ranks bridge summaries using retrievalText for abstract questions', async () => {
+    const baseOne = createTestMessage({
+      id: createEventId('evt_bridge_retrieval_text_base_1'),
+      content: 'base-context-1',
+      tokenCount: 16,
+      sequence: 941,
+    });
+    const baseTwo = createTestMessage({
+      id: createEventId('evt_bridge_retrieval_text_base_2'),
+      content: 'base-context-2',
+      tokenCount: 16,
+      sequence: 942,
+    });
+
+    const answerBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_retrieval_text_answer'),
+      content: '[Summary] James talked with John about work.',
+      retrievalText:
+        "[Summary] James talked with John about work.\n[summary_fact] ID:D1:8 | James | I've worked with Python and C++.",
+      tokenCount: 18,
+    });
+    const genericBridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_retrieval_text_generic'),
+      content: '[Summary] James enjoys programming projects with John.',
+      retrievalText: '[Summary] James enjoys programming projects with John.',
+      tokenCount: 18,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(baseOne.id) }),
+        createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(baseTwo.id) }),
+      ],
+      events: [baseOne, baseTwo],
+      summaries: [answerBridgeSummary, genericBridgeSummary],
+      summarySearchResults: {
+        'What programming languages has James worked with?': [answerBridgeSummary, genericBridgeSummary],
+        'what programming languages has james worked with': [answerBridgeSummary, genericBridgeSummary],
+        'What James': [answerBridgeSummary, genericBridgeSummary],
+      },
+      contextTokenCount: 32,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 64,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'What programming languages has James worked with?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([answerBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([answerBridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.candidateDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summaryId: answerBridgeSummary.id,
+          selected: true,
+          reason: 'selected',
+        }),
+        expect.objectContaining({
+          summaryId: genericBridgeSummary.id,
+          selected: false,
+        }),
+      ]),
+    );
+  });
+
+  it('recovers exact raw evidence from the selected bridge summary scope when global raw search misses', async () => {
+    const baseOne = createTestMessage({
+      id: createEventId('evt_bridge_scoped_recovery_base_1'),
+      content: 'base-context-1',
+      tokenCount: 16,
+      sequence: 951,
+    });
+    const baseTwo = createTestMessage({
+      id: createEventId('evt_bridge_scoped_recovery_base_2'),
+      content: 'base-context-2',
+      tokenCount: 16,
+      sequence: 952,
+    });
+
+    const bridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_scoped_recovery'),
+      content: '[Summary] James answered a programming question.',
+      retrievalText:
+        "[Summary] James answered a programming question.\n[summary_fact] ID:D1:8 | James | I've worked with Python and C++.",
+      tokenCount: 18,
+    });
+
+    const rawPrevious = createTestMessage({
+      id: createEventId('evt_bridge_scoped_recovery_prev'),
+      content: 'DATE: 3:47 pm | ID: D1:7 | John: What else have you built?',
+      tokenCount: 8,
+      sequence: 201,
+    });
+    const rawSeed = createTestMessage({
+      id: createEventId('evt_bridge_scoped_recovery_seed'),
+      content:
+        "DATE: 3:47 pm | ID: D1:8 | James: I've worked with Python and C++. I've built a website and some game mods.",
+      tokenCount: 12,
+      sequence: 202,
+    });
+    const rawNext = createTestMessage({
+      id: createEventId('evt_bridge_scoped_recovery_next'),
+      content: 'DATE: 3:47 pm | ID: D1:9 | John: That sounds awesome.',
+      tokenCount: 8,
+      sequence: 203,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(baseOne.id) }),
+        createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(baseTwo.id) }),
+      ],
+      events: [baseOne, baseTwo, rawPrevious, rawSeed, rawNext],
+      summaries: [bridgeSummary],
+      expandedSummaryMessages: {
+        [bridgeSummary.id]: [rawPrevious, rawSeed, rawNext],
+      },
+      summarySearchResults: {
+        'What programming languages has James worked with?': [bridgeSummary],
+        'what programming languages has james worked with': [bridgeSummary],
+        'What James': [bridgeSummary],
+      },
+      eventSearchResults: {
+        'What programming languages has James worked with?': [],
+        'what programming languages has james worked with': [],
+        'What James': [],
+      },
+      contextTokenCount: 32,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 96,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'What programming languages has James worked with?', limit: 2 }],
+    });
+
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([bridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedMessageIds).toEqual([rawPrevious.id, rawSeed.id, rawNext.id]);
+    expect(output.modelMessages.some((message) => message.content === rawSeed.content)).toBe(true);
+  });
+
+  it('compresses a chosen bridge summary and preserves the best evidence line when the full bridge cannot fit', async () => {
+    const baseOne = createTestMessage({
+      id: createEventId('evt_bridge_compression_base_1'),
+      content: 'base-context-1',
+      tokenCount: 20,
+      sequence: 961,
+    });
+    const baseTwo = createTestMessage({
+      id: createEventId('evt_bridge_compression_base_2'),
+      content: 'base-context-2',
+      tokenCount: 20,
+      sequence: 962,
+    });
+
+    const bridgeSummary = createTestSummary({
+      id: createSummaryNodeId('sum_bridge_compression'),
+      content:
+        '[Summary] James answered in detail about his programming background, the languages he uses, the projects he has shipped, the tools he learned, and the types of software he keeps experimenting with whenever friends ask about his experience.',
+      retrievalText:
+        "[Summary] James answered in detail about his programming background, the languages he uses, the projects he has shipped, the tools he learned, and the types of software he keeps experimenting with whenever friends ask about his experience.\n[summary_fact] ID:D1:8 | James | I've worked with Python and C++ and built a website plus several game mods for friends.",
+      tokenCount: 72,
+    });
+
+    const state = createState({
+      contextItems: [
+        createContextItem({ conversationId, position: 0, ref: createMessageContextItemRef(baseOne.id) }),
+        createContextItem({ conversationId, position: 1, ref: createMessageContextItemRef(baseTwo.id) }),
+      ],
+      events: [baseOne, baseTwo],
+      summaries: [bridgeSummary],
+      summarySearchResults: {
+        'What programming languages has James worked with?': [bridgeSummary],
+        'what programming languages has james worked with': [bridgeSummary],
+        'What James': [bridgeSummary],
+      },
+      contextTokenCount: 40,
+    });
+
+    const { useCase } = createUseCase({ state });
+
+    const output = await useCase.execute({
+      conversationId,
+      budgetTokens: 60,
+      overheadTokens: 0,
+      retrievalHints: [{ query: 'What programming languages has James worked with?', limit: 1 }],
+    });
+
+    expect(output.summaryReferences.map((reference) => reference.id)).toEqual([bridgeSummary.id]);
+    expect(output.retrievalDiagnostics?.[0]?.selectedSummaryIds).toEqual([bridgeSummary.id]);
+    expect(output.modelMessages.some((message) => message.content.includes('Python and C++'))).toBe(true);
+    expect(output.modelMessages.some((message) => message.content === `[Summary ID: ${bridgeSummary.id}]\n${bridgeSummary.content}`)).toBe(false);
   });
 
   it('keeps a retrieved evidence window by dropping stale base messages under budget pressure', async () => {

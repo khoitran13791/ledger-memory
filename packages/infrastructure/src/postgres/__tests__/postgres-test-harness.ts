@@ -75,9 +75,11 @@ CREATE TABLE IF NOT EXISTS summary_nodes (
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   kind summary_kind NOT NULL,
   content TEXT NOT NULL,
+  retrieval_text TEXT NOT NULL,
   token_count INTEGER NOT NULL CHECK (token_count >= 0),
   artifact_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  retrieval_text_tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', retrieval_text)) STORED
 );
 
 CREATE TABLE IF NOT EXISTS summary_message_edges (
@@ -161,7 +163,7 @@ CREATE INDEX IF NOT EXISTS idx_summary_nodes_conv
   ON summary_nodes(conversation_id);
 
 CREATE INDEX IF NOT EXISTS idx_summary_nodes_tsv
-  ON summary_nodes USING GIN (to_tsvector('english', content));
+  ON summary_nodes USING GIN (retrieval_text_tsv);
 
 CREATE INDEX IF NOT EXISTS idx_context_items_conv
   ON context_items(conversation_id, position);

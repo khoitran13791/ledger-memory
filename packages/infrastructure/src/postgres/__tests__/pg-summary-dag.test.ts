@@ -113,7 +113,7 @@ describe('PgSummaryDag', () => {
 
       const summaryTsvDef = byName.get('idx_summary_nodes_tsv');
       expect(summaryTsvDef).toContain('USING gin');
-      expect(summaryTsvDef).toContain("to_tsvector('english'::regconfig, content)");
+      expect(summaryTsvDef).toContain('retrieval_text_tsv');
     } finally {
       await harness.destroy();
     }
@@ -176,7 +176,8 @@ describe('PgSummaryDag', () => {
         id: createSummaryNodeId('sum_alpha'),
         conversationId,
         kind: 'leaf',
-        content: 'Auth system summary',
+        content: 'General bridge summary',
+        retrievalText: 'Auth system summary',
         tokenCount: createTokenCount(4),
         createdAt: createTimestamp(new Date('2026-01-01T00:10:00.000Z')),
       });
@@ -184,7 +185,8 @@ describe('PgSummaryDag', () => {
         id: createSummaryNodeId('sum_beta'),
         conversationId,
         kind: 'leaf',
-        content: 'Payments summary',
+        content: 'General bridge summary',
+        retrievalText: 'Payments summary',
         tokenCount: createTokenCount(4),
         createdAt: createTimestamp(new Date('2026-01-01T00:10:00.000Z')),
       });

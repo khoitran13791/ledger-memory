@@ -2,9 +2,26 @@
 
 LedgerMind is a framework-agnostic memory engine for LLM agents, inspired by Lossless Context Management (LCM). It provides durable event storage, DAG-based summaries, deterministic compaction, and retrieval tools for long-running agent workflows.
 
-## Status
+## Current status
 
-LedgerMind is in early implementation. The monorepo structure and core packages are in place, with active development across domain, application, adapters, infrastructure, and SDK layers.
+LedgerMind is now a working alpha, not just a scaffold. The core engine packages, SDK, MCP server, PostgreSQL backend, operator worker, Claude Code integration, and benchmark harnesses are all present in this repo and covered by the monorepo build/test pipeline.
+
+Implemented today:
+
+- append-only ledger storage and context projection
+- hierarchical summary DAG, deterministic compaction, and materialized context retrieval
+- artifact storage plus type-aware exploration hooks
+- in-memory and PostgreSQL persistence paths
+- SDK factories for in-memory, PostgreSQL, and generic engine creation
+- durable operator APIs via `llmMap()`, `agenticMap()`, and `getOperatorRun()`
+- MCP server, operator worker app, and Claude Code integration package
+- offline LOCOMO and LongMemEval benchmark harnesses
+
+Still evolving:
+
+- retrieval quality and answer quality on benchmark suites
+- broader runtime integrations and production hardening
+- benchmark coverage and reporting depth, especially outside LOCOMO
 
 ## Core capabilities
 
@@ -12,6 +29,7 @@ LedgerMind is in early implementation. The monorepo structure and core packages 
 - Hierarchical summary DAG with provenance-aware expansion
 - Context compaction and materialization use cases
 - Type-aware artifact exploration via pluggable explorers
+- Durable operator execution and inspection APIs
 - Clean Architecture package boundaries for extensibility and testability
 
 ## Monorepo layout
@@ -21,6 +39,12 @@ LedgerMind is in early implementation. The monorepo structure and core packages 
 - `packages/adapters` — in-memory adapters, explorers, tokenizer, auth, jobs, tools
 - `packages/infrastructure` — PostgreSQL + filesystem implementations
 - `packages/sdk` — composition root and public engine factory APIs
+- `packages/mcp-server` — stdio MCP server exposing LedgerMind tools
+- `packages/claude-code` — Claude Code hooks and integration helpers
+- `apps/operator-worker` — worker entrypoint for durable operator runs
+- `benchmarks/locomo` — LOCOMO evaluation harness with smoke/canary/full runs
+- `benchmarks/longmemeval` — LongMemEval harness (currently benchmark-spike maturity)
+- `examples` — example MCP configs for Claude Code and Amp
 - `tests` — golden, conformance, probe, regression, and quality suites
 - `docs` — architecture/design/testing/reference documentation
 
@@ -39,17 +63,68 @@ pnpm test
 pnpm build
 ```
 
-## SDK usage (local development)
+## SDK usage
 
 ```ts
-import { createInMemoryMemoryEngine, createPostgresMemoryEngine } from '@ledgermind/sdk';
+import {
+  createInMemoryMemoryEngine,
+  createMemoryEngine,
+  createPostgresMemoryEngine,
+} from '@ledgermind/sdk';
 
 const memory = createInMemoryMemoryEngine();
 
 const postgresMemory = createPostgresMemoryEngine({
   connectionString: process.env.DATABASE_URL!,
 });
+
+const customMemory = createMemoryEngine({
+  storage: { type: 'in-memory' },
+});
 ```
+
+### Engine surface
+
+`MemoryEngine` currently exposes:
+
+- `append`
+- `materializeContext`
+- `runCompaction`
+- `checkIntegrity`
+- `grep`
+- `describe`
+- `expand`
+- `storeArtifact`
+- `exploreArtifact`
+- `llmMap`
+- `agenticMap`
+- `getOperatorRun`
+
+## Common commands
+
+Repo-wide:
+
+- `pnpm typecheck`
+- `pnpm lint`
+- `pnpm test`
+- `pnpm build`
+- `pnpm format`
+- `pnpm format:write`
+
+Integration and worker entrypoints:
+
+- `pnpm mcp:dev`
+- `pnpm mcp:smoke`
+- `pnpm worker:operator`
+- `pnpm worker:operator:test`
+
+Benchmark entrypoints:
+
+- `pnpm benchmark:locomo`
+- `pnpm benchmark:locomo:smoke`
+- `pnpm benchmark:locomo:canary`
+- `pnpm benchmark:longmemeval`
+- `pnpm benchmark:longmemeval:smoke`
 
 ## PostgreSQL migrations
 
@@ -59,7 +134,7 @@ pnpm --filter @ledgermind/infrastructure migrate:status
 pnpm --filter @ledgermind/infrastructure migrate:down
 ```
 
-## Durable Operators
+## Durable operators
 
 LedgerMind now exposes durable operator recursion through `llmMap()`, `agenticMap()`, and `getOperatorRun()` on `MemoryEngine`.
 
@@ -72,13 +147,55 @@ Minimal local workflow:
 
 For API details, zero-item behavior, child bootstrap/reuse rules, inline vs durable execution modes, and worker requirements, see `docs/operator-level-recursion.md`.
 
-## Agent Integrations
+## Integrations
 
 - `@ledgermind/mcp-server` exposes the canonical memory tool catalog over stdio MCP.
 - `@ledgermind/claude-code` adds Claude Code lifecycle hooks for session binding, pre-compaction archival, stop-time persistence, and optional artifact indexing.
 - Amp-style runtimes currently consume the same MCP surface rather than a dedicated runtime package.
+- Example configs live under `examples/claude-code/` and `examples/ampcode/`.
 
-Example configs live under `examples/claude-code/` and `examples/ampcode/`.
+## Benchmarks
+
+### LOCOMO
+
+The LOCOMO harness is the main benchmark workflow in the repo today. It supports smoke, canary, and fuller parity runs, and writes artifacts under `benchmarks/locomo/runs/<run-id>/`:
+
+- `per_example.jsonl`
+- `trace_per_example.jsonl`
+- `summary.md`
+- `config_snapshot.json`
+
+You can run it from the repo root with:
+
+```bash
+pnpm benchmark:locomo
+pnpm benchmark:locomo:smoke
+pnpm benchmark:locomo:canary
+```
+
+#### Latest canary snapshot
+
+Fresh LLM-mode canary snapshot:
+
+- Run artifact: [`locomo-2026-04-21T17-44-20-586Z/summary.md`](benchmarks/locomo/runs/locomo-2026-04-21T17-44-20-586Z/summary.md)
+- Scope: LOCOMO canary subset (`30` executions), `gpt-5.4-mini`, seed `0`, artifacts enabled
+- `ledgermind_static_materialize`: official score `0.437`, evidence recall `0.501`, any gold evidence in context `63.3%`, all gold evidence in context `40.0%`
+- `truncation`: official score `0.144`, evidence recall `0.000`, any gold evidence in context `0.0%`, all gold evidence in context `0.0%`
+- `rag`: official score `0.325`, evidence recall `0.322`, any gold evidence in context `40.0%`, all gold evidence in context `26.7%`
+- `oracle_evidence`: official score `0.602`, evidence recall `1.000`, any gold evidence in context `100.0%`, all gold evidence in context `100.0%`
+
+Read this as a floor/current/ceiling comparison: LedgerMind is well above raw truncation and ahead of `rag`, but still below the gold-evidence control. This is a canary health snapshot, not a full benchmark claim. Use the generated artifact for the full table, config snapshot, and per-example traces.
+
+### LongMemEval
+
+The LongMemEval harness is present and runnable, but it is still at benchmark-spike maturity. It keeps LongMemEval-specific dataset/scorer parsing local to `benchmarks/longmemeval/` and writes suite-local artifacts under `benchmarks/longmemeval/runs/`.
+
+You can run it from the repo root with:
+
+```bash
+pnpm benchmark:longmemeval
+pnpm benchmark:longmemeval:smoke
+```
 
 ## Key docs
 
@@ -91,29 +208,3 @@ Example configs live under `examples/claude-code/` and `examples/ampcode/`.
 - `docs/claude-code-integration.md` — implemented Claude Code integration guide
 - `docs/ampcode-integration.md` — Amp-facing MCP setup and current limits
 - `docs/locomo-benchmark-plan.md` — LOCOMO benchmark rollout plan
-
-## LOCOMO benchmark harness
-
-Run LOCOMO benchmark harness (offline artifacts):
-
-```bash
-pnpm benchmark:locomo
-pnpm benchmark:locomo:smoke
-```
-
-Outputs are written under `benchmarks/locomo/runs/<run-id>/`:
-
-- `per_example.jsonl`
-- `summary.md`
-- `config_snapshot.json`
-
-## Issue tracking
-
-This repository uses **beads (`bd`)** for issue tracking.
-
-```bash
-bd ready
-bd show <id>
-bd update <id> --status in_progress
-bd close <id>
-```

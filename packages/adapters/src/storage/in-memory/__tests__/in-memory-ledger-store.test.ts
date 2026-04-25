@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { InMemoryLedgerStore, createInMemoryPersistenceState } from '@ledgermind/adapters';
 import { createLedgerEvent } from '@ledgermind/domain';
 import {
   createContextItem,
@@ -13,6 +12,9 @@ import {
 import { createTimestamp } from '@ledgermind/domain';
 import { createTokenCount } from '@ledgermind/domain';
 import { NonMonotonicSequenceError } from '@ledgermind/domain';
+
+import { InMemoryLedgerStore } from '../in-memory-ledger-store';
+import { createInMemoryPersistenceState } from '../state';
 
 const createEvent = (
   conversationId: ReturnType<typeof createConversationId>,
@@ -106,6 +108,7 @@ describe('InMemoryLedgerStore', () => {
       conversationId,
       kind: 'leaf',
       content: 'scope summary',
+      retrievalText: 'scope summary',
       tokenCount: createTokenCount(5),
       artifactIds: [],
       createdAt: createTimestamp(new Date('2026-01-01T00:10:00.000Z')),
@@ -133,6 +136,28 @@ describe('InMemoryLedgerStore', () => {
     expect(scopedMatch.coveringSummaryId).toBe(summaryId);
   });
 
+  it('matches natural-language retrieval hints against overlapping event tokens', async () => {
+    const state = createInMemoryPersistenceState();
+    const store = new InMemoryLedgerStore(state);
+    const conversationId = createConversationId('conv_ledger_natural_language_search');
+
+    const evt1 = createEvent(
+      conversationId,
+      1,
+      'DATE: 1:56 pm on 8 May, 2023 | ID: D1:3 | Caroline: I went to a LGBTQ support group yesterday and it was so powerful.',
+    );
+    const evt2 = createEvent(conversationId, 2, 'DATE: 1:56 pm on 8 May, 2023 | ID: D1:4 | Melanie: That sounds meaningful.');
+
+    await store.appendEvents(conversationId, [evt1, evt2]);
+
+    const searchMatches = await store.searchEvents(
+      conversationId,
+      'When did Caroline go to the LGBTQ support group?',
+    );
+
+    expect(searchMatches.map((event) => event.id)).toEqual([evt1.id]);
+  });
+
   it('returns paged regex matches with active covering summaries for unscoped grep', async () => {
     const state = createInMemoryPersistenceState();
     const store = new InMemoryLedgerStore(state);
@@ -150,6 +175,7 @@ describe('InMemoryLedgerStore', () => {
       conversationId,
       kind: 'leaf',
       content: 'active alpha summary',
+      retrievalText: 'active alpha summary',
       tokenCount: createTokenCount(5),
       artifactIds: [],
       createdAt: createTimestamp(new Date('2026-01-01T00:10:00.000Z')),
