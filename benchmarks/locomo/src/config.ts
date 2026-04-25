@@ -791,7 +791,7 @@ export const buildBenchmarkConfig = (cliArgv: readonly string[]): LocomoBenchmar
     ledgermindSummaryFormatter:
       summarizerType === 'locomo_llm_structured_v1' ? 'structured_llm_retrieval_v1' : 'structured_head_tail_v1',
     summarySearchScoring: 'staged_candidate_selection_v1',
-    predictionExtractorVersion: predictionMode === 'llm' ? 'llm_completion_v1' : 'question_only_v2',
+    predictionExtractorVersion: predictionMode === 'llm' ? 'llm_exact_span_v2' : 'question_only_v2',
     category5PromptVersion: 'no_answer_choices_v1',
     rawTurnInjectionFormatterVersion: 'plain_lines_v2',
     rawTurnInjectionSelectionVersion: 'question_overlap_topk_v2',

@@ -1,8 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createConversationId,
+  createEventId,
+  createSummaryNodeId,
+  createTokenCount,
+} from '@ledgermind/domain';
+import type { MemoryEngine } from '@ledgermind/application';
 
 import { createBaselineStrategies } from './baselines.js';
 import type { LocomoBenchmarkConfig } from './config.js';
-import type { LocomoConversationSample, LocomoExample } from './types.js';
+import type { LocomoConversationSample, LocomoExample, LocomoRuntimeProvenance } from './types.js';
+import type { LedgermindRuntime } from './ledgermind-runtime.js';
+import * as runtimeModule from './ledgermind-runtime.js';
 
 const sample: LocomoConversationSample = {
   sample_id: 'sample-oracle',
@@ -112,6 +121,45 @@ const toJsonResponse = (payload: unknown): Response => {
     status: 200,
     json: async () => payload,
   } as Response;
+};
+
+const createUnusedEngineMethod = async (): Promise<never> => {
+  throw new Error('unused engine method in baselines test');
+};
+
+const createRuntimeStub = (input: {
+  readonly materializeContext: MemoryEngine['materializeContext'];
+  readonly provenance?: LocomoRuntimeProvenance;
+}): LedgermindRuntime => {
+  const engine: MemoryEngine = {
+    append: createUnusedEngineMethod,
+    materializeContext: input.materializeContext,
+    runCompaction: createUnusedEngineMethod,
+    checkIntegrity: createUnusedEngineMethod,
+    grep: createUnusedEngineMethod,
+    describe: createUnusedEngineMethod,
+    expand: createUnusedEngineMethod,
+    storeArtifact: createUnusedEngineMethod,
+    exploreArtifact: createUnusedEngineMethod,
+    llmMap: createUnusedEngineMethod,
+    agenticMap: createUnusedEngineMethod,
+    getOperatorRun: createUnusedEngineMethod,
+  };
+
+  return {
+    conversationId: createConversationId('conv_test'),
+    engine,
+    contextLines: [],
+    provenance:
+      input.provenance ?? {
+        runtimeMode: 'static_materialize',
+        summarizerType: 'locomo_deterministic_head_tail_v1',
+        artifactsEnabled: true,
+        artifactBearingExampleCount: 0,
+      },
+    flushSummarizationTrace: () => [],
+    destroy: async () => undefined,
+  };
 };
 
 describe('oracle baselines', () => {
@@ -685,5 +733,194 @@ describe('oracle baselines', () => {
     expect(execution.diagnostics?.retrievalHints?.length ?? 0).toBeGreaterThan(0);
     const firstHint = execution.diagnostics?.retrievalHints?.[0];
     expect(firstHint?.stageQueries.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it('copies raw retrieval counts and selected raw message ids into benchmark diagnostics', async () => {
+    const artifactSample: LocomoConversationSample = sample;
+
+    const artifactExample: LocomoExample = {
+      sampleId: artifactSample.sample_id,
+      qaIndex: 0,
+      category: 3,
+      question: 'When does auth token rotation ZX-41 happen?',
+      answer: 'tonight after the final checkpoint',
+      evidence: ['D1:3'],
+    };
+
+    const fairness = {
+      ...makeConfig('heuristic').fairness,
+      tokenBudget: 320,
+      overheadTokens: 16,
+    };
+
+    vi.spyOn(runtimeModule, 'createLedgermindRuntime').mockResolvedValue(
+      createRuntimeStub({
+        materializeContext: async () => ({
+          systemPreamble: '',
+          modelMessages: [
+            {
+              role: 'assistant',
+              content: 'Alice said auth token rotation ZX-41 happens tonight after the final checkpoint.',
+            },
+          ],
+          summaryReferences: [],
+          artifactReferences: [],
+          budgetUsed: createTokenCount(18),
+          retrievalMatchCount: 3,
+          retrievalAddedCount: 1,
+          retrievalAddedMessageCount: 1,
+          retrievalAddedSummaryCount: 0,
+          retrievalDiagnostics: [
+            {
+              hintQuery: artifactExample.question,
+              limit: 6,
+              stageQueries: [
+                {
+                  stage: 'primary',
+                  query: artifactExample.question,
+                  matchCount: 3,
+                },
+              ],
+              candidateDecisions: [],
+              messageDecisions: [
+                {
+                  messageId: createEventId('evt_000003'),
+                  score: 130,
+                  stageHits: 1,
+                  overlapCount: 3,
+                  tokenCount: 18,
+                  selected: true,
+                  reason: 'selected',
+                },
+              ],
+              selectedSummaryIds: [],
+              selectedMessageIds: [createEventId('evt_000003')],
+            },
+          ],
+          compactionTriggered: false,
+          trimmedToFit: false,
+          droppedMessageCount: 0,
+          droppedSummaryCount: 0,
+        }),
+      }),
+    );
+
+    const execution = await createBaselineStrategies({
+      ...makeConfig('heuristic'),
+      runtimeMode: 'static_materialize',
+      baselines: ['ledgermind_static_materialize'],
+      fairness,
+    }).ledgermind_static_materialize.run({
+      sample: artifactSample,
+      example: artifactExample,
+      fairness,
+      seed: 0,
+    });
+
+    expect(execution.diagnostics?.retrievalAddedCount).toBeGreaterThan(0);
+    expect(execution.diagnostics?.retrievalAddedMessageCount).toBeGreaterThan(0);
+    expect(execution.diagnostics?.retrievalAddedSummaryCount ?? 0).toBeGreaterThanOrEqual(0);
+
+    const firstHint = execution.diagnostics?.retrievalHints?.[0];
+    expect(firstHint?.selectedMessageIds).toContain('evt_000003');
+    expect(firstHint?.messageDecisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          messageId: 'evt_000003',
+          selected: true,
+          reason: 'selected',
+        }),
+      ]),
+    );
+  });
+
+  it('keeps empty raw retrieval arrays in benchmark diagnostics', async () => {
+    const fairness = {
+      ...makeConfig('heuristic').fairness,
+      tokenBudget: 320,
+      overheadTokens: 16,
+    };
+
+    vi.spyOn(runtimeModule, 'createLedgermindRuntime').mockResolvedValue(
+      createRuntimeStub({
+        materializeContext: async () => ({
+          systemPreamble: '',
+          modelMessages: [
+            {
+              role: 'assistant',
+              content: '[Summary ID: sum_summary_only]\\n[Summary] auth token rotation details',
+            },
+          ],
+          summaryReferences: [
+            {
+              id: createSummaryNodeId('sum_summary_only'),
+              kind: 'leaf',
+              tokenCount: createTokenCount(10),
+            },
+          ],
+          artifactReferences: [],
+          budgetUsed: createTokenCount(10),
+          retrievalMatchCount: 1,
+          retrievalAddedCount: 1,
+          retrievalAddedMessageCount: 0,
+          retrievalAddedSummaryCount: 1,
+          retrievalDiagnostics: [
+            {
+              hintQuery: 'auth token rotation',
+              limit: 6,
+              stageQueries: [
+                {
+                  stage: 'primary',
+                  query: 'auth token rotation',
+                  matchCount: 1,
+                },
+              ],
+              candidateDecisions: [
+                {
+                  summaryId: createSummaryNodeId('sum_summary_only'),
+                  score: 110,
+                  stageHits: 1,
+                  overlapCount: 1,
+                  tokenCount: 10,
+                  selected: true,
+                  reason: 'selected',
+                },
+              ],
+              messageDecisions: [],
+              selectedSummaryIds: [createSummaryNodeId('sum_summary_only')],
+              selectedMessageIds: [],
+            },
+          ],
+          compactionTriggered: false,
+          trimmedToFit: false,
+          droppedMessageCount: 0,
+          droppedSummaryCount: 0,
+        }),
+      }),
+    );
+
+    const execution = await createBaselineStrategies({
+      ...makeConfig('heuristic'),
+      runtimeMode: 'static_materialize',
+      baselines: ['ledgermind_static_materialize'],
+      fairness,
+    }).ledgermind_static_materialize.run({
+      sample,
+      example: {
+        sampleId: sample.sample_id,
+        qaIndex: 0,
+        category: 3,
+        question: 'auth token rotation',
+        answer: 'details',
+        evidence: [],
+      },
+      fairness,
+      seed: 0,
+    });
+
+    expect(execution.diagnostics?.retrievalAddedMessageCount).toBe(0);
+    expect(execution.diagnostics?.retrievalAddedSummaryCount).toBe(1);
+    expect(execution.diagnostics?.retrievalHints?.[0]?.messageDecisions).toEqual([]);
+    expect(execution.diagnostics?.retrievalHints?.[0]?.selectedMessageIds).toEqual([]);
   });
 });
