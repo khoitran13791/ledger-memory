@@ -109,7 +109,11 @@ type RetrievalContender =
       readonly score: number;
       readonly overlapCount: number;
       readonly specificityScore: number;
+      readonly evidenceScore: number;
+      readonly concreteCueCount: number;
       readonly tokenCount: number;
+      readonly candidate: RankedSummaryRetrievalCandidate;
+      readonly query: string;
       readonly summaryReference: SummaryReference;
       readonly artifactIds: readonly ArtifactId[];
       readonly modelMessage: ModelMessage;
@@ -154,9 +158,13 @@ type PackableUnit =
       readonly score: number;
       readonly overlapCount: number;
       readonly specificityScore: number;
+      readonly evidenceScore: number;
+      readonly concreteCueCount: number;
       readonly tokenCount: number;
       readonly order: number;
       readonly selectionOrder: number;
+      readonly candidate: RankedSummaryRetrievalCandidate;
+      readonly query: string;
       readonly modelMessages: readonly ModelMessage[];
       readonly summaryReferences: readonly SummaryReference[];
       readonly artifactIds: readonly ArtifactId[];
@@ -184,10 +192,14 @@ type RetrievalBridgeSummaryUnit = Extract<PackableUnit, { kind: 'retrieval_bridg
 type RetrievalRawBundleUnit = Extract<PackableUnit, { kind: 'retrieval_raw_bundle' }>;
 type RankedSummaryRetrievalCandidate = Extract<RankedRetrievalCandidate, { kind: 'summary' }>;
 type BasePackableUnit = Extract<PackableUnit, { kind: 'base_message' | 'base_summary' }>;
+const MIN_ANSWER_BEARING_BRIDGE_EVIDENCE_SCORE = 120;
 type MaterializedBridgeSummarySelection = {
   readonly candidate: RankedSummaryRetrievalCandidate;
   readonly tokenCount: number;
   readonly content: string;
+  readonly evidenceScore: number;
+  readonly evidenceDirectRelevance: number;
+  readonly concreteCueCount: number;
 };
 
 const assertValidBudgetInput = (input: MaterializeContextInput): void => {
@@ -690,6 +702,7 @@ const parseBridgeFactParts = (
   const segments = lineWithoutAnchors
     .split('|')
     .map((segment) => segment.trim())
+    .map((segment) => segment.replace(/^\[summary_fact\]\s*/iu, '').trim())
     .filter((segment) => segment.length > 0);
   const idIndex = segments.findIndex((segment) => /^ID:/i.test(segment));
 
@@ -735,8 +748,51 @@ const parseBridgeFactParts = (
   };
 };
 
-const extractBridgeFactLines = (text: string): readonly string[] => {
-  const lines: string[] = [];
+type BridgeFact = {
+  readonly index: number;
+  readonly date?: string;
+  readonly id: string;
+  readonly speaker: string;
+  readonly fact: string;
+  readonly sharedId?: string;
+  readonly sharedCaptionId?: string;
+};
+
+type BridgeFactVariant = {
+  readonly text: string;
+  readonly tokenCount: number;
+};
+
+const toBridgeFactLine = (
+  fact: BridgeFact,
+  options: {
+    readonly includePrefix: boolean;
+    readonly includeDate: boolean;
+    readonly includeAnchors: boolean;
+    readonly minimal: boolean;
+  },
+): string => {
+  if (options.minimal) {
+    return `ID:${fact.id} | ${fact.speaker}: ${fact.fact}`;
+  }
+
+  return [
+    options.includePrefix ? SUMMARY_FACT_PREFIX : undefined,
+    options.includeDate && fact.date !== undefined ? `DATE:${fact.date}` : undefined,
+    `ID:${fact.id}`,
+    fact.speaker,
+    fact.fact,
+    options.includeAnchors && fact.sharedId !== undefined ? `[shared ${fact.sharedId}]` : undefined,
+    options.includeAnchors && fact.sharedCaptionId !== undefined
+      ? `[shared_caption ${fact.sharedCaptionId}]`
+      : undefined,
+  ]
+    .filter((part): part is string => part !== undefined && part.length > 0)
+    .join(' | ');
+};
+
+const extractBridgeFacts = (text: string): readonly BridgeFact[] => {
+  const facts: BridgeFact[] = [];
   const seen = new Set<string>();
 
   for (const rawLine of text.split('\n')) {
@@ -745,38 +801,30 @@ const extractBridgeFactLines = (text: string): readonly string[] => {
       continue;
     }
 
-    if (line.startsWith(SUMMARY_FACT_PREFIX)) {
-      if (!seen.has(line)) {
-        seen.add(line);
-        lines.push(line);
-      }
-      continue;
-    }
-
     const parsed = parseBridgeFactParts(line);
     if (parsed === undefined) {
       continue;
     }
 
-    const normalized = [
-      SUMMARY_FACT_PREFIX,
-      parsed.date === undefined ? undefined : `DATE:${parsed.date}`,
-      `ID:${parsed.id}`,
+    const key = [
+      parsed.date ?? '',
+      parsed.id,
       parsed.speaker,
       parsed.fact,
-      parsed.sharedId === undefined ? undefined : `[shared ${parsed.sharedId}]`,
-      parsed.sharedCaptionId === undefined ? undefined : `[shared_caption ${parsed.sharedCaptionId}]`,
-    ]
-      .filter((part): part is string => part !== undefined && part.length > 0)
-      .join(' | ');
+      parsed.sharedId ?? '',
+      parsed.sharedCaptionId ?? '',
+    ].join('\u0000');
 
-    if (!seen.has(normalized)) {
-      seen.add(normalized);
-      lines.push(normalized);
+    if (!seen.has(key)) {
+      seen.add(key);
+      facts.push({
+        index: facts.length,
+        ...parsed,
+      });
     }
   }
 
-  return lines;
+  return facts;
 };
 
 const truncateTextToTokenBudget = (
@@ -808,20 +856,209 @@ const truncateTextToTokenBudget = (
   return truncated;
 };
 
+const CONCRETE_ANSWER_CUE_STOPWORDS = new Set([
+  ...RETRIEVAL_STOPWORDS,
+  'bye',
+  'cheers',
+  'cool',
+  'hello',
+  'haven',
+  "haven't",
+  'havent',
+  'hey',
+  'hi',
+  'nice',
+  'okay',
+  'thanks',
+  'thank',
+  'ttyl',
+  'wow',
+  'yeah',
+]);
+
+const isQueryToken = (candidate: string, queryTokens: ReadonlySet<string>): boolean =>
+  toRetrievalTokenVariants(candidate.toLocaleLowerCase()).some((variant) => queryTokens.has(variant));
+
+const toConcreteAnswerCueCount = (value: string, query: string): number => {
+  const queryTokens = new Set(toRetrievalSpecificTokens(query));
+  const symbolMatches = value.match(/\b[A-Za-z]*\+\+|\b[A-Za-z]#|\b[A-Z]{2,}\b|\b\d+(?::\d+)?\b/g) ?? [];
+  const properNounMatches =
+    value.match(/\b[A-Z][a-z]{2,}(?:[-'][A-Z]?[a-z]+)?\b/g)?.filter((token) => {
+      const normalized = token.toLocaleLowerCase();
+      return !CONCRETE_ANSWER_CUE_STOPWORDS.has(normalized) && !isQueryToken(normalized, queryTokens);
+    }) ??
+    [];
+
+  return new Set([...symbolMatches.filter((token) => !isQueryToken(token, queryTokens)), ...properNounMatches]).size;
+};
+
+const toBridgeFactDirectRelevance = (query: string, text: string): number =>
+  toQuerySpecificityOverlapCount(query, text) * 30 +
+  toQueryOverlapCount(query, text) * 10 +
+  countAnchorCoverage(query, text) * 5;
+
+const toBridgeFactEvidenceRelevanceText = (fact: BridgeFact): string => `${fact.speaker} ${fact.fact}`;
+
+const toBridgeFactEvidenceScore = (input: {
+  readonly query: string;
+  readonly facts: readonly BridgeFact[];
+  readonly fact: BridgeFact;
+}): {
+  readonly score: number;
+  readonly directRelevance: number;
+  readonly adjacentRelevance: number;
+  readonly concreteCueCount: number;
+} => {
+  const relevanceByIndex = new Map(
+    input.facts.map((fact) => {
+      return [
+        fact.index,
+        toBridgeFactDirectRelevance(input.query, toBridgeFactEvidenceRelevanceText(fact)),
+      ] as const;
+    }),
+  );
+  const directRelevance =
+    relevanceByIndex.get(input.fact.index) ??
+    toBridgeFactDirectRelevance(input.query, toBridgeFactEvidenceRelevanceText(input.fact));
+  const adjacentRelevance = Math.max(
+    relevanceByIndex.get(input.fact.index - 1) ?? 0,
+    relevanceByIndex.get(input.fact.index + 1) ?? 0,
+  );
+  const concreteCueCount = toConcreteAnswerCueCount(input.fact.fact, input.query);
+  const factDirectRelevance = toBridgeFactDirectRelevance(input.query, input.fact.fact);
+  const answerBearingBoost =
+    concreteCueCount > 0 && (factDirectRelevance > 0 || adjacentRelevance > 0)
+      ? 120 + adjacentRelevance
+      : 0;
+  const supportedRelevance = factDirectRelevance + adjacentRelevance;
+  const unsupportedConcreteCuePenalty = concreteCueCount > 0 && supportedRelevance === 0 ? -60 : 0;
+
+  return {
+    score: directRelevance + answerBearingBoost + unsupportedConcreteCuePenalty,
+    directRelevance,
+    adjacentRelevance,
+    concreteCueCount,
+  };
+};
+
+const toBridgeSummaryEvidenceScore = (input: {
+  readonly query: string;
+  readonly text: string;
+}): {
+  readonly score: number;
+  readonly directRelevance: number;
+  readonly concreteCueCount: number;
+} => {
+  const facts = extractBridgeFacts(input.text);
+  const ranked = facts
+    .map((fact) => toBridgeFactEvidenceScore({ query: input.query, facts, fact }))
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      if (right.concreteCueCount !== left.concreteCueCount) {
+        return right.concreteCueCount - left.concreteCueCount;
+      }
+      return right.directRelevance - left.directRelevance;
+    });
+  const top = ranked[0];
+
+  return top === undefined
+    ? { score: 0, directRelevance: 0, concreteCueCount: 0 }
+    : { score: top.score, directRelevance: top.directRelevance, concreteCueCount: top.concreteCueCount };
+};
+
+const shouldMaterializeBridgeFromRetrievalText = (input: {
+  readonly query: string;
+  readonly content: string;
+  readonly retrievalText: string;
+}): boolean => {
+  if (input.retrievalText === input.content) {
+    return false;
+  }
+
+  const contentEvidence = toBridgeSummaryEvidenceScore({
+    query: input.query,
+    text: input.content,
+  });
+  const retrievalEvidence = toBridgeSummaryEvidenceScore({
+    query: input.query,
+    text: input.retrievalText,
+  });
+
+  return (
+    retrievalEvidence.score >= MIN_ANSWER_BEARING_BRIDGE_EVIDENCE_SCORE &&
+    retrievalEvidence.concreteCueCount > 0 &&
+    retrievalEvidence.score > contentEvidence.score
+  );
+};
+
+const toBridgeFactVariants = (fact: BridgeFact, tokenizer: TokenizerPort): readonly BridgeFactVariant[] => {
+  const seen = new Set<string>();
+  const variants: BridgeFactVariant[] = [];
+
+  const push = (text: string): void => {
+    if (seen.has(text)) {
+      return;
+    }
+
+    seen.add(text);
+    variants.push({
+      text,
+      tokenCount: tokenizer.countTokens(text).value,
+    });
+  };
+
+  push(toBridgeFactLine(fact, { includePrefix: true, includeDate: true, includeAnchors: true, minimal: false }));
+  push(toBridgeFactLine(fact, { includePrefix: true, includeDate: false, includeAnchors: true, minimal: false }));
+  push(toBridgeFactLine(fact, { includePrefix: true, includeDate: false, includeAnchors: false, minimal: false }));
+  push(toBridgeFactLine(fact, { includePrefix: false, includeDate: false, includeAnchors: false, minimal: true }));
+
+  return variants;
+};
+
+const composeCompressedBridgeContent = (
+  baseLine: string | undefined,
+  variants: readonly { readonly fact: BridgeFact; readonly variant: BridgeFactVariant }[],
+): string =>
+  [
+    baseLine,
+    ...[...variants]
+      .sort((left, right) => left.fact.index - right.fact.index)
+      .map((entry) => entry.variant.text),
+  ]
+    .filter((line): line is string => line !== undefined && line.trim().length > 0)
+    .join('\n');
+
 const compressBridgeSummaryContent = (input: {
   readonly candidate: RankedSummaryRetrievalCandidate;
   readonly query: string;
   readonly maxTokens: number;
   readonly tokenizer: TokenizerPort;
-}): { readonly content: string; readonly tokenCount: number } | undefined => {
+  readonly forceEvidenceSlice?: boolean;
+}): {
+  readonly content: string;
+  readonly tokenCount: number;
+  readonly evidenceScore: number;
+  readonly evidenceDirectRelevance: number;
+  readonly concreteCueCount: number;
+} | undefined => {
   if (input.maxTokens <= 0) {
     return undefined;
   }
 
-  if (input.candidate.tokenCount <= input.maxTokens) {
+  if (input.forceEvidenceSlice !== true && input.candidate.tokenCount <= input.maxTokens) {
+    const evidence = toBridgeSummaryEvidenceScore({
+      query: input.query,
+      text: input.candidate.summary.retrievalText ?? input.candidate.summary.content,
+    });
+
     return {
       content: input.candidate.summary.content,
       tokenCount: input.candidate.tokenCount,
+      evidenceScore: evidence.score,
+      evidenceDirectRelevance: evidence.directRelevance,
+      concreteCueCount: evidence.concreteCueCount,
     };
   }
 
@@ -840,75 +1077,148 @@ const compressBridgeSummaryContent = (input: {
         !line.includes('ID:'),
     );
   const baseLine = synopsis === undefined ? prefix : `${prefix} ${synopsis.replace(/^\[(?:Aggressive )?Summary\]\s*/u, '')}`.trim();
-  const factLines = extractBridgeFactLines(input.candidate.summary.retrievalText ?? input.candidate.summary.content)
-    .map((line, index) => ({
-      line,
-      index,
-      specificityScore: toQuerySpecificityOverlapCount(input.query, line),
-      overlapCount: toQueryOverlapCount(input.query, line),
-      anchorCoverageCount: countAnchorCoverage(input.query, line),
-    }))
+  const facts = extractBridgeFacts(input.candidate.summary.retrievalText ?? input.candidate.summary.content);
+  const factsByIndex = new Map(facts.map((fact) => [fact.index, fact] as const));
+  const factRelevance = new Map(
+    facts.map((fact) => {
+      return [
+        fact.index,
+        toBridgeFactDirectRelevance(input.query, toBridgeFactEvidenceRelevanceText(fact)),
+      ] as const;
+    }),
+  );
+  const rankedFacts = facts
+    .map((fact) => {
+      const fullLine = toBridgeFactLine(fact, {
+        includePrefix: true,
+        includeDate: true,
+        includeAnchors: true,
+        minimal: false,
+      });
+      const directRelevance = factRelevance.get(fact.index) ?? 0;
+      const adjacentRelevance = Math.max(
+        factRelevance.get(fact.index - 1) ?? 0,
+        factRelevance.get(fact.index + 1) ?? 0,
+      );
+      const concreteCueCount = toConcreteAnswerCueCount(fact.fact, input.query);
+      const factDirectRelevance = toBridgeFactDirectRelevance(input.query, fact.fact);
+      const answerBearingBoost =
+        concreteCueCount > 0 && (factDirectRelevance > 0 || adjacentRelevance > 0)
+          ? 120 + adjacentRelevance
+          : 0;
+      const supportedRelevance = factDirectRelevance + adjacentRelevance;
+      const unsupportedConcreteCuePenalty = concreteCueCount > 0 && supportedRelevance === 0 ? -60 : 0;
+
+      return {
+        fact,
+        directRelevance,
+        adjacentRelevance,
+        concreteCueCount,
+        score: directRelevance + answerBearingBoost + unsupportedConcreteCuePenalty,
+        variants: toBridgeFactVariants(fact, input.tokenizer),
+        fullLine,
+      };
+    })
     .sort((left, right) => {
-      if (right.specificityScore !== left.specificityScore) {
-        return right.specificityScore - left.specificityScore;
+      if (right.score !== left.score) {
+        return right.score - left.score;
       }
-      if (right.anchorCoverageCount !== left.anchorCoverageCount) {
-        return right.anchorCoverageCount - left.anchorCoverageCount;
+      if (right.concreteCueCount !== left.concreteCueCount) {
+        return right.concreteCueCount - left.concreteCueCount;
       }
-      if (right.overlapCount !== left.overlapCount) {
-        return right.overlapCount - left.overlapCount;
+      if (right.directRelevance !== left.directRelevance) {
+        return right.directRelevance - left.directRelevance;
       }
-      return left.index - right.index;
+      return left.fact.index - right.fact.index;
     });
 
-  const selectedFacts = factLines.slice(0, Math.max(1, Math.min(6, factLines.length)));
-  const orderedFacts = [...selectedFacts].sort((left, right) => left.index - right.index);
-  const selectedLines: string[] = [];
-  const bestFactLine = factLines[0]?.line;
-
-  const tryBuild = (lines: readonly string[]): string => [baseLine, ...lines].filter((line) => line.trim().length > 0).join('\n');
-  let content = tryBuild([]);
-  let preservedFact = false;
-
-  if (factLines.length === 0 && input.tokenizer.countTokens(content).value > input.maxTokens) {
+  if (rankedFacts.length === 0 && input.tokenizer.countTokens(baseLine).value > input.maxTokens) {
     const truncatedBase = truncateTextToTokenBudget(baseLine, input.maxTokens, input.tokenizer);
     if (truncatedBase.length > 0) {
-      content = truncatedBase;
-    }
-  } else if (factLines.length === 0) {
-    content = tryBuild([]);
-  } else {
-    for (const fact of orderedFacts) {
-      const nextContent = tryBuild([...selectedLines, fact.line]);
-      if (input.tokenizer.countTokens(nextContent).value > input.maxTokens) {
-        continue;
-      }
-
-      selectedLines.push(fact.line);
-      content = nextContent;
-      preservedFact = true;
+      const tokenCount = input.tokenizer.countTokens(truncatedBase).value;
+      return tokenCount > input.maxTokens
+        ? undefined
+        : { content: truncatedBase, tokenCount, evidenceScore: 0, evidenceDirectRelevance: 0, concreteCueCount: 0 };
     }
   }
 
-  if (!preservedFact && bestFactLine !== undefined) {
-    if (input.tokenizer.countTokens(bestFactLine).value <= input.maxTokens) {
-      content = bestFactLine;
-      preservedFact = true;
-    } else {
-      const truncatedFact = truncateTextToTokenBudget(bestFactLine, input.maxTokens, input.tokenizer);
-      if (truncatedFact.length > 0 && input.tokenizer.countTokens(truncatedFact).value <= input.maxTokens) {
-        content = truncatedFact;
-        preservedFact = true;
-      }
-    }
+  if (rankedFacts.length === 0) {
+    const tokenCount = input.tokenizer.countTokens(baseLine).value;
+    return tokenCount > input.maxTokens
+      ? undefined
+      : { content: baseLine, tokenCount, evidenceScore: 0, evidenceDirectRelevance: 0, concreteCueCount: 0 };
   }
 
-  if (!preservedFact && factLines.length > 0) {
+  const bestFact = rankedFacts[0];
+  if (bestFact === undefined) {
     return undefined;
   }
 
+  const bestVariantCandidates = bestFact.variants;
+  let selected: Array<{ readonly fact: BridgeFact; readonly variant: BridgeFactVariant }> = [];
+  let includeHeader = false;
+  let foundBestFactVariant = false;
+
+  for (const variant of bestVariantCandidates) {
+    const withHeader = composeCompressedBridgeContent(baseLine, [{ fact: bestFact.fact, variant }]);
+    if (input.tokenizer.countTokens(withHeader).value <= input.maxTokens) {
+      selected = [{ fact: bestFact.fact, variant }];
+      includeHeader = true;
+      foundBestFactVariant = true;
+      break;
+    }
+
+    if (variant.tokenCount <= input.maxTokens) {
+      selected = [{ fact: bestFact.fact, variant }];
+      includeHeader = false;
+      foundBestFactVariant = true;
+      break;
+    }
+  }
+
+  if (!foundBestFactVariant) {
+    return undefined;
+  }
+
+  const supportFactIndexes = [
+    bestFact.fact.index - 1,
+    bestFact.fact.index + 1,
+    ...rankedFacts.map((entry) => entry.fact.index),
+  ];
+  const seenSupportIndexes = new Set(selected.map((entry) => entry.fact.index));
+
+  for (const factIndex of supportFactIndexes) {
+    if (seenSupportIndexes.has(factIndex)) {
+      continue;
+    }
+
+    const fact = factsByIndex.get(factIndex);
+    if (fact === undefined) {
+      continue;
+    }
+
+    for (const variant of toBridgeFactVariants(fact, input.tokenizer)) {
+      const nextSelected = [...selected, { fact, variant }];
+      const content = composeCompressedBridgeContent(includeHeader ? baseLine : undefined, nextSelected);
+      if (input.tokenizer.countTokens(content).value <= input.maxTokens) {
+        selected = nextSelected;
+        seenSupportIndexes.add(factIndex);
+        break;
+      }
+    }
+  }
+
+  const content = composeCompressedBridgeContent(includeHeader ? baseLine : undefined, selected);
   const tokenCount = input.tokenizer.countTokens(content).value;
-  return tokenCount > input.maxTokens ? undefined : { content, tokenCount };
+  return tokenCount > input.maxTokens
+    ? undefined
+    : {
+        content,
+        tokenCount,
+        evidenceScore: bestFact.score,
+        evidenceDirectRelevance: bestFact.directRelevance,
+        concreteCueCount: bestFact.concreteCueCount,
+      };
 };
 
 const getEventBundleTokenCount = (events: readonly LedgerEvent[]): number =>
@@ -1058,7 +1368,7 @@ const coalesceRawRetrievalContenders = (contenders: readonly RetrievalContender[
   );
 };
 
-const toSummaryAnchorCount = (content: string): number => content.match(/\|\s*ID:/g)?.length ?? 0;
+const toSummaryAnchorCount = (content: string): number => content.match(/(?:^|\|)\s*(?:\[summary_fact\]\s*)?ID:/gm)?.length ?? 0;
 
 const toSummaryBridgeScore = (input: {
   readonly stageHits: number;
@@ -1243,6 +1553,7 @@ const materializeBridgeSummarySelection = (input: {
   readonly selectedBaseItems: readonly ResolvedContextItem[];
   readonly pinRules: readonly PinRule[];
   readonly availableBudget: number;
+  readonly preferredFitBudget: number;
   readonly query: string;
   readonly tokenizer: TokenizerPort;
 }): MaterializedBridgeSummarySelection | undefined => {
@@ -1257,15 +1568,64 @@ const materializeBridgeSummarySelection = (input: {
     return undefined;
   }
 
-  if (input.candidate.tokenCount <= maxFitBudget) {
+  const retrievalText = input.candidate.summary.retrievalText ?? input.candidate.summary.content;
+  const shouldUseRetrievalEvidence = shouldMaterializeBridgeFromRetrievalText({
+    query: input.query,
+    content: input.candidate.summary.content,
+    retrievalText,
+  });
+
+  if (shouldUseRetrievalEvidence) {
+    const compressed = compressBridgeSummaryContent({
+      candidate: input.candidate,
+      query: input.query,
+      maxTokens: Math.min(maxFitBudget, Math.max(input.preferredFitBudget, 1)),
+      tokenizer: input.tokenizer,
+      forceEvidenceSlice: true,
+    });
+
+    if (compressed !== undefined) {
+      return {
+        candidate: input.candidate,
+        tokenCount: compressed.tokenCount,
+        content: compressed.content,
+        evidenceScore: compressed.evidenceScore,
+        evidenceDirectRelevance: compressed.evidenceDirectRelevance,
+        concreteCueCount: compressed.concreteCueCount,
+      };
+    }
+  }
+
+  if (input.candidate.tokenCount <= Math.min(maxFitBudget, input.preferredFitBudget)) {
+    const evidence = toBridgeSummaryEvidenceScore({
+      query: input.query,
+      text: retrievalText,
+    });
+
     return {
       candidate: input.candidate,
       tokenCount: input.candidate.tokenCount,
       content: input.candidate.summary.content,
+      evidenceScore: evidence.score,
+      evidenceDirectRelevance: evidence.directRelevance,
+      concreteCueCount: evidence.concreteCueCount,
     };
   }
 
-  for (const fitBudget of [...fitBudgets].sort((left, right) => right - left)) {
+  const compressionFitBudgets = [
+    Math.min(maxFitBudget, input.preferredFitBudget),
+    ...[...fitBudgets].sort((left, right) => right - left),
+  ];
+  const seenFitBudgets = new Set<number>();
+
+  for (const fitBudget of compressionFitBudgets
+    .filter(
+      (budget) =>
+        budget > 0 &&
+        budget < input.candidate.tokenCount &&
+        !seenFitBudgets.has(budget) &&
+        seenFitBudgets.add(budget),
+    )) {
     const compressed = compressBridgeSummaryContent({
       candidate: input.candidate,
       query: input.query,
@@ -1278,8 +1638,27 @@ const materializeBridgeSummarySelection = (input: {
         candidate: input.candidate,
         tokenCount: compressed.tokenCount,
         content: compressed.content,
+        evidenceScore: compressed.evidenceScore,
+        evidenceDirectRelevance: compressed.evidenceDirectRelevance,
+        concreteCueCount: compressed.concreteCueCount,
       };
     }
+  }
+
+  if (input.candidate.tokenCount <= maxFitBudget) {
+    const evidence = toBridgeSummaryEvidenceScore({
+      query: input.query,
+      text: retrievalText,
+    });
+
+    return {
+      candidate: input.candidate,
+      tokenCount: input.candidate.tokenCount,
+      content: input.candidate.summary.content,
+      evidenceScore: evidence.score,
+      evidenceDirectRelevance: evidence.directRelevance,
+      concreteCueCount: evidence.concreteCueCount,
+    };
   }
 
   return undefined;
@@ -1304,7 +1683,8 @@ const chooseBridgeSummaryCandidate = (input: {
         pinnedBaseTokenCount: input.pinnedBaseTokenCount,
         availableBudget: input.availableBudget,
       }) ||
-        input.pinnedBaseTokenCount === 0),
+        input.pinnedBaseTokenCount === 0 ||
+        extractBridgeFacts(candidate.summary.retrievalText ?? candidate.summary.content).length > 0),
   );
 
   const topCandidate = viableCandidates[0];
@@ -1323,20 +1703,63 @@ const chooseBridgeSummaryCandidate = (input: {
           .sort(compareFitAwareSummaryCandidates)[0];
 
   const triedCandidateIds = new Set<string>();
-  if (preferredCandidate !== undefined) {
-    triedCandidateIds.add(String(preferredCandidate.id));
-    const materialized = materializeBridgeSummarySelection({
-      candidate: preferredCandidate,
+  const materializeCandidate = (candidate: RankedSummaryRetrievalCandidate): MaterializedBridgeSummarySelection | undefined => {
+    triedCandidateIds.add(String(candidate.id));
+    return materializeBridgeSummarySelection({
+      candidate,
       selectedBaseItems: input.selectedBaseItems,
       pinRules: input.pinRules,
       availableBudget: input.availableBudget,
+      preferredFitBudget: input.bridgeSelectionBudget,
       query: input.query,
       tokenizer: input.tokenizer,
     });
+  };
 
-    if (materialized !== undefined) {
-      return materialized;
-    }
+  const primaryCandidate = preferredCandidate ?? topCandidate;
+  const primaryMaterialized = materializeCandidate(primaryCandidate);
+  const primaryIsAnswerBearing =
+    primaryMaterialized !== undefined &&
+    primaryMaterialized.evidenceScore >= MIN_ANSWER_BEARING_BRIDGE_EVIDENCE_SCORE &&
+    primaryMaterialized.evidenceDirectRelevance > 0 &&
+    primaryMaterialized.concreteCueCount > 0;
+
+  if (primaryIsAnswerBearing) {
+    return primaryMaterialized;
+  }
+
+  const answerBearingFallback = viableCandidates
+    .filter((candidate) => candidate.score >= topCandidate.score - 30)
+    .filter((candidate) => !triedCandidateIds.has(String(candidate.id)))
+    .map((candidate) => materializeCandidate(candidate))
+    .filter(
+      (option): option is MaterializedBridgeSummarySelection =>
+        option !== undefined &&
+        option.evidenceScore >= MIN_ANSWER_BEARING_BRIDGE_EVIDENCE_SCORE &&
+        option.concreteCueCount > 0,
+    )
+    .sort((left, right) => {
+      if (right.evidenceScore !== left.evidenceScore) {
+        return right.evidenceScore - left.evidenceScore;
+      }
+      if (right.concreteCueCount !== left.concreteCueCount) {
+        return right.concreteCueCount - left.concreteCueCount;
+      }
+      if (right.candidate.score !== left.candidate.score) {
+        return right.candidate.score - left.candidate.score;
+      }
+      if (left.tokenCount !== right.tokenCount) {
+        return left.tokenCount - right.tokenCount;
+      }
+      return compareRankedSummaryCandidates(left.candidate, right.candidate);
+    })[0];
+
+  if (answerBearingFallback !== undefined) {
+    return answerBearingFallback;
+  }
+
+  if (primaryMaterialized !== undefined) {
+    return primaryMaterialized;
   }
 
   for (const candidate of viableCandidates) {
@@ -1344,14 +1767,7 @@ const chooseBridgeSummaryCandidate = (input: {
       continue;
     }
 
-    const materialized = materializeBridgeSummarySelection({
-      candidate,
-      selectedBaseItems: input.selectedBaseItems,
-      pinRules: input.pinRules,
-      availableBudget: input.availableBudget,
-      query: input.query,
-      tokenizer: input.tokenizer,
-    });
+    const materialized = materializeCandidate(candidate);
 
     if (materialized !== undefined) {
       return materialized;
@@ -1533,6 +1949,48 @@ const isBridgeLexicallyStrongerThanRaw = (
 
 const canBridgeReplaceRawRegion = (bridge: RetrievalBridgeSummaryUnit, raw: RetrievalRawBundleUnit): boolean =>
   raw.messageIds.length > 1 && isBridgeLexicallyStrongerThanRaw(bridge, raw);
+
+const canCompressedBridgeReplaceRawRegion = (
+  bridge: RetrievalBridgeSummaryUnit,
+  raw: RetrievalRawBundleUnit,
+): boolean =>
+  canBridgeReplaceRawRegion(bridge, raw) ||
+  (raw.messageIds.length > 1 &&
+    bridge.evidenceScore >= MIN_ANSWER_BEARING_BRIDGE_EVIDENCE_SCORE &&
+    bridge.concreteCueCount > 0 &&
+    raw.overlapCount <= bridge.overlapCount &&
+    raw.specificityScore <= bridge.specificityScore + 1);
+
+const compressBridgeUnitInPlace = (input: {
+  readonly bridgeUnit: RetrievalBridgeSummaryUnit;
+  readonly maxTokens: number;
+  readonly tokenizer: TokenizerPort;
+}): boolean => {
+  const compressed = compressBridgeSummaryContent({
+    candidate: input.bridgeUnit.candidate,
+    query: input.bridgeUnit.query,
+    maxTokens: input.maxTokens,
+    tokenizer: input.tokenizer,
+  });
+
+  if (compressed === undefined || compressed.tokenCount > input.maxTokens) {
+    return false;
+  }
+
+  const summaryReference = input.bridgeUnit.summaryReferences[0];
+  if (summaryReference === undefined) {
+    return false;
+  }
+
+  Object.assign(input.bridgeUnit, {
+    tokenCount: compressed.tokenCount,
+    modelMessages: [
+      buildSummaryModelMessage(summaryReference.id, compressed.content),
+    ],
+  });
+
+  return true;
+};
 
 const trimResolvedItemsToBudget = (input: {
   readonly items: readonly ResolvedContextItem[];
@@ -1868,7 +2326,10 @@ export class MaterializeContextUseCase {
         });
 
         const rankedEventCandidates = Array.from(eventCandidateMap.values()).map((entry) => {
-          const score = entry.specificityScore * 180 + entry.stageHits * 10 + entry.overlapCount;
+          const score =
+            entry.specificityScore * 180 +
+            entry.stageHits * 10 +
+            entry.overlapCount;
           return {
             kind: 'message' as const,
             id: entry.event.id,
@@ -2148,7 +2609,11 @@ export class MaterializeContextUseCase {
             score: candidate.score,
             overlapCount: candidate.overlapCount,
             specificityScore: candidate.specificityScore,
+            evidenceScore: selectedBridgeSummaryCandidate.evidenceScore,
+            concreteCueCount: selectedBridgeSummaryCandidate.concreteCueCount,
             tokenCount: selectedBridgeSummaryCandidate.tokenCount,
+            candidate: selectedBridgeSummaryCandidate.candidate,
+            query: retrievalQuery,
             summaryReference,
             artifactIds: summary.artifactIds,
             modelMessage: buildSummaryModelMessage(summary.id, selectedBridgeSummaryCandidate.content),
@@ -2218,9 +2683,13 @@ export class MaterializeContextUseCase {
                 score: contender.score,
                 overlapCount: contender.overlapCount,
                 specificityScore: contender.specificityScore,
+                evidenceScore: contender.evidenceScore,
+                concreteCueCount: contender.concreteCueCount,
                 tokenCount: contender.tokenCount,
                 order: order++,
                 selectionOrder: contender.selectionOrder,
+                candidate: contender.candidate,
+                query: contender.query,
                 modelMessages: [contender.modelMessage],
                 summaryReferences: [contender.summaryReference],
                 artifactIds: contender.artifactIds,
@@ -2306,29 +2775,61 @@ export class MaterializeContextUseCase {
         .filter((unit): unit is RetrievalRawBundleUnit => unit.kind === 'retrieval_raw_bundle')
         .filter((unit) => unit.hintIndex === bridgeUnit.hintIndex);
 
-      if (keptRawUnitsForHint.length < bridgeUnit.limit) {
-        continue;
+      if (keptRawUnitsForHint.length >= bridgeUnit.limit) {
+        const victim = [...keptRawUnitsForHint]
+          .sort(compareWeakestRawRetrievalUnits)
+          .find(
+            (rawUnit) =>
+              canBridgeReplaceRawRegion(bridgeUnit, rawUnit) &&
+              used - rawUnit.tokenCount + bridgeUnit.tokenCount <= availableBudget,
+          );
+
+        if (victim !== undefined) {
+          const victimIndex = keptUnits.indexOf(victim);
+          if (victimIndex >= 0) {
+            keptUnits.splice(victimIndex, 1, bridgeUnit);
+            used = used - victim.tokenCount + bridgeUnit.tokenCount;
+            continue;
+          }
+        }
       }
 
-      const victim = [...keptRawUnitsForHint]
+      const compressedSwap = [...keptRawUnitsForHint]
         .sort(compareWeakestRawRetrievalUnits)
-        .find(
-          (rawUnit) =>
-            canBridgeReplaceRawRegion(bridgeUnit, rawUnit) &&
-            used - rawUnit.tokenCount + bridgeUnit.tokenCount <= availableBudget,
+        .map((rawUnit) => {
+          const maxBridgeTokens = availableBudget - (used - rawUnit.tokenCount);
+          if (
+            maxBridgeTokens <= 0 ||
+            !canCompressedBridgeReplaceRawRegion(bridgeUnit, rawUnit) ||
+            !compressBridgeUnitInPlace({
+              bridgeUnit,
+              maxTokens: maxBridgeTokens,
+              tokenizer: this.deps.tokenizer,
+            })
+          ) {
+            return undefined;
+          }
+
+          return {
+            rawUnit,
+            maxBridgeTokens,
+          };
+        })
+        .find((entry): entry is { readonly rawUnit: RetrievalRawBundleUnit; readonly maxBridgeTokens: number } =>
+          entry !== undefined,
         );
 
-      if (victim === undefined) {
+      if (compressedSwap === undefined) {
         continue;
       }
 
-      const victimIndex = keptUnits.indexOf(victim);
+      const victimIndex = keptUnits.indexOf(compressedSwap.rawUnit);
       if (victimIndex < 0) {
         continue;
       }
 
       keptUnits.splice(victimIndex, 1, bridgeUnit);
-      used = used - victim.tokenCount + bridgeUnit.tokenCount;
+      used = used - compressedSwap.rawUnit.tokenCount + bridgeUnit.tokenCount;
     }
 
     const kept = [...keptUnits].sort((left, right) => left.order - right.order);
