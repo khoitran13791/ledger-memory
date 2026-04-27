@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { createConversationId } from '@ledgermind/domain';
+import { createConversationId, type ConversationId } from '@ledgermind/domain';
 
 import type {
   SessionBindingLookup,
@@ -10,6 +10,11 @@ import type {
 
 export interface ResolveSessionBindingInput extends SessionBindingLookup {
   readonly parentRuntimeSessionId?: string;
+  readonly createConversation?: (input: ResolveConversationBindingInput) => Promise<ConversationId>;
+}
+
+export interface ResolveConversationBindingInput {
+  readonly parentConversationId?: ConversationId;
 }
 
 export interface SessionBindingRuntimeMetadata {
@@ -30,27 +35,70 @@ const toLookup = (input: ResolveSessionBindingInput): SessionBindingLookup => ({
   ...(input.branchScope === undefined ? {} : { branchScope: input.branchScope }),
 });
 
+const findParentConversationId = async (
+  store: SessionBindingStore,
+  input: ResolveSessionBindingInput,
+): Promise<ConversationId | undefined> => {
+  if (input.parentRuntimeSessionId === undefined) {
+    return undefined;
+  }
+
+  const parentBinding = await store.find({
+    runtime: input.runtime,
+    runtimeSessionId: input.parentRuntimeSessionId,
+    userScope: input.userScope,
+    workspaceScope: input.workspaceScope,
+    ...(input.branchScope === undefined ? {} : { branchScope: input.branchScope }),
+  });
+
+  return parentBinding?.conversationId;
+};
+
+const createBindingConversationId = async (
+  input: ResolveSessionBindingInput,
+  parentConversationId: ConversationId | undefined,
+): Promise<ConversationId> =>
+  input.createConversation === undefined
+    ? createConversationId(`conv_${randomUUID()}`)
+    : input.createConversation(
+        parentConversationId === undefined ? {} : { parentConversationId },
+      );
+
+const resolveParentConversationId = async (
+  store: SessionBindingStore,
+  input: ResolveSessionBindingInput,
+): Promise<ConversationId | undefined> => {
+  const parentConversationId = await findParentConversationId(store, input);
+  if (input.parentRuntimeSessionId !== undefined && parentConversationId === undefined) {
+    throw new Error(`Parent runtime session "${input.parentRuntimeSessionId}" is not bound.`);
+  }
+
+  return parentConversationId;
+};
+
 export const resolveSessionBinding = async (
   store: SessionBindingStore,
   input: ResolveSessionBindingInput,
 ): Promise<SessionBindingRecord> => {
   const existing = await store.find(toLookup(input));
   if (existing !== undefined) {
+    if (input.parentRuntimeSessionId !== undefined) {
+      const parentConversationId = await resolveParentConversationId(store, input);
+      if (
+        existing.parentConversationId !== undefined &&
+        parentConversationId !== existing.parentConversationId
+      ) {
+        throw new Error(
+          `Runtime session "${input.runtimeSessionId}" is already bound to a different parent conversation.`,
+        );
+      }
+    }
+
     return existing;
   }
 
-  let parentConversationId = undefined;
-  if (input.parentRuntimeSessionId !== undefined) {
-    const parentBinding = await store.find({
-      runtime: input.runtime,
-      runtimeSessionId: input.parentRuntimeSessionId,
-      userScope: input.userScope,
-      workspaceScope: input.workspaceScope,
-      ...(input.branchScope === undefined ? {} : { branchScope: input.branchScope }),
-    });
-
-    parentConversationId = parentBinding?.conversationId;
-  }
+  const parentConversationId = await resolveParentConversationId(store, input);
+  const conversationId = await createBindingConversationId(input, parentConversationId);
 
   const nextBinding: SessionBindingRecord = {
     runtime: input.runtime,
@@ -58,7 +106,7 @@ export const resolveSessionBinding = async (
     userScope: input.userScope,
     workspaceScope: input.workspaceScope,
     ...(input.branchScope === undefined ? {} : { branchScope: input.branchScope }),
-    conversationId: createConversationId(`conv_${randomUUID()}`),
+    conversationId,
     ...(parentConversationId === undefined ? {} : { parentConversationId }),
   };
 

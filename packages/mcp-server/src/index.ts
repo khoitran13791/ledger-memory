@@ -25,6 +25,7 @@ export {
   resolveSessionBinding,
 } from './session-binding';
 export type {
+  ResolveConversationBindingInput,
   ResolveSessionBindingInput,
   SessionBindingRuntimeMetadata,
 } from './session-binding';

@@ -160,6 +160,40 @@ importers:
         specifier: ^22.18.0
         version: 22.19.13
 
+  packages/cli:
+    dependencies:
+      '@ledgermind/application':
+        specifier: workspace:*
+        version: link:../application
+      '@ledgermind/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@ledgermind/infrastructure':
+        specifier: workspace:*
+        version: link:../infrastructure
+      '@ledgermind/mcp-server':
+        specifier: workspace:*
+        version: link:../mcp-server
+      '@ledgermind/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      pg:
+        specifier: ^8.16.3
+        version: 8.19.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.18.0
+        version: 22.19.13
+      '@types/pg':
+        specifier: ^8.15.6
+        version: 8.18.0
+      tsx:
+        specifier: ^4.20.5
+        version: 4.21.0
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.13)(tsx@4.21.0)
+
   packages/domain: {}
 
   packages/infrastructure:

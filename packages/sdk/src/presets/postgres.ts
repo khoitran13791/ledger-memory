@@ -1,13 +1,16 @@
 import type { MemoryEngine } from '@ledgermind/application';
+import type { PgExecutor } from '@ledgermind/infrastructure';
 
 import { createMemoryEngine, type MemoryEngineConfig } from '../index';
 
 export type PostgresPresetConfig = Omit<MemoryEngineConfig, 'storage'> & {
   readonly connectionString: string;
+  readonly executor?: PgExecutor;
 };
 
 export const createPostgresMemoryEngine = ({
   connectionString,
+  executor,
   ...config
 }: PostgresPresetConfig): MemoryEngine => {
   if (connectionString.trim().length === 0) {
@@ -15,7 +18,11 @@ export const createPostgresMemoryEngine = ({
   }
 
   return createMemoryEngine({
-    storage: { type: 'postgres', connectionString },
+    storage: {
+      type: 'postgres',
+      connectionString,
+      ...(executor === undefined ? {} : { executor }),
+    },
     ...config,
   });
 };

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createConversationId } from '@ledgermind/domain';
 
 import {
@@ -51,6 +51,162 @@ describe('resolveSessionBinding', () => {
 
     expect(String(second.conversationId)).toBe(String(first.conversationId));
     expect(String(otherWorkspace.conversationId)).not.toBe(String(first.conversationId));
+  });
+
+  it('creates a new binding with the supplied conversation factory once and reuses that conversation id', async () => {
+    const store = createInMemorySessionBindingStore();
+    const conversationId = createConversationId('conv_real_thread_001');
+    const createConversation = vi.fn(async () => conversationId);
+
+    const first = await resolveSessionBinding(
+      store,
+      createBaseInput({
+        createConversation,
+      }),
+    );
+    const second = await resolveSessionBinding(
+      store,
+      createBaseInput({
+        createConversation,
+      }),
+    );
+
+    expect(createConversation).toHaveBeenCalledTimes(1);
+    expect(createConversation).toHaveBeenCalledWith({});
+    expect(String(first.conversationId)).toBe('conv_real_thread_001');
+    expect(String(second.conversationId)).toBe('conv_real_thread_001');
+  });
+
+  it('passes parent conversation id to the supplied factory and stores parent conversation lineage', async () => {
+    const store = createInMemorySessionBindingStore();
+    const parentConversationId = createConversationId('conv_real_parent');
+    const childConversationId = createConversationId('conv_real_child');
+    const createParentConversation = vi.fn(async () => parentConversationId);
+    const createChildConversation = vi.fn(async () => childConversationId);
+
+    const parent = await resolveSessionBinding(
+      store,
+      createBaseInput({
+        runtimeSessionId: 'thread-parent',
+        createConversation: createParentConversation,
+      }),
+    );
+    const child = await resolveSessionBinding(
+      store,
+      createBaseInput({
+        runtimeSessionId: 'thread-child',
+        parentRuntimeSessionId: 'thread-parent',
+        createConversation: createChildConversation,
+      }),
+    );
+
+    expect(createParentConversation).toHaveBeenCalledWith({});
+    expect(createChildConversation).toHaveBeenCalledTimes(1);
+    expect(createChildConversation).toHaveBeenCalledWith({
+      parentConversationId,
+    });
+    expect(String(parent.conversationId)).toBe('conv_real_parent');
+    expect(String(child.conversationId)).toBe('conv_real_child');
+    expect(child.parentConversationId).toBe(parentConversationId);
+  });
+
+  it('rejects explicit parent runtime sessions that are not bound', async () => {
+    const store = createInMemorySessionBindingStore();
+    const createConversation = vi.fn(async () => createConversationId('conv_should_not_create'));
+
+    await expect(
+      resolveSessionBinding(
+        store,
+        createBaseInput({
+          runtimeSessionId: 'thread-child',
+          parentRuntimeSessionId: 'thread-missing-parent',
+          createConversation,
+        }),
+      ),
+    ).rejects.toThrow('Parent runtime session "thread-missing-parent" is not bound.');
+    expect(createConversation).not.toHaveBeenCalled();
+  });
+
+  it('keeps existing parentless bindings instead of rebinding them to a later parent', async () => {
+    const store = createInMemorySessionBindingStore();
+    const createConversation = vi
+      .fn()
+      .mockResolvedValueOnce(createConversationId('conv_existing_root'))
+      .mockResolvedValueOnce(createConversationId('conv_parent_root'));
+
+    const original = await resolveSessionBinding(
+      store,
+      createBaseInput({
+        runtimeSessionId: 'thread-child',
+        createConversation,
+      }),
+    );
+    const parent = await resolveSessionBinding(
+      store,
+      createBaseInput({
+        runtimeSessionId: 'thread-parent',
+        createConversation,
+      }),
+    );
+    const unchanged = await resolveSessionBinding(
+      store,
+      createBaseInput({
+        runtimeSessionId: 'thread-child',
+        parentRuntimeSessionId: 'thread-parent',
+        createConversation,
+      }),
+    );
+
+    expect(parent.conversationId).toBe(createConversationId('conv_parent_root'));
+    expect(unchanged.conversationId).toBe(original.conversationId);
+    expect(unchanged.parentConversationId).toBeUndefined();
+    expect(createConversation).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects explicit parent runtime sessions that differ from existing parent lineage', async () => {
+    const store = createInMemorySessionBindingStore();
+    const createConversation = vi
+      .fn()
+      .mockResolvedValueOnce(createConversationId('conv_parent_a'))
+      .mockResolvedValueOnce(createConversationId('conv_child'))
+      .mockResolvedValueOnce(createConversationId('conv_parent_b'));
+
+    await resolveSessionBinding(
+      store,
+      createBaseInput({
+        runtimeSessionId: 'thread-parent-a',
+        createConversation,
+      }),
+    );
+    await resolveSessionBinding(
+      store,
+      createBaseInput({
+        runtimeSessionId: 'thread-child',
+        parentRuntimeSessionId: 'thread-parent-a',
+        createConversation,
+      }),
+    );
+    await resolveSessionBinding(
+      store,
+      createBaseInput({
+        runtimeSessionId: 'thread-parent-b',
+        createConversation,
+      }),
+    );
+
+    await expect(
+      resolveSessionBinding(
+        store,
+        createBaseInput({
+          runtimeSessionId: 'thread-child',
+          parentRuntimeSessionId: 'thread-parent-b',
+          createConversation,
+        }),
+      ),
+    ).rejects.toThrow(
+      'Runtime session "thread-child" is already bound to a different parent conversation.',
+    );
+    expect(createConversation).toHaveBeenCalledTimes(3);
   });
 
   it('persists child bindings with parent conversation lineage in the file store', async () => {

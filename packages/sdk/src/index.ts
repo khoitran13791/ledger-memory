@@ -71,7 +71,7 @@ import {
 } from '@ledgermind/adapters';
 import {
   createPgPool,
-  createPgUnitOfWorkFromPool,
+  createPgUnitOfWork,
   NodeFileReader,
   PgArtifactStore,
   PgContextProjection,
@@ -80,6 +80,7 @@ import {
   PgOperatorExecutionStore,
   PgSummaryDag,
   asPgExecutor,
+  type PgExecutor,
 } from '@ledgermind/infrastructure';
 
 // ---------------------------------------------------------------------------
@@ -328,7 +329,11 @@ export interface MemoryEngineOperatorConfig {
 export interface MemoryEngineConfig {
   readonly storage:
     | { readonly type: 'in-memory' }
-    | { readonly type: 'postgres'; readonly connectionString: string };
+    | {
+        readonly type: 'postgres';
+        readonly connectionString: string;
+        readonly executor?: PgExecutor;
+      };
 
   readonly summarizer?: {
     readonly type: 'deterministic';
@@ -354,10 +359,12 @@ export const createInMemoryMemoryEngine = (
 
 export type PostgresPresetConfig = Omit<MemoryEngineConfig, 'storage'> & {
   readonly connectionString: string;
+  readonly executor?: PgExecutor;
 };
 
 export const createPostgresMemoryEngine = ({
   connectionString,
+  executor,
   ...config
 }: PostgresPresetConfig): MemoryEngine => {
   if (connectionString.trim().length === 0) {
@@ -365,7 +372,11 @@ export const createPostgresMemoryEngine = ({
   }
 
   return createMemoryEngine({
-    storage: { type: 'postgres', connectionString },
+    storage: {
+      type: 'postgres',
+      connectionString,
+      ...(executor === undefined ? {} : { executor }),
+    },
     ...config,
   });
 };
@@ -396,11 +407,12 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
           };
         })()
       : (() => {
-          const pool = createPgPool({ connectionString: config.storage.connectionString });
-          const executor = asPgExecutor(pool);
+          const executor =
+            config.storage.executor ??
+            asPgExecutor(createPgPool({ connectionString: config.storage.connectionString }));
 
           return {
-            unitOfWork: createPgUnitOfWorkFromPool(pool),
+            unitOfWork: createPgUnitOfWork(executor),
             ledgerRead: new PgLedgerStore(executor),
             contextProjection: new PgContextProjection(executor),
             summaryDag: new PgSummaryDag(executor),

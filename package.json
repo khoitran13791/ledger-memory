@@ -11,6 +11,8 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "cockpit:dev": "pnpm --filter @ledgermind/cli dev",
+    "cockpit:smoke": "pnpm --filter @ledgermind/cli smoke",
     "mcp:dev": "pnpm --filter @ledgermind/mcp-server dev",
     "mcp:smoke": "pnpm --filter @ledgermind/mcp-server smoke",
     "worker:operator": "pnpm --filter @ledgermind/operator-worker worker",

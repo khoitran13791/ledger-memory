@@ -17,11 +17,11 @@ LedgerMind now ships an MCP-first Claude Code foundation with two runtime-facing
 
 ## Package Responsibilities
 
-| Package | Responsibility |
-| --- | --- |
-| `@ledgermind/mcp-server` | MCP transport, authorization, tool registration, session binding |
-| `@ledgermind/claude-code` | Claude hook payload parsing and lifecycle automation |
-| `@ledgermind/adapters` | Canonical tool semantics and policy metadata |
+| Package                   | Responsibility                                                   |
+| ------------------------- | ---------------------------------------------------------------- |
+| `@ledgermind/mcp-server`  | MCP transport, authorization, tool registration, session binding |
+| `@ledgermind/claude-code` | Claude hook payload parsing and lifecycle automation             |
+| `@ledgermind/adapters`    | Canonical tool semantics and policy metadata                     |
 
 ## Hook Behavior
 
@@ -43,23 +43,37 @@ LedgerMind now ships an MCP-first Claude Code foundation with two runtime-facing
 
 ## Environment Variables
 
-| Variable | Purpose |
-| --- | --- |
-| `LEDGERMIND_DB_URL` | Use PostgreSQL instead of the in-memory engine preset |
-| `LEDGERMIND_MCP_BINDING_STORE` | Shared file path for runtime/session bindings |
-| `LEDGERMIND_CLAUDE_CONTEXT_BUDGET_CHARS` | Character budget used for bounded summaries and stop-time excerpts |
-| `LEDGERMIND_CLAUDE_ENABLE_ARTIFACT_INDEXING` | Enables `PostToolUse` artifact storage |
-| `LEDGERMIND_CLAUDE_USER_SCOPE` | Overrides the default user scope (`USER`/`LOGNAME`) |
-| `LEDGERMIND_CLAUDE_WORKSPACE_SCOPE` | Overrides the workspace scope derived from `cwd` |
-| `LEDGERMIND_CLAUDE_BRANCH_SCOPE` | Optional branch-level binding scope |
-| `LEDGERMIND_CLAUDE_PARENT_SESSION_ID` | Optional parent runtime session for sub-agent lineage |
+| Variable                                     | Purpose                                                            |
+| -------------------------------------------- | ------------------------------------------------------------------ |
+| `LEDGERMIND_DB_URL`                          | Use PostgreSQL instead of the in-memory engine preset              |
+| `LEDGERMIND_MCP_BINDING_STORE`               | Shared file path for runtime/session bindings                      |
+| `LEDGERMIND_CLAUDE_CONTEXT_BUDGET_CHARS`     | Character budget used for bounded summaries and stop-time excerpts |
+| `LEDGERMIND_CLAUDE_ENABLE_ARTIFACT_INDEXING` | Enables `PostToolUse` artifact storage                             |
+| `LEDGERMIND_CLAUDE_USER_SCOPE`               | Overrides the default user scope (`USER`/`LOGNAME`)                |
+| `LEDGERMIND_CLAUDE_WORKSPACE_SCOPE`          | Overrides the workspace scope derived from `cwd`                   |
+| `LEDGERMIND_CLAUDE_BRANCH_SCOPE`             | Optional branch-level binding scope                                |
+| `LEDGERMIND_CLAUDE_PARENT_SESSION_ID`        | Optional parent runtime session for sub-agent lineage              |
 
 ## Local Setup
 
 1. Install dependencies with `pnpm install`.
-2. Register the MCP server using [`examples/claude-code/.mcp.json`](../examples/claude-code/.mcp.json).
-3. Add Claude hook commands using [`examples/claude-code/settings.json`](../examples/claude-code/settings.json) or the package templates in `packages/claude-code/src/templates/`.
-4. Keep the binding-store path stable per workspace so the hooks and MCP server resolve the same LedgerMind conversation.
+2. Build the local packages before using bin-based example configs: `pnpm --filter @ledgermind/mcp-server build && pnpm --filter @ledgermind/claude-code build`.
+3. Register the MCP server using [`examples/claude-code/.mcp.json`](../examples/claude-code/.mcp.json), or point your local config directly at the package source scripts while developing.
+4. Add Claude hook commands using [`examples/claude-code/settings.json`](../examples/claude-code/settings.json) or the package templates in `packages/claude-code/src/templates/`.
+5. Keep the binding-store path stable per workspace so the hooks and MCP server resolve the same LedgerMind conversation.
+
+### Debug with cockpit
+
+The cockpit CLI uses the same binding-store path as the MCP server and Claude hooks, so its workspace/runtime binding should point at the same LedgerMind conversation.
+When launched through `pnpm cockpit:dev`, the default workspace is the shell directory that launched pnpm.
+
+```bash
+pnpm cockpit:dev -- doctor
+LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- status
+LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- recall "recent decision"
+```
+
+Pass the same `--binding-store <path>` or `LEDGERMIND_MCP_BINDING_STORE` value that Claude Code uses when debugging a specific session.
 
 ## Current Limits
 

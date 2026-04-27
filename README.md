@@ -63,6 +63,21 @@ pnpm test
 pnpm build
 ```
 
+## Memory Cockpit CLI
+
+Use the cockpit CLI to inspect setup, write manual memory notes, and search the active workspace binding.
+When run through `pnpm cockpit:dev`, the CLI scopes the default workspace and binding store to the shell directory that launched pnpm.
+
+```bash
+pnpm cockpit:dev -- doctor
+LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- status
+LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- remember "Persist the current design decision."
+LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- recall "design decision"
+LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- timeline
+```
+
+Add `--json` to any command for agent-readable output.
+
 ## SDK usage
 
 ```ts
@@ -114,7 +129,6 @@ Repo-wide:
 Integration and worker entrypoints:
 
 - `pnpm mcp:dev`
-- `pnpm mcp:smoke`
 - `pnpm worker:operator`
 - `pnpm worker:operator:test`
 

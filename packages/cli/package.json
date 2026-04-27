@@ -1,0 +1,40 @@
+{
+  "name": "@ledgermind/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "ledgermind": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run --passWithNoTests",
+    "dev": "tsx src/cli.ts",
+    "smoke": "tsx src/cli.ts --help",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+  },
+  "dependencies": {
+    "@ledgermind/application": "workspace:*",
+    "@ledgermind/domain": "workspace:*",
+    "@ledgermind/infrastructure": "workspace:*",
+    "@ledgermind/mcp-server": "workspace:*",
+    "@ledgermind/sdk": "workspace:*",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/pg": "^8.15.6",
+    "tsx": "^4.20.5",
+    "vitest": "^3.2.4"
+  }
+}
