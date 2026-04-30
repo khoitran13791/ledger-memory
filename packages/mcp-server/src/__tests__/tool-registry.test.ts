@@ -66,8 +66,19 @@ describe('createMcpToolRegistry', () => {
       'memory.recall',
       'memory.describe',
       'memory.expand',
+      'memory.currentState',
+      'memory.nextSteps',
+      'memory.recallForTask',
+      'memory.recordDecision',
+      'memory.recordConstraint',
+      'memory.recordProgress',
+      'memory.recordVerification',
+      'memory.createHandoff',
+      'memory.markStale',
     ]);
 
-    expect(registry.map((entry) => entry.tool.inputSchema)).toEqual(catalog.map((tool) => tool.parameters));
+    expect(registry.map((entry) => entry.tool.inputSchema)).toEqual(
+      catalog.map((tool) => tool.parameters),
+    );
   });
 });

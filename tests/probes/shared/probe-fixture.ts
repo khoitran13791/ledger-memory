@@ -1,12 +1,30 @@
 import type { MessageRole } from '@ledgermind/domain';
+import type {
+  ContinuityImportance,
+  ContinuityRecordKind,
+  ContinuityRecordStatus,
+  ContinuityProvenance,
+  CreateHandoffInput,
+} from '@ledgermind/application';
 
-export type ProbeType = 'recall' | 'artifact' | 'continuation' | 'decision' | 'tool_usage';
+export type ProbeType =
+  | 'recall'
+  | 'artifact'
+  | 'continuation'
+  | 'decision'
+  | 'tool_usage'
+  | 'handoff'
+  | 'staleness'
+  | 'verification';
 
 export type ProbeGradingCriteria =
   | 'exact_value'
   | 'correct_next_step'
   | 'constraint_adherence'
-  | 'appropriate_tool_suggestion';
+  | 'appropriate_tool_suggestion'
+  | 'handoff_recovery'
+  | 'stale_record_suppression'
+  | 'blocking_evidence';
 
 export interface ProbeEventFixture {
   readonly role: MessageRole;
@@ -19,12 +37,37 @@ export interface ProbeArtifactFixture {
   readonly mimeType?: string;
 }
 
-export type ProbeSetup =
-  | {
-      readonly events: readonly ProbeEventFixture[];
-      readonly artifacts?: readonly ProbeArtifactFixture[];
-    }
-  | readonly ProbeEventFixture[];
+export interface ProbeContinuityRecordFixture {
+  readonly kind: ContinuityRecordKind;
+  readonly title: string;
+  readonly content: string;
+  readonly importance?: ContinuityImportance;
+  readonly status?: ContinuityRecordStatus;
+  readonly provenance?: ContinuityProvenance;
+  readonly relatedRecordIds?: readonly string[];
+  readonly supersedesRecordIds?: readonly string[];
+  readonly supersededByRecordId?: string;
+  readonly idempotencyKey?: string;
+}
+
+export type ProbeHandoffFixture = Omit<CreateHandoffInput, 'conversationId'>;
+
+export interface ProbeStructuredSetup {
+  readonly events: readonly ProbeEventFixture[];
+  readonly artifacts?: readonly ProbeArtifactFixture[];
+  readonly continuityRecords?: readonly ProbeContinuityRecordFixture[];
+}
+
+export interface ProbeTwoSessionSetup {
+  readonly sessionA: ProbeStructuredSetup & {
+    readonly stopHandoff?: ProbeHandoffFixture;
+  };
+  readonly sessionB: {
+    readonly question: string;
+  };
+}
+
+export type ProbeSetup = ProbeStructuredSetup | ProbeTwoSessionSetup | readonly ProbeEventFixture[];
 
 export interface ProbeBaseFixture {
   readonly name: string;
@@ -69,12 +112,33 @@ export interface ToolUsageProbeFixture extends ProbeBaseFixture {
   readonly gradingCriteria: 'appropriate_tool_suggestion';
 }
 
+export interface HandoffProbeFixture extends ProbeBaseFixture {
+  readonly type: 'handoff';
+  readonly expectedAnswer: string;
+  readonly gradingCriteria: 'handoff_recovery';
+}
+
+export interface StalenessProbeFixture extends ProbeBaseFixture {
+  readonly type: 'staleness';
+  readonly expectedAnswer: string;
+  readonly gradingCriteria: 'stale_record_suppression';
+}
+
+export interface VerificationProbeFixture extends ProbeBaseFixture {
+  readonly type: 'verification';
+  readonly expectedAnswer: string;
+  readonly gradingCriteria: 'blocking_evidence';
+}
+
 export type ProbeFixture =
   | RecallProbeFixture
   | ArtifactProbeFixture
   | ContinuationProbeFixture
   | DecisionProbeFixture
-  | ToolUsageProbeFixture;
+  | ToolUsageProbeFixture
+  | HandoffProbeFixture
+  | StalenessProbeFixture
+  | VerificationProbeFixture;
 
 export interface ProbeExecutionResult {
   readonly fixtureName: string;
@@ -103,28 +167,43 @@ const ensurePositiveInteger = (value: number, label: string): void => {
   }
 };
 
-const isStructuredSetup = (
-  setup: ProbeSetup,
-): setup is {
-  readonly events: readonly ProbeEventFixture[];
-  readonly artifacts?: readonly ProbeArtifactFixture[];
-} => {
+const isStructuredSetup = (setup: ProbeSetup): setup is ProbeStructuredSetup => {
   return !Array.isArray(setup) && typeof setup === 'object' && setup !== null && 'events' in setup;
+};
+
+export const isTwoSessionSetup = (setup: ProbeSetup): setup is ProbeTwoSessionSetup => {
+  return (
+    !Array.isArray(setup) && typeof setup === 'object' && setup !== null && 'sessionA' in setup
+  );
 };
 
 const normalizeSetup = (
   setup: ProbeSetup,
-): { readonly events: readonly ProbeEventFixture[]; readonly artifacts: readonly ProbeArtifactFixture[] } => {
+): {
+  readonly events: readonly ProbeEventFixture[];
+  readonly artifacts: readonly ProbeArtifactFixture[];
+  readonly continuityRecords: readonly ProbeContinuityRecordFixture[];
+} => {
+  if (isTwoSessionSetup(setup)) {
+    return {
+      events: setup.sessionA.events,
+      artifacts: setup.sessionA.artifacts ?? [],
+      continuityRecords: setup.sessionA.continuityRecords ?? [],
+    };
+  }
+
   if (!isStructuredSetup(setup)) {
     return {
       events: setup,
       artifacts: [],
+      continuityRecords: [],
     };
   }
 
   return {
     events: setup.events,
     artifacts: setup.artifacts ?? [],
+    continuityRecords: setup.continuityRecords ?? [],
   };
 };
 
@@ -136,12 +215,22 @@ export const getProbeArtifacts = (fixture: ProbeFixture): readonly ProbeArtifact
   return normalizeSetup(fixture.setup).artifacts;
 };
 
+export const getProbeContinuityRecords = (
+  fixture: ProbeFixture,
+): readonly ProbeContinuityRecordFixture[] => {
+  return normalizeSetup(fixture.setup).continuityRecords;
+};
+
+export const getProbeQuestion = (fixture: ProbeFixture): string => {
+  return isTwoSessionSetup(fixture.setup) ? fixture.setup.sessionB.question : fixture.question;
+};
+
 export const validateProbeFixture = (fixture: ProbeFixture): void => {
   if (fixture.name.trim().length === 0) {
     throw new Error('Probe fixture name must be non-empty.');
   }
 
-  if (fixture.question.trim().length === 0) {
+  if (getProbeQuestion(fixture).trim().length === 0) {
     throw new Error(`Probe fixture (${fixture.name}) question must be non-empty.`);
   }
 
@@ -150,17 +239,23 @@ export const validateProbeFixture = (fixture: ProbeFixture): void => {
   ensureWithinRange(fixture.hardThreshold, 0, 1, `Probe fixture (${fixture.name}) hardThreshold`);
 
   if (fixture.softThreshold >= fixture.hardThreshold) {
-    throw new Error(`Probe fixture (${fixture.name}) softThreshold must be lower than hardThreshold.`);
+    throw new Error(
+      `Probe fixture (${fixture.name}) softThreshold must be lower than hardThreshold.`,
+    );
   }
 
   ensurePositiveInteger(fixture.budgetTokens, `Probe fixture (${fixture.name}) budgetTokens`);
 
   if (!Number.isSafeInteger(fixture.overheadTokens) || fixture.overheadTokens < 0) {
-    throw new Error(`Probe fixture (${fixture.name}) overheadTokens must be a non-negative safe integer.`);
+    throw new Error(
+      `Probe fixture (${fixture.name}) overheadTokens must be a non-negative safe integer.`,
+    );
   }
 
   if (fixture.overheadTokens >= fixture.budgetTokens) {
-    throw new Error(`Probe fixture (${fixture.name}) overheadTokens must be lower than budgetTokens.`);
+    throw new Error(
+      `Probe fixture (${fixture.name}) overheadTokens must be lower than budgetTokens.`,
+    );
   }
 
   if (fixture.runCompactionTargetTokens !== undefined) {
@@ -188,6 +283,29 @@ export const validateProbeFixture = (fixture: ProbeFixture): void => {
     }
     if (artifact.content.trim().length === 0) {
       throw new Error(`Probe fixture (${fixture.name}) artifact content must be non-empty.`);
+    }
+  }
+
+  const continuityRecords = getProbeContinuityRecords(fixture);
+  for (const record of continuityRecords) {
+    if (record.title.trim().length === 0) {
+      throw new Error(`Probe fixture (${fixture.name}) continuity record title must be non-empty.`);
+    }
+    if (record.content.trim().length === 0) {
+      throw new Error(
+        `Probe fixture (${fixture.name}) continuity record content must be non-empty.`,
+      );
+    }
+  }
+
+  if (isTwoSessionSetup(fixture.setup) && fixture.setup.sessionA.stopHandoff !== undefined) {
+    if (fixture.setup.sessionA.stopHandoff.goal.trim().length === 0) {
+      throw new Error(`Probe fixture (${fixture.name}) handoff goal must be non-empty.`);
+    }
+    if (fixture.setup.sessionA.stopHandoff.nextSteps.length === 0) {
+      throw new Error(
+        `Probe fixture (${fixture.name}) handoff must include at least one next step.`,
+      );
     }
   }
 

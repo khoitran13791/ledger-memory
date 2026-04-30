@@ -21,6 +21,20 @@ import type {
   LLMMapInput,
   LLMMapOutput,
 } from './operator-execution.port';
+import type {
+  CreateHandoffInput,
+  CreateHandoffOutput,
+  GetCurrentStateInput,
+  GetCurrentStateOutput,
+  GetNextStepsInput,
+  GetNextStepsOutput,
+  MarkContinuityRecordInput,
+  MarkContinuityRecordOutput,
+  RecallForTaskInput,
+  RecallForTaskOutput,
+  RecordContinuityInput,
+  RecordContinuityOutput,
+} from './continuity.port';
 import type { CallerContext } from '../driven/auth/authorization.port';
 import type { IntegrityReport } from '../driven/persistence/summary-dag.port';
 
@@ -42,6 +56,7 @@ export interface AppendLedgerEventsInput {
 
 export interface AppendLedgerEventsOutput {
   readonly appendedEvents: readonly LedgerEvent[];
+  readonly existingEvents?: readonly LedgerEvent[];
   readonly contextTokenCount: TokenCount;
 }
 
@@ -73,7 +88,11 @@ export interface RetrievalStageQueryDiagnostics {
   readonly matchCount: number;
 }
 
-export type RetrievalCandidateDecisionReason = 'selected' | 'already_in_context' | 'over_budget' | 'limit_reached';
+export type RetrievalCandidateDecisionReason =
+  | 'selected'
+  | 'already_in_context'
+  | 'over_budget'
+  | 'limit_reached';
 
 export interface RetrievalCandidateDecisionDiagnostics {
   readonly summaryId: SummaryNodeId;
@@ -290,6 +309,12 @@ export interface MemoryEngine {
   materializeContext(input: MaterializeContextInput): Promise<MaterializeContextOutput>;
   runCompaction(input: RunCompactionInput): Promise<RunCompactionOutput>;
   checkIntegrity(input: CheckIntegrityInput): Promise<CheckIntegrityOutput>;
+  recordContinuity(input: RecordContinuityInput): Promise<RecordContinuityOutput>;
+  createHandoff(input: CreateHandoffInput): Promise<CreateHandoffOutput>;
+  getCurrentState(input: GetCurrentStateInput): Promise<GetCurrentStateOutput>;
+  getNextSteps(input: GetNextStepsInput): Promise<GetNextStepsOutput>;
+  recallForTask(input: RecallForTaskInput): Promise<RecallForTaskOutput>;
+  markContinuityRecord(input: MarkContinuityRecordInput): Promise<MarkContinuityRecordOutput>;
   grep(input: GrepInput): Promise<GrepOutput>;
   describe(input: DescribeInput): Promise<DescribeOutput>;
   expand(input: ExpandInput): Promise<ExpandOutput>;

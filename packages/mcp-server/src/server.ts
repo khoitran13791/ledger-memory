@@ -3,7 +3,11 @@ import { createCanonicalMemoryToolCatalog } from '@ledgermind/adapters';
 import { createInMemoryMemoryEngine, createPostgresMemoryEngine } from '@ledgermind/sdk';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema, type Implementation } from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  type Implementation,
+} from '@modelcontextprotocol/sdk/types.js';
 
 import type { McpServerConfig } from './config';
 import {
@@ -87,6 +91,12 @@ export const createLedgermindMcpServer = ({
     }
 
     const registration = registry.find((entry) => entry.tool.name === request.params.name);
+    if (!canExposeMcpTool(definition, config)) {
+      return toAuthorizationErrorResult(
+        request.params.name,
+        `${definition.name} is disabled until write tools are explicitly enabled.`,
+      );
+    }
 
     const metadata = readSessionBindingMetadata(request.params._meta);
     const resolvedArguments =
@@ -99,10 +109,11 @@ export const createLedgermindMcpServer = ({
               runtime: metadata.runtime ?? config.defaultRuntime ?? 'mcp',
               runtimeSessionId: metadata.runtimeSessionId,
               userScope: metadata.userScope ?? config.defaultUserScope ?? 'local-user',
-              workspaceScope: metadata.workspaceScope ?? config.defaultWorkspaceScope ?? 'local-workspace',
-              ...(metadata.branchScope ?? config.defaultBranchScope) === undefined
+              workspaceScope:
+                metadata.workspaceScope ?? config.defaultWorkspaceScope ?? 'local-workspace',
+              ...((metadata.branchScope ?? config.defaultBranchScope) === undefined
                 ? {}
-                : { branchScope: metadata.branchScope ?? config.defaultBranchScope },
+                : { branchScope: metadata.branchScope ?? config.defaultBranchScope }),
               ...(metadata.parentRuntimeSessionId === undefined
                 ? {}
                 : { parentRuntimeSessionId: metadata.parentRuntimeSessionId }),
@@ -120,7 +131,8 @@ export const createLedgermindMcpServer = ({
     if (!authorization.allowed || registration === undefined) {
       return toAuthorizationErrorResult(
         request.params.name,
-        authorization.reason ?? `${request.params.name} is not available in the current MCP server configuration.`,
+        authorization.reason ??
+          `${request.params.name} is not available in the current MCP server configuration.`,
       );
     }
 

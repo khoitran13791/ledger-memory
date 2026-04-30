@@ -80,15 +80,22 @@ const buildPersistedMetadata = (
   });
 };
 
-const hasIdempotencyConflict = (
+const getEventsForIdempotencyKey = (
   events: readonly LedgerEvent[],
   idempotencyKey: string,
+): readonly LedgerEvent[] => {
+  return events.filter((event) => {
+    return (
+      getIdempotencyMetadataString(event.metadata, IDEMPOTENCY_KEY_METADATA_FIELD) ===
+      idempotencyKey
+    );
+  });
+};
+
+const hasIdempotencyConflict = (
+  eventsForKey: readonly LedgerEvent[],
   expectedDigest: string,
 ): boolean => {
-  const eventsForKey = events.filter((event) => {
-    return getIdempotencyMetadataString(event.metadata, IDEMPOTENCY_KEY_METADATA_FIELD) === idempotencyKey;
-  });
-
   if (eventsForKey.length === 0) {
     return false;
   }
@@ -100,14 +107,9 @@ const hasIdempotencyConflict = (
 };
 
 const hasIdempotencyMatch = (
-  events: readonly LedgerEvent[],
-  idempotencyKey: string,
+  eventsForKey: readonly LedgerEvent[],
   expectedDigest: string,
 ): boolean => {
-  const eventsForKey = events.filter((event) => {
-    return getIdempotencyMetadataString(event.metadata, IDEMPOTENCY_KEY_METADATA_FIELD) === idempotencyKey;
-  });
-
   if (eventsForKey.length === 0) {
     return false;
   }
@@ -142,6 +144,7 @@ export class AppendLedgerEventsUseCase {
           readonly priority: 'normal';
         }
       | undefined;
+    let eventsToPublish: readonly LedgerEvent[] = [];
 
     const output = await this.deps.unitOfWork.execute(async (uow) => {
       const conversation = await uow.conversations.get(input.conversationId);
@@ -164,13 +167,19 @@ export class AppendLedgerEventsUseCase {
           : computeIdempotencyDigest(this.deps.hashPort, createIdempotencyPayload(input));
 
       if (input.idempotencyKey !== undefined && idempotencyDigest !== null) {
-        if (hasIdempotencyConflict(existingEvents, input.idempotencyKey, idempotencyDigest)) {
+        const eventsForIdempotencyKey = getEventsForIdempotencyKey(
+          existingEvents,
+          input.idempotencyKey,
+        );
+
+        if (hasIdempotencyConflict(eventsForIdempotencyKey, idempotencyDigest)) {
           throw new IdempotencyConflictError(input.conversationId, input.idempotencyKey);
         }
 
-        if (hasIdempotencyMatch(existingEvents, input.idempotencyKey, idempotencyDigest)) {
+        if (hasIdempotencyMatch(eventsForIdempotencyKey, idempotencyDigest)) {
           return {
             appendedEvents: [],
+            existingEvents: eventsForIdempotencyKey,
             contextTokenCount: await uow.context.getContextTokenCount(input.conversationId),
           };
         }
@@ -200,6 +209,7 @@ export class AppendLedgerEventsUseCase {
       });
 
       await uow.ledger.appendEvents(input.conversationId, appendedEvents);
+      eventsToPublish = appendedEvents;
 
       await uow.context.appendContextItems(
         input.conversationId,
@@ -244,8 +254,8 @@ export class AppendLedgerEventsUseCase {
       void this.deps.jobQueue.enqueue(softCompactionJob).catch(() => undefined);
     }
 
-    if (output.appendedEvents.length > 0 && this.deps.eventPublisher) {
-      for (const event of output.appendedEvents) {
+    if (eventsToPublish.length > 0 && this.deps.eventPublisher) {
+      for (const event of eventsToPublish) {
         this.deps.eventPublisher.publish({
           type: 'LedgerEventAppended',
           conversationId: input.conversationId,

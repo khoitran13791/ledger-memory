@@ -5,12 +5,16 @@
       "args": [
         "--dir",
         "../..",
-        "exec",
-        "ledgermind-mcp-server",
+        "--filter",
+        "@ledgermind/mcp-server",
+        "dev",
         "--binding-store",
-        ".ledgermind/session-bindings.json"
+        ".ledgermind/session-bindings.json",
+        "--enable-write-tools"
       ],
       "env": {
+        "DATABASE_URL": "postgres://user:pass@localhost:5432/ledgermind",
+        "LEDGERMIND_DB_URL": "postgres://user:pass@localhost:5432/ledgermind",
         "LEDGERMIND_MCP_RUNTIME": "ampcode"
       }
     }

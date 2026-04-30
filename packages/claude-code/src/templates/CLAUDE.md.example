@@ -2,8 +2,9 @@
 
 This repository uses LedgerMind as the long-term memory layer for Claude Code.
 
-1. Start a task by checking whether LedgerMind already has relevant context for the current conversation.
-2. Use `mcp__ledgermind__memory.describe` when you need metadata about a returned summary or artifact reference.
-3. Use `mcp__ledgermind__memory.expand` only when a summary is too compressed and the task genuinely needs the raw message trail.
-4. Treat `memory.expand` as privileged: only use it for focused follow-up work, not broad transcript dumps.
-5. Remember that `PreCompact` and `Stop` hooks archive session context automatically, so avoid re-pasting large transcript excerpts into your responses.
+1. Use LedgerMind to preserve operational state.
+2. At task start, read LedgerMind current state or use `memory.recallForTask`.
+3. Record decisions, constraints, progress, verification, failures, next steps, and handoffs.
+4. Before stopping, create a handoff with done, next, risks, verification, and changed files.
+5. Use `memory.describe` or `memory.expand` only when the current state references compressed evidence.
+6. Mark stale records when decisions change.

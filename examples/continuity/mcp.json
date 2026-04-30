@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "ledgermind": {
+      "command": "pnpm",
+      "args": [
+        "--dir",
+        "../..",
+        "--filter",
+        "@ledgermind/mcp-server",
+        "dev",
+        "--binding-store",
+        ".ledgermind/session-bindings.json",
+        "--enable-write-tools"
+      ],
+      "env": {
+        "DATABASE_URL": "postgres://user:pass@localhost:5432/ledgermind",
+        "LEDGERMIND_DB_URL": "postgres://user:pass@localhost:5432/ledgermind",
+        "LEDGERMIND_MCP_RUNTIME": "continuity-harness",
+        "LEDGERMIND_MCP_ENABLE_WRITE_TOOLS": "true"
+      }
+    }
+  }
+}

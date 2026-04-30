@@ -1,4 +1,24 @@
 export type {
+  ContinuityImportance,
+  ContinuityProvenance,
+  ContinuityRecord,
+  ContinuityRecordKind,
+  ContinuityRecordStatus,
+  CreateHandoffInput,
+  CreateHandoffOutput,
+  GetCurrentStateInput,
+  GetCurrentStateOutput,
+  GetNextStepsInput,
+  GetNextStepsOutput,
+  HandoffNextStep,
+  MarkContinuityRecordInput,
+  MarkContinuityRecordOutput,
+  RecallForTaskInput,
+  RecallForTaskOutput,
+  RecordContinuityInput,
+  RecordContinuityOutput,
+} from './ports/driving/continuity.port';
+export type {
   AppendLedgerEventsInput,
   AppendLedgerEventsOutput,
   ArtifactReference,
@@ -155,6 +175,8 @@ export {
   ArtifactExplorationFailedError,
   ArtifactNotFoundError,
   ConversationNotFoundError,
+  ContinuityInputValidationError,
+  ContinuityWriteFailedError,
   ExplorerResolutionError,
   IdempotencyConflictError,
   IntegrityCheckExecutionError,
@@ -166,6 +188,7 @@ export {
   OperatorRunNotFoundError,
   TokenizerConfigurationError,
   UnauthorizedExpandError,
+  type ContinuityInputField,
   type InvalidReferenceKind,
   type TokenizerOperation,
 } from './errors/application-errors';
@@ -175,6 +198,22 @@ export {
   type AppendLedgerEventsUseCaseDeps,
 } from './use-cases/append-ledger-events';
 export {
+  RecordContinuityUseCase,
+  type RecordContinuityUseCaseDeps,
+} from './use-cases/record-continuity';
+export { CreateHandoffUseCase, type CreateHandoffUseCaseDeps } from './use-cases/create-handoff';
+export {
+  MarkContinuityRecordUseCase,
+  type MarkContinuityRecordUseCaseDeps,
+} from './use-cases/mark-continuity-record';
+export {
+  GetCurrentStateUseCase,
+  parseContinuityRecordFromEvent,
+  type GetCurrentStateUseCaseDeps,
+} from './use-cases/get-current-state';
+export { GetNextStepsUseCase, type GetNextStepsUseCaseDeps } from './use-cases/get-next-steps';
+export { RecallForTaskUseCase, type RecallForTaskUseCaseDeps } from './use-cases/recall-for-task';
+export {
   MaterializeContextUseCase,
   type MaterializeContextUseCaseDeps,
 } from './use-cases/materialize-context';
@@ -183,38 +222,17 @@ export {
   type RunCompactionUseCaseDeps,
   type RunCompactionConfig,
 } from './use-cases/run-compaction';
-export {
-  CheckIntegrityUseCase,
-  type CheckIntegrityUseCaseDeps,
-} from './use-cases/check-integrity';
-export {
-  GrepUseCase,
-  type GrepUseCaseDeps,
-} from './use-cases/grep';
-export {
-  DescribeUseCase,
-  type DescribeUseCaseDeps,
-} from './use-cases/describe';
-export {
-  ExpandUseCase,
-  type ExpandUseCaseDeps,
-} from './use-cases/expand';
-export {
-  StoreArtifactUseCase,
-  type StoreArtifactUseCaseDeps,
-} from './use-cases/store-artifact';
+export { CheckIntegrityUseCase, type CheckIntegrityUseCaseDeps } from './use-cases/check-integrity';
+export { GrepUseCase, type GrepUseCaseDeps } from './use-cases/grep';
+export { DescribeUseCase, type DescribeUseCaseDeps } from './use-cases/describe';
+export { ExpandUseCase, type ExpandUseCaseDeps } from './use-cases/expand';
+export { StoreArtifactUseCase, type StoreArtifactUseCaseDeps } from './use-cases/store-artifact';
 export {
   ExploreArtifactUseCase,
   type ExploreArtifactUseCaseDeps,
 } from './use-cases/explore-artifact';
-export {
-  LLMMapUseCase,
-  type LLMMapUseCaseDeps,
-} from './use-cases/llm-map';
-export {
-  AgenticMapUseCase,
-  type AgenticMapUseCaseDeps,
-} from './use-cases/agentic-map';
+export { LLMMapUseCase, type LLMMapUseCaseDeps } from './use-cases/llm-map';
+export { AgenticMapUseCase, type AgenticMapUseCaseDeps } from './use-cases/agentic-map';
 export {
   GetOperatorRunUseCase,
   type GetOperatorRunUseCaseDeps,
@@ -233,7 +251,10 @@ export {
   createOperatorConfig,
   type OperatorConfig,
 } from './use-cases/operators/shared/operator-config';
-export { loadOperatorDataset, validateOperatorDatasetSource } from './use-cases/operators/shared/input-dataset';
+export {
+  loadOperatorDataset,
+  validateOperatorDatasetSource,
+} from './use-cases/operators/shared/input-dataset';
 export {
   createFailedResultEntry,
   createSucceededResultEntry,

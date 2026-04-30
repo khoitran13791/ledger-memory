@@ -1,6 +1,6 @@
 # LedgerMind
 
-LedgerMind is a framework-agnostic memory engine for LLM agents, inspired by Lossless Context Management (LCM). It provides durable event storage, DAG-based summaries, deterministic compaction, and retrieval tools for long-running agent workflows.
+LedgerMind makes coding-agent work resumable, inspectable, and evidence-backed across context resets, compaction, and handoffs. It implements that promise with an append-only ledger, summary DAG, artifact store, MCP memory tools, Claude Code lifecycle hooks, and a CLI for humans and agents to inspect the same operational state.
 
 ## Current status
 
@@ -11,6 +11,7 @@ Implemented today:
 - append-only ledger storage and context projection
 - hierarchical summary DAG, deterministic compaction, and materialized context retrieval
 - artifact storage plus type-aware exploration hooks
+- continuity records for decisions, constraints, progress, verification, failures, next steps, and handoffs
 - in-memory and PostgreSQL persistence paths
 - SDK factories for in-memory, PostgreSQL, and generic engine creation
 - durable operator APIs via `llmMap()`, `agenticMap()`, and `getOperatorRun()`
@@ -106,6 +107,12 @@ const customMemory = createMemoryEngine({
 - `materializeContext`
 - `runCompaction`
 - `checkIntegrity`
+- `recordContinuity`
+- `createHandoff`
+- `getCurrentState`
+- `getNextSteps`
+- `recallForTask`
+- `markContinuityRecord`
 - `grep`
 - `describe`
 - `expand`
@@ -143,6 +150,7 @@ Benchmark entrypoints:
 ## PostgreSQL migrations
 
 ```bash
+export DATABASE_URL=postgres://user:pass@localhost:5432/ledgermind
 pnpm --filter @ledgermind/infrastructure migrate:up
 pnpm --filter @ledgermind/infrastructure migrate:status
 pnpm --filter @ledgermind/infrastructure migrate:down
@@ -214,6 +222,7 @@ pnpm benchmark:longmemeval:smoke
 ## Key docs
 
 - `docs/high-level-design.md` — canonical design contract and architecture blueprint
+- `docs/agent-continuity-layer.md` — continuity record model, recall flow, handoff shape, and storage guidance
 - `docs/operator-level-recursion.md` — durable operator API, worker flow, and inspection guide
 - `docs/design-decisions-addendum.md` — supporting design decisions and rationale
 - `docs/testing-strategy.md` — test strategy and quality gates

@@ -8,7 +8,6 @@ describe('parseClaudeHookContext', () => {
       session_id: 'abc123',
       transcript_path: '/tmp/transcript.jsonl',
       cwd: '/workspace/ledger-memory',
-      permission_mode: 'default',
       hook_event_name: 'SessionStart',
       source: 'startup',
       model: 'claude-sonnet-4-6',
@@ -19,7 +18,7 @@ describe('parseClaudeHookContext', () => {
       transcriptPath: '/tmp/transcript.jsonl',
       cwd: '/workspace/ledger-memory',
       workspaceRoot: '/workspace/ledger-memory',
-      permissionMode: 'default',
+      permissionMode: 'unknown',
       hookName: 'SessionStart',
       source: 'startup',
       model: 'claude-sonnet-4-6',
@@ -31,7 +30,6 @@ describe('parseClaudeHookContext', () => {
       session_id: 'abc123',
       transcript_path: '/tmp/transcript.jsonl',
       cwd: '/workspace/ledger-memory',
-      permission_mode: 'default',
       hook_event_name: 'PreCompact',
       trigger: 'manual',
       custom_instructions: 'Keep recent debugging details.',
@@ -39,6 +37,7 @@ describe('parseClaudeHookContext', () => {
 
     expect(context).toMatchObject({
       hookName: 'PreCompact',
+      permissionMode: 'unknown',
       trigger: 'manual',
       customInstructions: 'Keep recent debugging details.',
     });
@@ -73,6 +72,22 @@ describe('parseClaudeHookContext', () => {
         filePath: '/workspace/ledger-memory/README.md',
         success: true,
       },
+    });
+  });
+
+  it('normalizes UserPromptSubmit payloads with prompt text', () => {
+    const context = parseClaudeHookContext({
+      session_id: 'abc123',
+      transcript_path: '/tmp/transcript.jsonl',
+      cwd: '/workspace/ledger-memory',
+      permission_mode: 'default',
+      hook_event_name: 'UserPromptSubmit',
+      prompt: 'Fix the failing auth tests',
+    });
+
+    expect(context).toMatchObject({
+      hookName: 'UserPromptSubmit',
+      prompt: 'Fix the failing auth tests',
     });
   });
 });

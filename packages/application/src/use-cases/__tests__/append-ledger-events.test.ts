@@ -35,8 +35,14 @@ import type { ArtifactStorePort } from '../../ports/driven/persistence/artifact-
 import type { ContextProjectionPort } from '../../ports/driven/persistence/context-projection.port';
 import type { ConversationPort } from '../../ports/driven/persistence/conversation.port';
 import type { LedgerAppendPort } from '../../ports/driven/persistence/ledger-append.port';
-import type { LedgerReadPort, SequenceRange } from '../../ports/driven/persistence/ledger-read.port';
-import type { IntegrityReport, SummaryDagPort } from '../../ports/driven/persistence/summary-dag.port';
+import type {
+  LedgerReadPort,
+  SequenceRange,
+} from '../../ports/driven/persistence/ledger-read.port';
+import type {
+  IntegrityReport,
+  SummaryDagPort,
+} from '../../ports/driven/persistence/summary-dag.port';
 import type { OperatorExecutionPort } from '../../ports/driven/persistence/operator-execution.port';
 import type { UnitOfWork, UnitOfWorkPort } from '../../ports/driven/persistence/unit-of-work.port';
 import { IdempotencyConflictError } from '../../errors/application-errors';
@@ -117,7 +123,10 @@ class DeterministicClock implements ClockPort {
 class TestLedgerStore implements LedgerAppendPort {
   constructor(private readonly state: MutableState) {}
 
-  async appendEvents(conversationIdInput: ConversationId, events: readonly LedgerEvent[]): Promise<void> {
+  async appendEvents(
+    conversationIdInput: ConversationId,
+    events: readonly LedgerEvent[],
+  ): Promise<void> {
     const next = [...this.state.events];
 
     for (const event of events) {
@@ -149,7 +158,10 @@ class TestLedgerStore implements LedgerAppendPort {
 class TestLedgerRead implements LedgerReadPort {
   constructor(private readonly state: MutableState) {}
 
-  async getEvents(conversationIdInput: ConversationId, range?: SequenceRange): Promise<readonly LedgerEvent[]> {
+  async getEvents(
+    conversationIdInput: ConversationId,
+    range?: SequenceRange,
+  ): Promise<readonly LedgerEvent[]> {
     const ordered = this.state.events
       .filter((event) => event.conversationId === conversationIdInput)
       .sort((left, right) => left.sequence - right.sequence);
@@ -606,7 +618,11 @@ describe('AppendLedgerEventsUseCase', () => {
     });
 
     const state = createState({
-      conversation: createTestConversation({ contextWindow: 100, softThreshold: 0.6, hardThreshold: 1 }),
+      conversation: createTestConversation({
+        contextWindow: 100,
+        softThreshold: 0.6,
+        hardThreshold: 1,
+      }),
       events: [existingEvent],
       contextEventIds: [existingEvent.id],
     });
@@ -658,7 +674,11 @@ describe('AppendLedgerEventsUseCase', () => {
     });
 
     const state = createState({
-      conversation: createTestConversation({ contextWindow: 100, softThreshold: 0.6, hardThreshold: 1 }),
+      conversation: createTestConversation({
+        contextWindow: 100,
+        softThreshold: 0.6,
+        hardThreshold: 1,
+      }),
       events: [existingEvent],
       contextEventIds: [existingEvent.id],
     });
@@ -757,5 +777,34 @@ describe('AppendLedgerEventsUseCase', () => {
         tokenCount: appended.tokenCount,
       });
     }
+  });
+
+  it('does not emit duplicate LedgerEventAppended domain events for idempotent replay', async () => {
+    const eventPublisher = new SpyEventPublisher();
+    const { useCase } = createUseCase({ eventPublisher });
+
+    const input: AppendLedgerEventsInput = {
+      conversationId,
+      idempotencyKey: 'publish_once',
+      events: [
+        {
+          role: 'user',
+          content: 'publish this event once',
+          tokenCount: createTokenCount(10),
+          metadata: {},
+        },
+      ],
+    };
+
+    const first = await useCase.execute(input);
+    const second = await useCase.execute(input);
+
+    expect(second.appendedEvents).toHaveLength(0);
+    expect(eventPublisher.events).toHaveLength(1);
+    expect(eventPublisher.events[0]).toMatchObject({
+      type: 'LedgerEventAppended',
+      conversationId,
+      eventId: first.appendedEvents[0]?.id,
+    });
   });
 });

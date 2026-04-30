@@ -36,7 +36,9 @@ export interface ClaudeCommandRuntime {
   readonly stderr: WritableLike;
   readonly stdout: WritableLike;
   readonly transcriptCheckpointStore: TranscriptCheckpointStore;
-  expectHookContext<T extends ClaudeHookName>(hookName: T): Extract<ClaudeHookContext, { readonly hookName: T }>;
+  expectHookContext<T extends ClaudeHookName>(
+    hookName: T,
+  ): Extract<ClaudeHookContext, { readonly hookName: T }>;
   resolveBinding(context: ClaudeHookContext): Promise<SessionBindingRecord>;
   estimateTokenCount(content: string): ReturnType<typeof createTokenCount>;
   warn(message: string): void;
@@ -53,6 +55,9 @@ const createEngine = (config: ClaudeCodeConfig): MemoryEngine =>
 const deriveWorkspaceStatePath = (workspaceRoot: string, fileName: string): string =>
   join(workspaceRoot, '.ledgermind', fileName);
 
+const IN_MEMORY_DURABILITY_WARNING =
+  'LedgerMind continuity is using in-memory storage; records will not survive process exit. Set LEDGERMIND_DB_URL for durable memory.';
+
 const readStreamToString = async (stream: NodeJS.ReadableStream): Promise<string> => {
   const chunks: string[] = [];
   for await (const chunk of stream) {
@@ -62,7 +67,10 @@ const readStreamToString = async (stream: NodeJS.ReadableStream): Promise<string
   return chunks.join('').trim();
 };
 
-const readPayload = async (stdin: NodeJS.ReadableStream, env: NodeJS.ProcessEnv): Promise<unknown> => {
+const readPayload = async (
+  stdin: NodeJS.ReadableStream,
+  env: NodeJS.ProcessEnv,
+): Promise<unknown> => {
   const inlinePayload = env.LEDGERMIND_CLAUDE_HOOK_PAYLOAD;
   const serialized = inlinePayload === undefined ? await readStreamToString(stdin) : inlinePayload;
 
@@ -76,7 +84,8 @@ const readPayload = async (stdin: NodeJS.ReadableStream, env: NodeJS.ProcessEnv)
 const resolveUserScope = (env: NodeJS.ProcessEnv): string =>
   env.LEDGERMIND_CLAUDE_USER_SCOPE ?? env.USER ?? env.LOGNAME ?? 'local-user';
 
-const estimateTokenCount = (content: string) => createTokenCount(Math.max(1, Math.ceil(content.length / 4)));
+const estimateTokenCount = (content: string) =>
+  createTokenCount(Math.max(1, Math.ceil(content.length / 4)));
 
 export const buildCommandRuntime = async (
   options: ClaudeCommandOptions = {},
@@ -86,7 +95,8 @@ export const buildCommandRuntime = async (
   const payload = await readPayload(options.stdin ?? process.stdin, env);
   const context = parseClaudeHookContext(payload);
   const resolvedBindingStorePath =
-    baseConfig.bindingStorePath ?? deriveWorkspaceStatePath(context.workspaceRoot, 'session-bindings.json');
+    baseConfig.bindingStorePath ??
+    deriveWorkspaceStatePath(context.workspaceRoot, 'session-bindings.json');
   const config: ClaudeCodeConfig = {
     ...baseConfig,
     bindingStorePath: resolvedBindingStorePath,
@@ -94,6 +104,9 @@ export const buildCommandRuntime = async (
   const engine = options.engine ?? createEngine(config);
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
+  if (config.storage === 'in-memory') {
+    stderr.write(`LedgerMind Claude hook warning: ${IN_MEMORY_DURABILITY_WARNING}\n`);
+  }
   const sessionBindingStore =
     options.sessionBindingStore ??
     (resolvedBindingStorePath === undefined
@@ -111,7 +124,9 @@ export const buildCommandRuntime = async (
     transcriptCheckpointStore,
     expectHookContext(hookName) {
       if (context.hookName !== hookName) {
-        throw new Error(`Expected Claude hook payload for ${hookName}, received ${context.hookName}.`);
+        throw new Error(
+          `Expected Claude hook payload for ${hookName}, received ${context.hookName}.`,
+        );
       }
 
       return context as Extract<ClaudeHookContext, { readonly hookName: typeof hookName }>;
@@ -140,7 +155,9 @@ export const buildCommandRuntime = async (
   };
 };
 
-export const withEstimatedTokenCount = (event: Omit<NewLedgerEvent, 'tokenCount'>): NewLedgerEvent => ({
+export const withEstimatedTokenCount = (
+  event: Omit<NewLedgerEvent, 'tokenCount'>,
+): NewLedgerEvent => ({
   ...event,
   tokenCount: estimateTokenCount(event.content),
 });

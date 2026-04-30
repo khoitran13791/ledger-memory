@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 
-import { createIdService, createTimestamp, type HashPort, type IdService } from '@ledgermind/domain';
+import {
+  createIdService,
+  createTimestamp,
+  type HashPort,
+  type IdService,
+} from '@ledgermind/domain';
 
 import type {
   AgenticMapInput,
@@ -10,6 +15,9 @@ import type {
   ClockPort,
   ContextProjectionPort,
   ConversationPort,
+  CreateHandoffInput,
+  GetCurrentStateInput,
+  GetNextStepsInput,
   DelegationScopeResolverPort,
   DescribeInput,
   ExpandInput,
@@ -23,7 +31,10 @@ import type {
   LLMMapInput,
   MaterializeContextInput,
   MemoryEngine,
+  MarkContinuityRecordInput,
   OperatorConfig,
+  RecallForTaskInput,
+  RecordContinuityInput,
   OperatorExecutionPort,
   RunCompactionConfig,
   RunCompactionInput,
@@ -39,15 +50,21 @@ import {
   AgenticMapUseCase,
   AppendLedgerEventsUseCase,
   CheckIntegrityUseCase,
+  CreateHandoffUseCase,
   DescribeUseCase,
   ExecuteOperatorTaskUseCase,
   ExpandUseCase,
   ExploreArtifactUseCase,
   FinalizeOperatorRunUseCase,
   GetOperatorRunUseCase,
+  GetCurrentStateUseCase,
+  GetNextStepsUseCase,
   GrepUseCase,
   LLMMapUseCase,
   MaterializeContextUseCase,
+  MarkContinuityRecordUseCase,
+  RecallForTaskUseCase,
+  RecordContinuityUseCase,
   RunCompactionUseCase,
   StoreArtifactUseCase,
   TokenizerConfigurationError,
@@ -96,6 +113,13 @@ export type {
   ArtifactSource,
   CheckIntegrityInput,
   CheckIntegrityOutput,
+  ContinuityImportance,
+  ContinuityProvenance,
+  ContinuityRecord,
+  ContinuityRecordKind,
+  ContinuityRecordStatus,
+  CreateHandoffInput,
+  CreateHandoffOutput,
   DelegatedScopeInput,
   DescribeArtifactPlanningSignals,
   DescribeInput,
@@ -108,14 +132,21 @@ export type {
   ExplorerHints,
   GetOperatorRunInput,
   GetOperatorRunOutput,
+  GetCurrentStateInput,
+  GetCurrentStateOutput,
+  GetNextStepsInput,
+  GetNextStepsOutput,
   GrepGroup,
   GrepInput,
   GrepMatch,
   GrepOutput,
   GrepPageInfo,
+  HandoffNextStep,
   KeptWorkInput,
   LLMMapInput,
   LLMMapOutput,
+  MarkContinuityRecordInput,
+  MarkContinuityRecordOutput,
   MaterializeContextInput,
   MaterializeContextOutput,
   MemoryEngine,
@@ -131,6 +162,10 @@ export type {
   OperatorTaskInspection,
   OperatorTaskStatus,
   PinRule,
+  RecallForTaskInput,
+  RecallForTaskOutput,
+  RecordContinuityInput,
+  RecordContinuityOutput,
   RetrievalHint,
   RetrievalHintDiagnostics,
   RetrievalStageLabel,
@@ -285,12 +320,9 @@ const resolveTokenizer = (tokenizerConfig: unknown): TokenizerPort => {
       );
     }
 
-    return new ValidatingTokenizerAdapter(
-      new TiktokenTokenizerAdapter({ model: modelFamily }),
-      {
-        tokenizerName: `TiktokenTokenizerAdapter(${modelFamily})`,
-      },
-    );
+    return new ValidatingTokenizerAdapter(new TiktokenTokenizerAdapter({ model: modelFamily }), {
+      tokenizerName: `TiktokenTokenizerAdapter(${modelFamily})`,
+    });
   }
 
   if (rawType === undefined) {
@@ -349,9 +381,7 @@ export interface MemoryEngineConfig {
 
 export type InMemoryPresetConfig = Omit<MemoryEngineConfig, 'storage'>;
 
-export const createInMemoryMemoryEngine = (
-  config: InMemoryPresetConfig = {},
-): MemoryEngine =>
+export const createInMemoryMemoryEngine = (config: InMemoryPresetConfig = {}): MemoryEngine =>
   createMemoryEngine({
     storage: { type: 'in-memory' },
     ...config,
@@ -449,6 +479,23 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
     clock,
   });
 
+  const recordContinuityUseCase = new RecordContinuityUseCase({
+    append: (input) => appendUseCase.execute(input),
+    clock,
+  });
+
+  const createHandoffUseCase = new CreateHandoffUseCase({
+    recordContinuity: (input) => recordContinuityUseCase.execute(input),
+  });
+
+  const getCurrentStateUseCase = new GetCurrentStateUseCase({
+    ledgerRead: persistenceDeps.ledgerRead,
+  });
+
+  const getNextStepsUseCase = new GetNextStepsUseCase({
+    getCurrentState: (input) => getCurrentStateUseCase.execute(input),
+  });
+
   const materializeUseCase = new MaterializeContextUseCase({
     conversations: persistenceDeps.conversations,
     contextProjection: persistenceDeps.contextProjection,
@@ -457,6 +504,16 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
     artifactStore: persistenceDeps.artifactStore,
     tokenizer,
     runCompaction: (input) => runCompactionUseCase.execute(input),
+  });
+
+  const recallForTaskUseCase = new RecallForTaskUseCase({
+    getCurrentState: (input) => getCurrentStateUseCase.execute(input),
+    materializeContext: (input) => materializeUseCase.execute(input),
+    tokenizer,
+  });
+
+  const markContinuityRecordUseCase = new MarkContinuityRecordUseCase({
+    recordContinuity: (input) => recordContinuityUseCase.execute(input),
   });
 
   const checkIntegrityUseCase = new CheckIntegrityUseCase({
@@ -515,7 +572,8 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
   });
 
   const executeOperatorTaskUseCase =
-    config.operators?.structuredGeneration === undefined && config.operators?.subAgentExecutor === undefined
+    config.operators?.structuredGeneration === undefined &&
+    config.operators?.subAgentExecutor === undefined
       ? undefined
       : new ExecuteOperatorTaskUseCase({
           operatorExecution: persistenceDeps.operatorExecution,
@@ -559,6 +617,13 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
     materializeContext: (input: MaterializeContextInput) => materializeUseCase.execute(input),
     runCompaction: (input: RunCompactionInput) => runCompactionUseCase.execute(input),
     checkIntegrity: (input: CheckIntegrityInput) => checkIntegrityUseCase.execute(input),
+    recordContinuity: (input: RecordContinuityInput) => recordContinuityUseCase.execute(input),
+    createHandoff: (input: CreateHandoffInput) => createHandoffUseCase.execute(input),
+    getCurrentState: (input: GetCurrentStateInput) => getCurrentStateUseCase.execute(input),
+    getNextSteps: (input: GetNextStepsInput) => getNextStepsUseCase.execute(input),
+    recallForTask: (input: RecallForTaskInput) => recallForTaskUseCase.execute(input),
+    markContinuityRecord: (input: MarkContinuityRecordInput) =>
+      markContinuityRecordUseCase.execute(input),
     grep: (input: GrepInput) => grepUseCase.execute(input),
     describe: (input: DescribeInput) => describeUseCase.execute(input),
     expand: (input: ExpandInput) => expandUseCase.execute(input),
@@ -583,7 +648,9 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
       return getOperatorRunUseCase.execute({ runId: submitted.runId }).then((run) => ({
         runId: run.runId,
         status: run.status,
-        ...(submitted.inputArtifactId === undefined ? {} : { inputArtifactId: submitted.inputArtifactId }),
+        ...(submitted.inputArtifactId === undefined
+          ? {}
+          : { inputArtifactId: submitted.inputArtifactId }),
       }));
     },
     agenticMap: async (input: AgenticMapInput) => {
@@ -611,7 +678,9 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
       return getOperatorRunUseCase.execute({ runId: submitted.runId }).then((run) => ({
         runId: run.runId,
         status: run.status,
-        ...(submitted.inputArtifactId === undefined ? {} : { inputArtifactId: submitted.inputArtifactId }),
+        ...(submitted.inputArtifactId === undefined
+          ? {}
+          : { inputArtifactId: submitted.inputArtifactId }),
       }));
     },
     getOperatorRun: (input: GetOperatorRunInput) => getOperatorRunUseCase.execute(input),

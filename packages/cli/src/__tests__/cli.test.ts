@@ -25,6 +25,8 @@ describe('runCli', () => {
     expect(stdout.toString()).toContain('Usage: ledgermind <command> [options]');
     expect(stdout.toString()).toContain('status');
     expect(stdout.toString()).toContain('remember <text>');
+    expect(stdout.toString()).toContain('state');
+    expect(stdout.toString()).toContain('task <prompt>');
   });
 
   it('prints help when requested explicitly', async () => {

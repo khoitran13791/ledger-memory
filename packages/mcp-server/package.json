@@ -22,15 +22,16 @@
     "@modelcontextprotocol/sdk": "^1.27.1"
   },
   "devDependencies": {
-    "@types/node": "^22.18.0"
+    "@types/node": "^22.18.0",
+    "tsx": "^4.20.5"
   },
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty false",
     "lint": "eslint src --ext .ts",
     "test": "vitest run --passWithNoTests",
-    "dev": "node --experimental-strip-types src/cli.ts",
-    "smoke": "node --experimental-strip-types src/cli.ts --help",
+    "dev": "tsx src/cli.ts",
+    "smoke": "tsx src/cli.ts --help",
     "clean": "rm -rf dist tsconfig.tsbuildinfo"
   }
 }

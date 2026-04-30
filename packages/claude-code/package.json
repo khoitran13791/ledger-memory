@@ -7,6 +7,7 @@
   "types": "dist/index.d.ts",
   "bin": {
     "ledgermind-claude-session-start": "dist/commands/session-start.js",
+    "ledgermind-claude-user-prompt-submit": "dist/commands/user-prompt-submit.js",
     "ledgermind-claude-pre-compact": "dist/commands/pre-compact.js",
     "ledgermind-claude-stop": "dist/commands/stop.js",
     "ledgermind-claude-post-tool-use": "dist/commands/post-tool-use.js"
@@ -24,15 +25,16 @@
     "@ledgermind/sdk": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22.18.0"
+    "@types/node": "^22.18.0",
+    "tsx": "^4.20.5"
   },
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty false",
     "lint": "eslint src --ext .ts",
     "test": "vitest run --passWithNoTests",
-    "smoke:precompact": "node --experimental-strip-types src/commands/pre-compact.ts",
-    "smoke:stop": "node --experimental-strip-types src/commands/stop.ts",
+    "smoke:precompact": "tsx src/commands/pre-compact.ts",
+    "smoke:stop": "tsx src/commands/stop.ts",
     "clean": "rm -rf dist tsconfig.tsbuildinfo"
   }
 }

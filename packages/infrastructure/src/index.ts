@@ -25,3 +25,10 @@ export {
   type PgQueryResultLike,
   type PgQueryable,
 } from './postgres/types';
+
+export {
+  openSqliteDatabase,
+  SQLITE_SCHEMA_VERSION,
+  SQLITE_TEXT_SEARCH_MODE,
+  type OpenSqliteDatabaseOptions,
+} from './sqlite';
