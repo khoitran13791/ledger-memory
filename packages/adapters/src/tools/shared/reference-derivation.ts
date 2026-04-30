@@ -27,7 +27,9 @@ export const mergeReferenceArrays = (
   return merged.size > 0 ? [...merged] : undefined;
 };
 
-export const mergeReferences = (...references: readonly (ToolReferences | undefined)[]): ToolReferences | undefined => {
+export const mergeReferences = (
+  ...references: readonly (ToolReferences | undefined)[]
+): ToolReferences | undefined => {
   const summaryIds = mergeReferenceArrays(references.map((reference) => reference?.summaryIds));
   const artifactIds = mergeReferenceArrays(references.map((reference) => reference?.artifactIds));
   const eventIds = mergeReferenceArrays(references.map((reference) => reference?.eventIds));
@@ -53,7 +55,9 @@ export const extractReferences = (data: unknown): ToolReferences | undefined => 
     return undefined;
   }
 
-  const readIdArray = (field: 'summaryIds' | 'artifactIds' | 'eventIds'): readonly string[] | undefined => {
+  const readIdArray = (
+    field: 'summaryIds' | 'artifactIds' | 'eventIds',
+  ): readonly string[] | undefined => {
     const value = references[field];
     if (!Array.isArray(value) || value.length === 0) {
       return undefined;
@@ -106,9 +110,15 @@ export const deriveRecallReferences = (
   };
 };
 
-export const deriveDescribeReferences = (id: string, output: DescribeOutput): ToolReferences | undefined => {
+export const deriveDescribeReferences = (
+  id: string,
+  output: DescribeOutput,
+): ToolReferences | undefined => {
   if (output.kind === 'summary') {
-    const summaryIds = mergeReferenceArrays([[id], output.parentIds?.map((parentId) => String(parentId))]);
+    const summaryIds = mergeReferenceArrays([
+      [id],
+      output.parentIds?.map((parentId) => String(parentId)),
+    ]);
     return summaryIds === undefined ? undefined : { summaryIds };
   }
 
@@ -180,6 +190,82 @@ export const deriveExpandReferences = (
     ...(artifactIds === undefined ? {} : { artifactIds }),
     ...(eventIds === undefined ? {} : { eventIds }),
   };
+};
+
+export const deriveContinuityReferences = (data: unknown): ToolReferences | undefined => {
+  if (!isRecord(data)) {
+    return undefined;
+  }
+
+  const eventIds = new Set<string>();
+  const summaryIds = new Set<string>();
+  const artifactIds = new Set<string>();
+
+  const addStrings = (target: Set<string>, value: unknown): void => {
+    if (!Array.isArray(value)) {
+      return;
+    }
+
+    for (const item of value) {
+      if (typeof item === 'string' && item.trim().length > 0) {
+        target.add(item);
+      }
+    }
+  };
+
+  const addRecordEventId = (value: unknown): void => {
+    if (!isRecord(value)) {
+      return;
+    }
+
+    const eventId = value['eventId'];
+    if (typeof eventId === 'string' && eventId.trim().length > 0) {
+      eventIds.add(eventId);
+    }
+
+    const provenance = value['provenance'];
+    if (isRecord(provenance)) {
+      addStrings(eventIds, provenance['eventIds']);
+      addStrings(summaryIds, provenance['summaryIds']);
+      addStrings(artifactIds, provenance['artifactIds']);
+    }
+  };
+
+  const addRecords = (value: unknown): void => {
+    if (!Array.isArray(value)) {
+      return;
+    }
+
+    for (const record of value) {
+      addRecordEventId(record);
+    }
+  };
+
+  addRecordEventId(data['record']);
+  addRecordEventId(data['marker']);
+  addRecordEventId(data['handoff']);
+  addRecords(data['nextStepRecords']);
+  addRecords(data['goalRecords']);
+  addRecords(data['decisions']);
+  addRecords(data['constraints']);
+  addRecords(data['progress']);
+  addRecords(data['nextSteps']);
+  addRecords(data['handoffs']);
+  addRecords(data['verification']);
+  addRecords(data['failures']);
+  addRecords(data['openQuestions']);
+  addRecords(data['artifactChanges']);
+  addRecords(data['sessionSummaries']);
+
+  addStrings(summaryIds, data['recalledSummaryIds']);
+  addStrings(artifactIds, data['recalledArtifactIds']);
+  addStrings(eventIds, data['recalledEventIds']);
+
+  return mergeReferences({
+    ...(summaryIds.size === 0 ? {} : { summaryIds: [...summaryIds] }),
+    ...(artifactIds.size === 0 ? {} : { artifactIds: [...artifactIds] }),
+    ...(eventIds.size === 0 ? {} : { eventIds: [...eventIds] }),
+  });
 };
 
 export const toReferencedToolSuccessEnvelope = <TData>(

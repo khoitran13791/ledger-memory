@@ -28,6 +28,10 @@ describe('PgConversationStore', () => {
         new URL('../../sql/postgres/migrations/0001_phase1_schema.sql', import.meta.url),
         new URL('../../sql/postgres/migrations/0002_phase1_indexes.sql', import.meta.url),
         new URL('../../sql/postgres/migrations/0005_summary_retrieval_text.sql', import.meta.url),
+        new URL(
+          '../../sql/postgres/migrations/0006_continuity_metadata_indexes.sql',
+          import.meta.url,
+        ),
       ] as const;
 
       for (const migrationPath of migrationPaths) {
@@ -198,5 +202,4 @@ describe('PgConversationStore', () => {
       await harness.destroy();
     }
   });
-
 });

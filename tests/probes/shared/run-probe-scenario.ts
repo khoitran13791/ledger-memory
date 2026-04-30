@@ -9,18 +9,26 @@ import {
 import {
   AppendLedgerEventsUseCase,
   CheckIntegrityUseCase,
+  CreateHandoffUseCase,
   DescribeUseCase,
   ExpandUseCase,
   ExploreArtifactUseCase,
   GrepUseCase,
+  GetCurrentStateUseCase,
+  GetNextStepsUseCase,
   MaterializeContextUseCase,
+  MarkContinuityRecordUseCase,
+  RecallForTaskUseCase,
+  RecordContinuityUseCase,
   RunCompactionUseCase,
   StoreArtifactUseCase,
   type ArtifactStorePort,
   type ContextProjectionPort,
   type ConversationPort,
   type LedgerReadPort,
+  type MaterializeContextOutput,
   type MemoryEngine,
+  type NewLedgerEvent,
   type RunCompactionConfig,
   type SummaryDagPort,
   type UnitOfWorkPort,
@@ -53,8 +61,12 @@ import { answerProbeQuestion } from './probe-agent';
 import { judgeProbeAnswer } from './judge-scorer';
 import {
   getProbeArtifacts,
+  getProbeContinuityRecords,
   getProbeEvents,
+  getProbeQuestion,
+  isTwoSessionSetup,
   type ProbeExecutionResult,
+  type ProbeEventFixture,
   type ProbeFixture,
   validateProbeFixture,
 } from './probe-fixture';
@@ -152,6 +164,39 @@ const createEngine = (input: CreateUseCasesInput): MemoryEngine => {
     explorerRegistry,
   });
 
+  const recordContinuityUseCase = new RecordContinuityUseCase({
+    append: (engineInput) => appendUseCase.execute(engineInput),
+    clock,
+  });
+
+  const createHandoffUseCase = new CreateHandoffUseCase({
+    recordContinuity: (engineInput) => recordContinuityUseCase.execute(engineInput),
+  });
+
+  const getCurrentStateUseCase = new GetCurrentStateUseCase({
+    ledgerRead: input.ledgerRead,
+  });
+
+  const getNextStepsUseCase = new GetNextStepsUseCase({
+    getCurrentState: (engineInput) => getCurrentStateUseCase.execute(engineInput),
+  });
+
+  const recallForTaskUseCase = new RecallForTaskUseCase({
+    getCurrentState: (engineInput) => getCurrentStateUseCase.execute(engineInput),
+    materializeContext: (engineInput) => materializeUseCase.execute(engineInput),
+    tokenizer,
+  });
+
+  const markContinuityRecordUseCase = new MarkContinuityRecordUseCase({
+    recordContinuity: (engineInput) => recordContinuityUseCase.execute(engineInput),
+  });
+
+  const createUnsupportedProbeError = (
+    methodName: 'llmMap' | 'agenticMap' | 'getOperatorRun',
+  ): Error => {
+    return new Error(`${methodName} is not supported in probe scenarios yet.`);
+  };
+
   return {
     append: (engineInput) => appendUseCase.execute(engineInput),
     materializeContext: (engineInput) => materializeUseCase.execute(engineInput),
@@ -162,14 +207,20 @@ const createEngine = (input: CreateUseCasesInput): MemoryEngine => {
     expand: (engineInput) => expandUseCase.execute(engineInput),
     storeArtifact: (engineInput) => storeArtifactUseCase.execute(engineInput),
     exploreArtifact: (engineInput) => exploreArtifactUseCase.execute(engineInput),
+    recordContinuity: (engineInput) => recordContinuityUseCase.execute(engineInput),
+    createHandoff: (engineInput) => createHandoffUseCase.execute(engineInput),
+    getCurrentState: (engineInput) => getCurrentStateUseCase.execute(engineInput),
+    getNextSteps: (engineInput) => getNextStepsUseCase.execute(engineInput),
+    recallForTask: (engineInput) => recallForTaskUseCase.execute(engineInput),
+    markContinuityRecord: (engineInput) => markContinuityRecordUseCase.execute(engineInput),
     llmMap: async () => {
-      throw new Error('llmMap is not supported in probe scenarios yet.');
+      throw createUnsupportedProbeError('llmMap');
     },
     agenticMap: async () => {
-      throw new Error('agenticMap is not supported in probe scenarios yet.');
+      throw createUnsupportedProbeError('agenticMap');
     },
     getOperatorRun: async () => {
-      throw new Error('getOperatorRun is not supported in probe scenarios yet.');
+      throw createUnsupportedProbeError('getOperatorRun');
     },
   };
 };
@@ -228,7 +279,9 @@ const createPostgresRuntime = async (fixture: ProbeFixture): Promise<ProbeRuntim
     },
     connect: async () => {
       const client = await harness.pool.connect();
-      await client.query(`SET search_path TO "${harness.schemaName.replaceAll('"', '""')}", public`);
+      await client.query(
+        `SET search_path TO "${harness.schemaName.replaceAll('"', '""')}", public`,
+      );
 
       return {
         query: async (text, params) => {
@@ -285,6 +338,74 @@ const createRuntime = async (input: {
     : createPostgresRuntime(input.fixture);
 };
 
+const toLedgerEvents = (
+  events: readonly ProbeEventFixture[],
+  occurredAt: ReturnType<typeof createTimestamp>,
+): readonly NewLedgerEvent[] =>
+  events.map((event) => ({
+    role: event.role,
+    content: event.content,
+    tokenCount: createTokenCount(Math.max(1, Math.ceil(event.content.length / 4))),
+    occurredAt,
+  }));
+
+const seedFixtureState = async (input: {
+  readonly fixture: ProbeFixture;
+  readonly runtime: ProbeRuntime;
+  readonly occurredAt: ReturnType<typeof createTimestamp>;
+}): Promise<void> => {
+  const { fixture, runtime, occurredAt } = input;
+
+  await runtime.engine.append({
+    conversationId: runtime.conversationId,
+    events: toLedgerEvents(getProbeEvents(fixture), occurredAt),
+  });
+
+  for (const record of getProbeContinuityRecords(fixture)) {
+    await runtime.engine.recordContinuity({
+      conversationId: runtime.conversationId,
+      kind: record.kind,
+      title: record.title,
+      content: record.content,
+      ...(record.importance === undefined ? {} : { importance: record.importance }),
+      ...(record.status === undefined ? {} : { status: record.status }),
+      ...(record.provenance === undefined ? {} : { provenance: record.provenance }),
+      ...(record.relatedRecordIds === undefined
+        ? {}
+        : { relatedRecordIds: record.relatedRecordIds }),
+      ...(record.supersedesRecordIds === undefined
+        ? {}
+        : { supersedesRecordIds: record.supersedesRecordIds }),
+      ...(record.supersededByRecordId === undefined
+        ? {}
+        : { supersededByRecordId: record.supersededByRecordId }),
+      ...(record.idempotencyKey === undefined ? {} : { idempotencyKey: record.idempotencyKey }),
+      occurredAt,
+    });
+  }
+
+  if (isTwoSessionSetup(fixture.setup) && fixture.setup.sessionA.stopHandoff !== undefined) {
+    const handoff = fixture.setup.sessionA.stopHandoff;
+    await runtime.engine.createHandoff({
+      conversationId: runtime.conversationId,
+      goal: handoff.goal,
+      completed: handoff.completed,
+      nextSteps: handoff.nextSteps,
+      ...(handoff.decisions === undefined ? {} : { decisions: handoff.decisions }),
+      ...(handoff.constraints === undefined ? {} : { constraints: handoff.constraints }),
+      ...(handoff.openQuestions === undefined ? {} : { openQuestions: handoff.openQuestions }),
+      ...(handoff.verification === undefined ? {} : { verification: handoff.verification }),
+      ...(handoff.risks === undefined ? {} : { risks: handoff.risks }),
+      ...(handoff.changedFiles === undefined ? {} : { changedFiles: handoff.changedFiles }),
+      ...(handoff.provenance === undefined ? {} : { provenance: handoff.provenance }),
+      ...(handoff.runtimeSessionId === undefined
+        ? {}
+        : { runtimeSessionId: handoff.runtimeSessionId }),
+      ...(handoff.idempotencyKey === undefined ? {} : { idempotencyKey: handoff.idempotencyKey }),
+    });
+  }
+};
+
 export const runProbeScenario = async (input: {
   readonly fixture: ProbeFixture;
   readonly adapter: ProbeAdapterName;
@@ -297,17 +418,7 @@ export const runProbeScenario = async (input: {
   const runtime = await createRuntime({ fixture, adapter });
 
   try {
-    const events = getProbeEvents(fixture);
-
-    await runtime.engine.append({
-      conversationId: runtime.conversationId,
-      events: events.map((event) => ({
-        role: event.role,
-        content: event.content,
-        tokenCount: createTokenCount(Math.max(1, Math.ceil(event.content.length / 4))),
-        occurredAt: fixedOccurredAt,
-      })),
-    });
+    await seedFixtureState({ fixture, runtime, occurredAt: fixedOccurredAt });
 
     const artifacts = getProbeArtifacts(fixture);
 
@@ -349,21 +460,50 @@ export const runProbeScenario = async (input: {
           }),
     });
 
-    const materialized = await runtime.engine.materializeContext({
+    const question = getProbeQuestion(fixture);
+    const materializedBase = await runtime.engine.materializeContext({
       conversationId: runtime.conversationId,
       budgetTokens: fixture.budgetTokens,
       overheadTokens: fixture.overheadTokens,
-      ...((fixture.type === 'artifact' || fixture.type === 'tool_usage')
+      ...(fixture.type === 'artifact' || fixture.type === 'tool_usage'
         ? {
             retrievalHints: [
               {
-                query: fixture.question,
+                query: question,
                 limit: 3,
               },
             ],
           }
         : {}),
     });
+    const recall =
+      isTwoSessionSetup(fixture.setup) ||
+      fixture.type === 'handoff' ||
+      fixture.type === 'staleness' ||
+      fixture.type === 'verification'
+        ? await runtime.engine.recallForTask({
+            conversationId: runtime.conversationId,
+            task: question,
+            budgetTokens: fixture.budgetTokens - fixture.overheadTokens,
+            includeHandoff: true,
+            includeEvidence: true,
+          })
+        : undefined;
+    const materialized: MaterializeContextOutput =
+      recall === undefined
+        ? materializedBase
+        : {
+            systemPreamble: '',
+            modelMessages: [
+              {
+                role: 'system',
+                content: recall.contextBlock,
+              },
+            ],
+            summaryReferences: [],
+            artifactReferences: [],
+            budgetUsed: recall.budgetUsed,
+          };
 
     const integrity = await runtime.engine.checkIntegrity({
       conversationId: runtime.conversationId,
@@ -389,7 +529,7 @@ export const runProbeScenario = async (input: {
     return {
       fixtureName: fixture.name,
       probeType: fixture.type,
-      question: fixture.question,
+      question,
       answer,
       passed: judged.passed,
       score: judged.score,

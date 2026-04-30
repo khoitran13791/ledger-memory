@@ -11,12 +11,8 @@ import {
   type ResolveSessionBindingInput,
   type SessionBindingRuntimeMetadata,
 } from '../session-binding';
-import {
-  createFileSessionBindingStore,
-} from '../file-session-binding-store';
-import {
-  createInMemorySessionBindingStore,
-} from '../session-binding-store';
+import { createFileSessionBindingStore } from '../file-session-binding-store';
+import { createInMemorySessionBindingStore } from '../session-binding-store';
 
 const tempDirectories: string[] = [];
 
@@ -215,7 +211,10 @@ describe('resolveSessionBinding', () => {
     const bindingStorePath = join(directory, 'bindings.json');
 
     const store = createFileSessionBindingStore(bindingStorePath);
-    const parent = await resolveSessionBinding(store, createBaseInput({ runtimeSessionId: 'thread-parent' }));
+    const parent = await resolveSessionBinding(
+      store,
+      createBaseInput({ runtimeSessionId: 'thread-parent' }),
+    );
     const child = await resolveSessionBinding(
       store,
       createBaseInput({
@@ -240,6 +239,45 @@ describe('resolveSessionBinding', () => {
 });
 
 describe('applySessionBindingToToolArguments', () => {
+  it.each([
+    'memory.currentState',
+    'memory.nextSteps',
+    'memory.recallForTask',
+    'memory.recordDecision',
+    'memory.recordConstraint',
+    'memory.recordProgress',
+    'memory.recordVerification',
+    'memory.createHandoff',
+    'memory.markStale',
+  ])('overwrites spoofed conversationId for %s from the resolved binding', (toolName) => {
+    const boundArguments = applySessionBindingToToolArguments(
+      toolName,
+      {
+        conversationId: 'conv_spoofed',
+        title: 'Keep title',
+      },
+      {
+        runtime: 'amp',
+        runtimeSessionId: 'thread-root',
+        userScope: 'alice',
+        workspaceScope: '/workspace/ledger-memory',
+        conversationId: createConversationId('conv_bound_root'),
+      },
+      {
+        runtime: 'amp',
+        runtimeSessionId: 'thread-root',
+        userScope: 'alice',
+        workspaceScope: '/workspace/ledger-memory',
+        isSubAgent: false,
+      } satisfies SessionBindingRuntimeMetadata,
+    );
+
+    expect(boundArguments).toEqual({
+      conversationId: 'conv_bound_root',
+      title: 'Keep title',
+    });
+  });
+
   it('overwrites expand callerContext from the resolved binding and trusted runtime metadata', () => {
     const boundArguments = applySessionBindingToToolArguments(
       'memory.expand',

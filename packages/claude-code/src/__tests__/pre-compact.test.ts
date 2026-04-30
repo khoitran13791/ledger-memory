@@ -9,6 +9,8 @@ import type {
   AppendLedgerEventsInput,
   CheckIntegrityInput,
   CheckIntegrityOutput,
+  CreateHandoffInput,
+  CreateHandoffOutput,
   DescribeInput,
   DescribeOutput,
   ExpandInput,
@@ -17,6 +19,10 @@ import type {
   ExploreArtifactOutput,
   GetOperatorRunInput,
   GetOperatorRunOutput,
+  GetCurrentStateInput,
+  GetCurrentStateOutput,
+  GetNextStepsInput,
+  GetNextStepsOutput,
   GrepInput,
   GrepOutput,
   LLMMapInput,
@@ -24,6 +30,12 @@ import type {
   MaterializeContextInput,
   MaterializeContextOutput,
   MemoryEngine,
+  MarkContinuityRecordInput,
+  MarkContinuityRecordOutput,
+  RecallForTaskInput,
+  RecallForTaskOutput,
+  RecordContinuityInput,
+  RecordContinuityOutput,
   RunCompactionInput,
   RunCompactionOutput,
   StoreArtifactInput,
@@ -38,6 +50,7 @@ class RecordingMemoryEngine implements MemoryEngine {
   readonly appendCalls: AppendLedgerEventsInput[] = [];
   readonly runCompactionCalls: RunCompactionInput[] = [];
   readonly materializeContextCalls: MaterializeContextInput[] = [];
+  readonly recallForTaskCalls: RecallForTaskInput[] = [];
 
   private readonly seenIdempotencyKeys = new Set<string>();
 
@@ -106,6 +119,60 @@ class RecordingMemoryEngine implements MemoryEngine {
     throw new Error('Not implemented in test double.');
   }
 
+  async recordContinuity(_input: RecordContinuityInput): Promise<RecordContinuityOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async createHandoff(_input: CreateHandoffInput): Promise<CreateHandoffOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async getCurrentState(_input: GetCurrentStateInput): Promise<GetCurrentStateOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async getNextSteps(_input: GetNextStepsInput): Promise<GetNextStepsOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async recallForTask(input: RecallForTaskInput): Promise<RecallForTaskOutput> {
+    this.recallForTaskCalls.push(input);
+    return {
+      contextBlock: 'LedgerMind current state\n\nGoal:\n- Continue after compaction',
+      currentState: {
+        goalRecords: [],
+        decisions: [],
+        constraints: [],
+        progress: [],
+        nextSteps: [],
+        handoffs: [],
+        verification: [],
+        failures: [],
+        openQuestions: [],
+        artifactChanges: [],
+        sessionSummaries: [],
+        activeRecordCount: 0,
+        staleRecordCount: 0,
+      },
+      recalledSummaryIds: [],
+      recalledArtifactIds: [],
+      recalledEventIds: [],
+      why: [],
+      budgetUsed: createTokenCount(12),
+    };
+  }
+
+  async markContinuityRecord(
+    _input: MarkContinuityRecordInput,
+  ): Promise<MarkContinuityRecordOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
   async llmMap(_input: LLMMapInput): Promise<LLMMapOutput> {
     void _input;
     throw new Error('Not implemented in test double.');
@@ -162,7 +229,9 @@ describe('runPreCompactCommand', () => {
       [
         JSON.stringify({ message: { role: 'user', content: 'Investigate the auth regression.' } }),
         '{not valid json}',
-        JSON.stringify({ message: { role: 'assistant', content: 'I found the middleware mismatch.' } }),
+        JSON.stringify({
+          message: { role: 'assistant', content: 'I found the middleware mismatch.' },
+        }),
       ].join('\n'),
       'utf8',
     );
@@ -227,11 +296,19 @@ describe('runPreCompactCommand', () => {
     });
     expect(appendCall?.idempotencyKey).toBeTruthy();
     expect(engine.runCompactionCalls).toHaveLength(2);
-    expect(engine.materializeContextCalls).toHaveLength(2);
+    expect(engine.materializeContextCalls).toHaveLength(0);
+    expect(engine.recallForTaskCalls).toEqual([
+      expect.objectContaining({
+        task: 'Continue after Claude Code compaction',
+      }),
+      expect.objectContaining({
+        task: 'Continue after Claude Code compaction',
+      }),
+    ]);
 
     expect(firstStdout.toString()).toContain('LedgerMind archived the full Claude Code transcript');
-    expect(firstStdout.toString()).toContain('Compacted debugging summary');
-    expect(secondStdout.toString()).toContain('Compacted debugging summary');
+    expect(firstStdout.toString()).toContain('LedgerMind current state');
+    expect(secondStdout.toString()).toContain('LedgerMind current state');
   });
 
   it('appends only the transcript suffix that was not archived yet', async () => {

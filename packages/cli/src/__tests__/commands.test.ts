@@ -13,16 +13,30 @@ import {
 } from '@ledgermind/domain';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AppendLedgerEventsInput, DescribeInput, ExpandInput, GrepInput, GrepOutput } from '@ledgermind/sdk';
+import type {
+  AppendLedgerEventsInput,
+  DescribeInput,
+  ExpandInput,
+  GrepInput,
+  GrepOutput,
+} from '@ledgermind/sdk';
 import { runCli } from '../cli';
 import type { CockpitConfig } from '../config';
+import { runDecisionCommand, type RecordContinuityRuntime } from '../commands/decision';
 import { runDoctorCommand } from '../commands/doctor';
 import { runExplainCommand, type ExplainRuntime } from '../commands/explain';
+import { runHandoffCommand, type HandoffRuntime } from '../commands/handoff';
+import { runNextCommand, type NextRuntime } from '../commands/next';
+import { runProgressCommand } from '../commands/progress';
 import { runRememberCommand, type RememberRuntime } from '../commands/remember';
 import { runRecallCommand, type RecallRuntime } from '../commands/recall';
 import { runSourceCommand, type SourceRuntime } from '../commands/source';
+import { runStaleCommand, type StaleRuntime } from '../commands/stale';
+import { runStateCommand, type StateRuntime } from '../commands/state';
 import { runStatusCommand } from '../commands/status';
+import { runTaskCommand, type TaskRuntime } from '../commands/task';
 import { runTimelineCommand } from '../commands/timeline';
+import { runVerifyCommand } from '../commands/verify';
 
 class RecordingWritable {
   readonly chunks: string[] = [];
@@ -660,6 +674,357 @@ describe('source command', () => {
   });
 });
 
+describe('continuity commands', () => {
+  it('renders compact human current state', async () => {
+    const conversationId = createConversationId('conv_state_cli');
+    const runtime: StateRuntime = {
+      engine: {
+        getCurrentState: async () => ({
+          goalRecords: [
+            {
+              recordId: 'goal:ship',
+              conversationId,
+              kind: 'goal',
+              status: 'active',
+              title: 'Ship continuity CLI',
+              content: 'Make state visible.',
+              importance: 'high',
+              provenance: {},
+              relatedRecordIds: [],
+              supersedesRecordIds: [],
+              createdAt: createTimestamp(new Date('2026-04-29T00:00:00.000Z')),
+              eventId: createEventId('evt_goal_cli'),
+            },
+          ],
+          decisions: [],
+          constraints: [],
+          progress: [],
+          nextSteps: [],
+          handoffs: [],
+          verification: [
+            {
+              recordId: 'verification:tests',
+              conversationId,
+              kind: 'verification',
+              status: 'active',
+              title: 'Tests passed',
+              content: 'pnpm typecheck',
+              importance: 'normal',
+              provenance: {},
+              relatedRecordIds: [],
+              supersedesRecordIds: [],
+              createdAt: createTimestamp(new Date('2026-04-29T00:00:00.000Z')),
+              eventId: createEventId('evt_verify_cli'),
+            },
+          ],
+          failures: [],
+          openQuestions: [],
+          artifactChanges: [],
+          sessionSummaries: [],
+          activeRecordCount: 2,
+          staleRecordCount: 0,
+        }),
+      },
+      resolveBinding: async () => ({
+        runtime: 'ledgermind-cli',
+        runtimeSessionId: 'workspace',
+        userScope: 'khoi',
+        workspaceScope: '/repo',
+        conversationId,
+      }),
+      close: async () => {},
+    };
+
+    const output = await runStateCommand({ config: baseConfig, runtime });
+
+    expect(output).toBe(
+      'Current state\n' +
+        'Goal\n' +
+        '- Ship continuity CLI\n' +
+        'Evidence\n' +
+        '- evt_goal_cli\n' +
+        '- evt_verify_cli\n',
+    );
+  });
+
+  it('renders JSON current state for agents', async () => {
+    const runtime: StateRuntime = {
+      engine: {
+        getCurrentState: async () => ({
+          goalRecords: [],
+          decisions: [],
+          constraints: [],
+          progress: [],
+          nextSteps: [],
+          handoffs: [],
+          verification: [],
+          failures: [],
+          openQuestions: [],
+          artifactChanges: [],
+          sessionSummaries: [],
+          activeRecordCount: 0,
+          staleRecordCount: 0,
+        }),
+      },
+      resolveBinding: async () => ({
+        runtime: 'ledgermind-cli',
+        runtimeSessionId: 'workspace',
+        userScope: 'khoi',
+        workspaceScope: '/repo',
+        conversationId: createConversationId('conv_state_json'),
+      }),
+      close: async () => {},
+    };
+
+    const output = await runStateCommand({ config: { ...baseConfig, output: 'json' }, runtime });
+
+    expect(JSON.parse(output)).toMatchObject({ ok: true, data: { activeRecordCount: 0 } });
+  });
+
+  it('shows active next steps', async () => {
+    const conversationId = createConversationId('conv_next_cli');
+    const runtime: NextRuntime = {
+      engine: {
+        getNextSteps: async () => ({
+          nextSteps: [
+            {
+              recordId: 'next:bind',
+              conversationId,
+              kind: 'next_step',
+              status: 'active',
+              title: 'Bind tools',
+              content: 'Update MCP session binding.',
+              importance: 'normal',
+              provenance: {},
+              relatedRecordIds: [],
+              supersedesRecordIds: [],
+              createdAt: createTimestamp(new Date('2026-04-29T00:00:00.000Z')),
+              eventId: createEventId('evt_next_cli'),
+            },
+          ],
+        }),
+      },
+      resolveBinding: async () => ({
+        runtime: 'ledgermind-cli',
+        runtimeSessionId: 'workspace',
+        userScope: 'khoi',
+        workspaceScope: '/repo',
+        conversationId,
+      }),
+      close: async () => {},
+    };
+
+    const output = await runNextCommand({ config: baseConfig, runtime });
+
+    expect(output).toBe('Next steps\n- Bind tools: Update MCP session binding.\n');
+  });
+
+  it('recalls continuity for a task prompt', async () => {
+    const conversationId = createConversationId('conv_task_cli');
+    const runtime: TaskRuntime = {
+      engine: {
+        recallForTask: async (input) => {
+          expect(input).toEqual({
+            conversationId,
+            task: 'Fix failing auth tests',
+            budgetTokens: 1200,
+            includeHandoff: true,
+            includeEvidence: true,
+          });
+          return {
+            contextBlock: 'LedgerMind current state\n\nGoal:\n- Fix tests',
+            currentState: {
+              goalRecords: [],
+              decisions: [],
+              constraints: [],
+              progress: [],
+              nextSteps: [],
+              handoffs: [],
+              verification: [],
+              failures: [],
+              openQuestions: [],
+              artifactChanges: [],
+              sessionSummaries: [],
+              activeRecordCount: 0,
+              staleRecordCount: 0,
+            },
+            recalledSummaryIds: [],
+            recalledArtifactIds: [],
+            recalledEventIds: [],
+            why: [],
+            budgetUsed: createTokenCount(8),
+          };
+        },
+      },
+      resolveBinding: async () => ({
+        runtime: 'ledgermind-cli',
+        runtimeSessionId: 'workspace',
+        userScope: 'khoi',
+        workspaceScope: '/repo',
+        conversationId,
+      }),
+      close: async () => {},
+    };
+
+    const output = await runTaskCommand({
+      config: baseConfig,
+      prompt: 'Fix failing auth tests',
+      runtime,
+    });
+
+    expect(output).toBe('LedgerMind current state\n\nGoal:\n- Fix tests\n');
+  });
+
+  it('records decision, progress, and verification continuity', async () => {
+    const conversationId = createConversationId('conv_record_continuity_cli');
+    const calls: string[] = [];
+    const runtime: RecordContinuityRuntime = {
+      engine: {
+        recordContinuity: async (input) => {
+          calls.push(`${input.kind}:${input.title}`);
+          return {
+            record: {
+              recordId: `${input.kind}:cli`,
+              conversationId: input.conversationId,
+              kind: input.kind,
+              status: 'active',
+              title: input.title,
+              content: input.content,
+              importance: input.importance ?? 'normal',
+              provenance: {},
+              relatedRecordIds: [],
+              supersedesRecordIds: [],
+              createdAt: createTimestamp(new Date('2026-04-29T00:00:00.000Z')),
+              eventId: createEventId(`evt_${input.kind}_cli`),
+            },
+            contextTokenCount: createTokenCount(5),
+          };
+        },
+      },
+      resolveBinding: async () => ({
+        runtime: 'ledgermind-cli',
+        runtimeSessionId: 'workspace',
+        userScope: 'khoi',
+        workspaceScope: '/repo',
+        conversationId,
+      }),
+      close: async () => {},
+    };
+
+    expect(await runDecisionCommand({ config: baseConfig, text: 'Use MCP binding', runtime })).toBe(
+      'Recorded decision decision:cli in conv_record_continuity_cli.\n',
+    );
+    expect(await runProgressCommand({ config: baseConfig, text: 'Task 9 complete', runtime })).toBe(
+      'Recorded progress progress:cli in conv_record_continuity_cli.\n',
+    );
+    expect(
+      await runVerifyCommand({ config: baseConfig, text: 'pnpm typecheck passed', runtime }),
+    ).toBe('Recorded verification verification:cli in conv_record_continuity_cli.\n');
+    expect(calls).toEqual([
+      'decision:Use MCP binding',
+      'progress:Task 9 complete',
+      'verification:pnpm typecheck passed',
+    ]);
+  });
+
+  it('creates handoff and marks stale records', async () => {
+    const conversationId = createConversationId('conv_handoff_stale_cli');
+    const handoffRuntime: HandoffRuntime = {
+      engine: {
+        createHandoff: async (input) => {
+          expect(input.conversationId).toBe(conversationId);
+          expect(input.completed).toEqual([input.goal]);
+          expect(input.nextSteps).toEqual([]);
+          return {
+            handoff: {
+              recordId: 'handoff:cli',
+              conversationId,
+              kind: 'handoff',
+              status: 'active',
+              title: 'Continue: Resume CLI wiring',
+              content: 'Resume CLI wiring',
+              importance: 'normal',
+              provenance: {},
+              relatedRecordIds: [],
+              supersedesRecordIds: [],
+              createdAt: createTimestamp(new Date('2026-04-29T00:00:00.000Z')),
+              eventId: createEventId('evt_handoff_cli'),
+            },
+            nextStepRecords: [],
+          };
+        },
+      },
+      resolveBinding: async () => ({
+        runtime: 'ledgermind-cli',
+        runtimeSessionId: 'workspace',
+        userScope: 'khoi',
+        workspaceScope: '/repo',
+        conversationId,
+      }),
+      close: async () => {},
+    };
+    const staleRuntime: StaleRuntime = {
+      engine: {
+        markContinuityRecord: async (input) => {
+          expect(input).toEqual({
+            conversationId,
+            recordId: 'decision:old',
+            status: 'stale',
+            reason: 'Marked stale from CLI.',
+          });
+          return {
+            marker: {
+              recordId: 'marker:stale',
+              conversationId,
+              kind: 'session_summary',
+              status: 'stale',
+              title: 'Mark decision:old stale',
+              content: 'Marked stale from CLI.',
+              importance: 'normal',
+              provenance: {},
+              relatedRecordIds: ['decision:old'],
+              supersedesRecordIds: ['decision:old'],
+              createdAt: createTimestamp(new Date('2026-04-29T00:00:00.000Z')),
+              eventId: createEventId('evt_stale_cli'),
+            },
+          };
+        },
+      },
+      resolveBinding: async () => ({
+        runtime: 'ledgermind-cli',
+        runtimeSessionId: 'workspace',
+        userScope: 'khoi',
+        workspaceScope: '/repo',
+        conversationId,
+      }),
+      close: async () => {},
+    };
+
+    expect(
+      await runHandoffCommand({
+        config: baseConfig,
+        text: 'Resume CLI wiring',
+        runtime: handoffRuntime,
+      }),
+    ).toBe('Created handoff handoff:cli in conv_handoff_stale_cli.\n');
+    expect(
+      await runHandoffCommand({
+        config: baseConfig,
+        text: '',
+        readStdin: async () => 'Resume from stdin',
+        runtime: handoffRuntime,
+      }),
+    ).toBe('Created handoff handoff:cli in conv_handoff_stale_cli.\n');
+    expect(
+      await runStaleCommand({
+        config: baseConfig,
+        recordId: 'decision:old',
+        runtime: staleRuntime,
+      }),
+    ).toBe('Marked decision:old stale in conv_handoff_stale_cli.\n');
+  });
+});
+
 describe('runCli command dispatch', () => {
   it('runs status with parsed shared options', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'ledgermind-cli-'));
@@ -727,26 +1092,22 @@ describe('runCli command dispatch', () => {
     });
   });
 
-  it(
-    'accepts source confirmation as a shared no-op option before dispatch',
-    async () => {
-      await withoutLedgermindDbUrl(async () => {
-        const stdout = new RecordingWritable();
-        const stderr = new RecordingWritable();
+  it('accepts source confirmation as a shared no-op option before dispatch', async () => {
+    await withoutLedgermindDbUrl(async () => {
+      const stdout = new RecordingWritable();
+      const stderr = new RecordingWritable();
 
-        const exitCode = await runCli({
-          argv: ['source', 'sum_source_cli', '--yes'],
-          stdout,
-          stderr,
-        });
-
-        expect(exitCode).toBe(1);
-        expect(stdout.toString()).toBe('');
-        expect(stderr.toString()).toBe(
-          'Memory commands need --db or LEDGERMIND_DB_URL for durable storage. Run ledgermind doctor for setup help.\n',
-        );
+      const exitCode = await runCli({
+        argv: ['source', 'sum_source_cli', '--yes'],
+        stdout,
+        stderr,
       });
-    },
-    15_000,
-  );
+
+      expect(exitCode).toBe(1);
+      expect(stdout.toString()).toBe('');
+      expect(stderr.toString()).toBe(
+        'Memory commands need --db or LEDGERMIND_DB_URL for durable storage. Run ledgermind doctor for setup help.\n',
+      );
+    });
+  }, 15_000);
 });

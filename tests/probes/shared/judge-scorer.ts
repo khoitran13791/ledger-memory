@@ -76,7 +76,21 @@ const isExactEnough = (answer: string, expected: string): boolean => {
   return false;
 };
 
-const judgeRecallLike = (fixture: Extract<ProbeFixture, { readonly type: 'recall' | 'continuation' | 'decision' }>, answer: string): ProbeJudgeResult => {
+const judgeRecallLike = (
+  fixture: Extract<
+    ProbeFixture,
+    {
+      readonly type:
+        | 'recall'
+        | 'continuation'
+        | 'decision'
+        | 'handoff'
+        | 'staleness'
+        | 'verification';
+    }
+  >,
+  answer: string,
+): ProbeJudgeResult => {
   const reasons: string[] = [];
   const exactEnough = isExactEnough(answer, fixture.expectedAnswer);
   const coverage = tokenCoverage(answer, fixture.expectedAnswer);
@@ -119,13 +133,19 @@ const judgeArtifact = (
   }
 
   if (fixture.requiresArtifactReference) {
-    const referencesAvailable = materialized.artifactReferences.length > 0 || materialized.summaryReferences.length > 0;
-    const referencesUsed = includesAnyReferenceId(answer) || hasMemoryDescribeSuggestion(answer) || hasMemoryExpandSuggestion(answer);
+    const referencesAvailable =
+      materialized.artifactReferences.length > 0 || materialized.summaryReferences.length > 0;
+    const referencesUsed =
+      includesAnyReferenceId(answer) ||
+      hasMemoryDescribeSuggestion(answer) ||
+      hasMemoryExpandSuggestion(answer);
 
     if (referencesUsed) {
       score += 2;
     } else {
-      reasons.push('Artifact probe answer did not include artifact/summary reference or describe/expand suggestion.');
+      reasons.push(
+        'Artifact probe answer did not include artifact/summary reference or describe/expand suggestion.',
+      );
       if (referencesAvailable) {
         score += 1;
       }
@@ -163,7 +183,8 @@ const judgeToolUsage = (
     reasons.push('Tool-usage answer should mention grep or describe as supporting tools.');
   }
 
-  const referencesAvailable = materialized.summaryReferences.length > 0 || materialized.artifactReferences.length > 0;
+  const referencesAvailable =
+    materialized.summaryReferences.length > 0 || materialized.artifactReferences.length > 0;
   if (!referencesAvailable || includesAnyReferenceId(answer)) {
     score += 1;
   } else {

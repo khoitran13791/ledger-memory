@@ -1,18 +1,48 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
+  CreateHandoffInput,
+  CreateHandoffOutput,
   DescribeInput,
   DescribeOutput,
   ExpandInput,
   ExpandOutput,
+  GetCurrentStateInput,
+  GetCurrentStateOutput,
+  GetNextStepsInput,
+  GetNextStepsOutput,
   GrepInput,
   GrepOutput,
+  MarkContinuityRecordInput,
+  MarkContinuityRecordOutput,
   MemoryEngine,
+  RecallForTaskInput,
+  RecallForTaskOutput,
+  RecordContinuityInput,
+  RecordContinuityOutput,
   ToolAccessLevel,
 } from '@ledgermind/application';
-import { createConversationId, createTokenCount } from '@ledgermind/domain';
+import {
+  createConversationId,
+  createEventId,
+  createArtifactId,
+  createSummaryNodeId,
+  createTimestamp,
+  createTokenCount,
+} from '@ledgermind/domain';
 
-type MinimalMemoryEngine = Pick<MemoryEngine, 'grep' | 'describe' | 'expand'>;
+type MinimalMemoryEngine = Pick<
+  MemoryEngine,
+  | 'grep'
+  | 'describe'
+  | 'expand'
+  | 'getCurrentState'
+  | 'getNextSteps'
+  | 'recallForTask'
+  | 'recordContinuity'
+  | 'createHandoff'
+  | 'markContinuityRecord'
+>;
 
 interface CanonicalMemoryTool {
   readonly name: string;
@@ -30,7 +60,9 @@ const loadCreateCanonicalMemoryToolCatalog = async (): Promise<
   (engine: MemoryEngine) => readonly CanonicalMemoryTool[]
 > => {
   const module = (await import(CANONICAL_TOOL_CATALOG_MODULE_PATH)) as {
-    readonly createCanonicalMemoryToolCatalog: (engine: MemoryEngine) => readonly CanonicalMemoryTool[];
+    readonly createCanonicalMemoryToolCatalog: (
+      engine: MemoryEngine,
+    ) => readonly CanonicalMemoryTool[];
   };
 
   return module.createCanonicalMemoryToolCatalog;
@@ -53,6 +85,24 @@ const createMinimalEngine = (): {
   readonly grep: ReturnType<typeof vi.fn<(input: GrepInput) => Promise<GrepOutput>>>;
   readonly describe: ReturnType<typeof vi.fn<(input: DescribeInput) => Promise<DescribeOutput>>>;
   readonly expand: ReturnType<typeof vi.fn<(input: ExpandInput) => Promise<ExpandOutput>>>;
+  readonly getCurrentState: ReturnType<
+    typeof vi.fn<(input: GetCurrentStateInput) => Promise<GetCurrentStateOutput>>
+  >;
+  readonly getNextSteps: ReturnType<
+    typeof vi.fn<(input: GetNextStepsInput) => Promise<GetNextStepsOutput>>
+  >;
+  readonly recallForTask: ReturnType<
+    typeof vi.fn<(input: RecallForTaskInput) => Promise<RecallForTaskOutput>>
+  >;
+  readonly recordContinuity: ReturnType<
+    typeof vi.fn<(input: RecordContinuityInput) => Promise<RecordContinuityOutput>>
+  >;
+  readonly createHandoff: ReturnType<
+    typeof vi.fn<(input: CreateHandoffInput) => Promise<CreateHandoffOutput>>
+  >;
+  readonly markContinuityRecord: ReturnType<
+    typeof vi.fn<(input: MarkContinuityRecordInput) => Promise<MarkContinuityRecordOutput>>
+  >;
 } => {
   const grep = vi.fn(async (_input: GrepInput): Promise<GrepOutput> => {
     void _input;
@@ -84,15 +134,142 @@ const createMinimalEngine = (): {
     };
   });
 
+  const getCurrentState = vi.fn(
+    async (_input: GetCurrentStateInput): Promise<GetCurrentStateOutput> => {
+      void _input;
+      return {
+        goalRecords: [],
+        decisions: [
+          {
+            recordId: 'decision:projection',
+            conversationId: createConversationId('conv_default'),
+            kind: 'decision',
+            status: 'active',
+            title: 'Use projection',
+            content: 'Project continuity from ledger events.',
+            importance: 'high',
+            provenance: {
+              eventIds: [createEventId('evt_source_state_1')],
+              summaryIds: [createSummaryNodeId('sum_source_state_1')],
+              artifactIds: [createArtifactId('file_source_state_1')],
+            },
+            relatedRecordIds: [],
+            supersedesRecordIds: [],
+            createdAt: createTimestamp(new Date('2026-04-28T13:00:00.000Z')),
+            eventId: createEventId('evt_state_record_1'),
+          },
+        ],
+        constraints: [],
+        progress: [],
+        nextSteps: [],
+        handoffs: [],
+        verification: [],
+        failures: [],
+        openQuestions: [],
+        artifactChanges: [],
+        sessionSummaries: [],
+        activeRecordCount: 0,
+        staleRecordCount: 0,
+      };
+    },
+  );
+
+  const getNextSteps = vi.fn(async (_input: GetNextStepsInput): Promise<GetNextStepsOutput> => {
+    void _input;
+    return {
+      nextSteps: [],
+    };
+  });
+
+  const recallForTask = vi.fn(async (_input: RecallForTaskInput): Promise<RecallForTaskOutput> => {
+    void _input;
+    return {
+      contextBlock: 'LedgerMind current state',
+      currentState: await getCurrentState({ conversationId: createConversationId('conv_default') }),
+      recalledSummaryIds: [createSummaryNodeId('sum_recalled_1')],
+      recalledArtifactIds: [
+        'file_recalled_1' as RecallForTaskOutput['recalledArtifactIds'][number],
+      ],
+      recalledEventIds: [createEventId('evt_recalled_1')],
+      why: ['Task prompt matched current state.'],
+      budgetUsed: createTokenCount(3),
+    };
+  });
+
+  const recordContinuity = vi.fn(
+    async (input: RecordContinuityInput): Promise<RecordContinuityOutput> => ({
+      record: {
+        recordId: input.idempotencyKey ?? `${input.kind}:${input.title.toLowerCase()}`,
+        conversationId: input.conversationId,
+        kind: input.kind,
+        status: input.status ?? 'active',
+        title: input.title,
+        content: input.content,
+        importance: input.importance ?? 'normal',
+        provenance: input.provenance ?? {},
+        relatedRecordIds: input.relatedRecordIds ?? [],
+        supersedesRecordIds: input.supersedesRecordIds ?? [],
+        createdAt: createTimestamp(new Date('2026-04-28T13:00:00.000Z')),
+        eventId: createEventId('evt_record_tool_1'),
+      },
+      contextTokenCount: createTokenCount(8),
+    }),
+  );
+
+  const createHandoff = vi.fn(async (input: CreateHandoffInput): Promise<CreateHandoffOutput> => {
+    const output = await recordContinuity({
+      conversationId: input.conversationId,
+      kind: 'handoff',
+      title: `Continue: ${input.goal}`,
+      content: input.completed.join('\n'),
+    });
+
+    return {
+      handoff: output.record,
+      nextStepRecords: [],
+    };
+  });
+
+  const markContinuityRecord = vi.fn(
+    async (input: MarkContinuityRecordInput): Promise<MarkContinuityRecordOutput> => ({
+      marker: {
+        recordId: input.idempotencyKey ?? `session_summary:mark ${input.recordId} stale`,
+        conversationId: input.conversationId,
+        kind: 'session_summary',
+        status: input.status,
+        title: `Mark ${input.recordId} ${input.status}`,
+        content: `Record ${input.recordId} marked ${input.status}: ${input.reason}`,
+        importance: 'normal',
+        provenance: {},
+        relatedRecordIds: [input.recordId],
+        supersedesRecordIds: [input.recordId],
+        createdAt: createTimestamp(new Date('2026-04-28T13:00:00.000Z')),
+        eventId: createEventId('evt_mark_tool_1'),
+      },
+    }),
+  );
+
   return {
     engine: {
       grep,
       describe,
       expand,
+      getCurrentState,
+      getNextSteps,
+      recallForTask,
+      recordContinuity,
+      createHandoff,
+      markContinuityRecord,
     },
     grep,
     describe,
     expand,
+    getCurrentState,
+    getNextSteps,
+    recallForTask,
+    recordContinuity,
+    createHandoff,
+    markContinuityRecord,
   };
 };
 
@@ -197,11 +374,22 @@ describe('createCanonicalMemoryToolCatalog', () => {
       'memory.recall',
       'memory.describe',
       'memory.expand',
+      'memory.currentState',
+      'memory.nextSteps',
+      'memory.recallForTask',
+      'memory.recordDecision',
+      'memory.recordConstraint',
+      'memory.recordProgress',
+      'memory.recordVerification',
+      'memory.createHandoff',
+      'memory.markStale',
     ]);
 
     const recallTool = catalog[0]!;
     const describeTool = catalog[1]!;
     const expandTool = catalog[2]!;
+    const currentStateTool = getToolByName(catalog, 'memory.currentState');
+    const recordDecisionTool = getToolByName(catalog, 'memory.recordDecision');
 
     assertPolicyMetadata(recallTool, {
       access: 'read',
@@ -219,6 +407,18 @@ describe('createCanonicalMemoryToolCatalog', () => {
       access: 'privileged',
       requiresApproval: true,
       subAgentOnly: true,
+      idempotent: true,
+    });
+    assertPolicyMetadata(currentStateTool, {
+      access: 'read',
+      requiresApproval: false,
+      subAgentOnly: false,
+      idempotent: true,
+    });
+    assertPolicyMetadata(recordDecisionTool, {
+      access: 'write',
+      requiresApproval: false,
+      subAgentOnly: false,
       idempotent: true,
     });
   });
@@ -355,7 +555,10 @@ describe('createCanonicalMemoryToolCatalog', () => {
     ['missing callerContext', { summaryId: 'sum_leaf_1' }],
     ['non-object callerContext', { summaryId: 'sum_leaf_1', callerContext: 'invalid' }],
     ['missing conversationId', { summaryId: 'sum_leaf_1', callerContext: { isSubAgent: true } }],
-    ['missing isSubAgent', { summaryId: 'sum_leaf_1', callerContext: { conversationId: 'conv_2' } }],
+    [
+      'missing isSubAgent',
+      { summaryId: 'sum_leaf_1', callerContext: { conversationId: 'conv_2' } },
+    ],
   ])('preserves expand input validation for %s', async (_case, payload) => {
     const { engine, expand } = createMinimalEngine();
     const createCanonicalMemoryToolCatalog = await loadCreateCanonicalMemoryToolCatalog();
@@ -368,5 +571,149 @@ describe('createCanonicalMemoryToolCatalog', () => {
     const envelope = assertErrorEnvelope(result, 'TOOL_EXECUTION_FAILED');
     expect((envelope.error as Record<string, unknown>).message).toContain('memory.expand');
     expect(expand).not.toHaveBeenCalled();
+  });
+
+  it('forwards task-start recall input and returns recalled evidence references', async () => {
+    const { engine, recallForTask } = createMinimalEngine();
+    const createCanonicalMemoryToolCatalog = await loadCreateCanonicalMemoryToolCatalog();
+
+    const catalog = createCanonicalMemoryToolCatalog(engine as MemoryEngine);
+    const tool = getToolByName(catalog, 'memory.recallForTask');
+
+    const result = await tool.execute({
+      conversationId: 'conv_recall_task',
+      task: 'Fix failing auth tests',
+      budgetTokens: 1200,
+      includeHandoff: true,
+      includeEvidence: true,
+    });
+
+    expect(recallForTask).toHaveBeenCalledWith({
+      conversationId: createConversationId('conv_recall_task'),
+      task: 'Fix failing auth tests',
+      budgetTokens: 1200,
+      includeHandoff: true,
+      includeEvidence: true,
+    });
+    const envelope = assertSuccessEnvelope(result, {
+      contextBlock: 'LedgerMind current state',
+      currentState: await engine.getCurrentState({
+        conversationId: createConversationId('conv_default'),
+      }),
+      recalledSummaryIds: [createSummaryNodeId('sum_recalled_1')],
+      recalledArtifactIds: ['file_recalled_1'],
+      recalledEventIds: [createEventId('evt_recalled_1')],
+      why: ['Task prompt matched current state.'],
+      budgetUsed: createTokenCount(3),
+    });
+    expect(envelope.references).toEqual({
+      summaryIds: ['sum_recalled_1'],
+      artifactIds: ['file_recalled_1'],
+      eventIds: ['evt_recalled_1'],
+    });
+  });
+
+  it('returns current-state record and provenance references', async () => {
+    const { engine, getCurrentState } = createMinimalEngine();
+    const createCanonicalMemoryToolCatalog = await loadCreateCanonicalMemoryToolCatalog();
+
+    const catalog = createCanonicalMemoryToolCatalog(engine as MemoryEngine);
+    const tool = getToolByName(catalog, 'memory.currentState');
+
+    const result = await tool.execute({ conversationId: 'conv_state_refs' });
+
+    expect(getCurrentState).toHaveBeenCalledWith({
+      conversationId: createConversationId('conv_state_refs'),
+    });
+    const envelope = assertSuccessEnvelope(
+      result,
+      await engine.getCurrentState({
+        conversationId: createConversationId('conv_default'),
+      }),
+    );
+    expect(envelope.references).toEqual({
+      summaryIds: ['sum_source_state_1'],
+      artifactIds: ['file_source_state_1'],
+      eventIds: ['evt_state_record_1', 'evt_source_state_1'],
+    });
+  });
+
+  it('records decision continuity with agent-friendly write input', async () => {
+    const { engine, recordContinuity } = createMinimalEngine();
+    const createCanonicalMemoryToolCatalog = await loadCreateCanonicalMemoryToolCatalog();
+
+    const catalog = createCanonicalMemoryToolCatalog(engine as MemoryEngine);
+    const tool = getToolByName(catalog, 'memory.recordDecision');
+
+    const result = await tool.execute({
+      conversationId: 'conv_write_decision',
+      title: 'Use append-only continuity',
+      content: 'Continuity records are ledger events.',
+      importance: 'high',
+      provenance: {
+        command: 'pnpm typecheck',
+      },
+      idempotencyKey: 'decision:append-only-continuity',
+    });
+
+    expect(recordContinuity).toHaveBeenCalledWith({
+      conversationId: createConversationId('conv_write_decision'),
+      kind: 'decision',
+      title: 'Use append-only continuity',
+      content: 'Continuity records are ledger events.',
+      importance: 'high',
+      provenance: {
+        command: 'pnpm typecheck',
+      },
+      idempotencyKey: 'decision:append-only-continuity',
+    });
+    const envelope = assertSuccessEnvelope(result, {
+      record: expect.objectContaining({
+        eventId: createEventId('evt_record_tool_1'),
+      }),
+      contextTokenCount: createTokenCount(8),
+    });
+    expect(envelope.references).toEqual({
+      eventIds: ['evt_record_tool_1'],
+    });
+  });
+
+  it('creates handoffs from title/content aliases and marks stale records with content as reason', async () => {
+    const { engine, createHandoff, markContinuityRecord } = createMinimalEngine();
+    const createCanonicalMemoryToolCatalog = await loadCreateCanonicalMemoryToolCatalog();
+
+    const catalog = createCanonicalMemoryToolCatalog(engine as MemoryEngine);
+    const handoffTool = getToolByName(catalog, 'memory.createHandoff');
+    const staleTool = getToolByName(catalog, 'memory.markStale');
+
+    await handoffTool.execute({
+      conversationId: 'conv_handoff_tool',
+      title: 'Resume continuity MCP tools',
+      content: 'Catalog entries are added.',
+      nextSteps: [{ title: 'Bind tools', content: 'Update MCP session binding.' }],
+      idempotencyKey: 'handoff:continuity-tools',
+    });
+    await staleTool.execute({
+      conversationId: 'conv_handoff_tool',
+      recordId: 'decision:old-tool-shape',
+      title: 'Mark old tool shape stale',
+      content: 'The canonical catalog now exposes typed continuity tools.',
+      idempotencyKey: 'mark:old-tool-shape',
+    });
+
+    expect(createHandoff).toHaveBeenCalledWith({
+      conversationId: createConversationId('conv_handoff_tool'),
+      goal: 'Resume continuity MCP tools',
+      completed: ['Catalog entries are added.'],
+      nextSteps: [{ title: 'Bind tools', content: 'Update MCP session binding.' }],
+      idempotencyKey: 'handoff:continuity-tools',
+    });
+    expect(markContinuityRecord).toHaveBeenCalledWith({
+      conversationId: createConversationId('conv_handoff_tool'),
+      recordId: 'decision:old-tool-shape',
+      status: 'stale',
+      reason: 'The canonical catalog now exposes typed continuity tools.',
+      idempotencyKey: 'mark:old-tool-shape',
+    });
   });
 });

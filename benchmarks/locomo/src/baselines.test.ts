@@ -141,6 +141,12 @@ const createRuntimeStub = (input: {
     expand: createUnusedEngineMethod,
     storeArtifact: createUnusedEngineMethod,
     exploreArtifact: createUnusedEngineMethod,
+    recordContinuity: createUnusedEngineMethod,
+    createHandoff: createUnusedEngineMethod,
+    getCurrentState: createUnusedEngineMethod,
+    getNextSteps: createUnusedEngineMethod,
+    recallForTask: createUnusedEngineMethod,
+    markContinuityRecord: createUnusedEngineMethod,
     llmMap: createUnusedEngineMethod,
     agenticMap: createUnusedEngineMethod,
     getOperatorRun: createUnusedEngineMethod,
@@ -150,13 +156,12 @@ const createRuntimeStub = (input: {
     conversationId: createConversationId('conv_test'),
     engine,
     contextLines: [],
-    provenance:
-      input.provenance ?? {
-        runtimeMode: 'static_materialize',
-        summarizerType: 'locomo_deterministic_head_tail_v1',
-        artifactsEnabled: true,
-        artifactBearingExampleCount: 0,
-      },
+    provenance: input.provenance ?? {
+      runtimeMode: 'static_materialize',
+      summarizerType: 'locomo_deterministic_head_tail_v1',
+      artifactsEnabled: true,
+      artifactBearingExampleCount: 0,
+    },
     flushSummarizationTrace: () => [],
     destroy: async () => undefined,
   };
@@ -193,7 +198,9 @@ describe('oracle baselines', () => {
     const baselines = createBaselineStrategies(config);
 
     expect(baselines.ledgermind_agentic_loop.name).toBe('ledgermind_agentic_loop');
-    expect(baselines.ledgermind_agentic_loop_no_precompaction.name).toBe('ledgermind_agentic_loop_no_precompaction');
+    expect(baselines.ledgermind_agentic_loop_no_precompaction.name).toBe(
+      'ledgermind_agentic_loop_no_precompaction',
+    );
   });
 
   it('separates raw-turn diagnostic variants from default runtime anchors', async () => {
@@ -304,9 +311,13 @@ describe('oracle baselines', () => {
     expect(staticDiagnostic.diagnostics?.rawTurnInjectionAddedCount ?? 0).toBeGreaterThan(0);
     expect(agenticDiagnostic.diagnostics?.rawTurnInjectionAddedCount ?? 0).toBeGreaterThan(0);
     expect(staticDiagnostic.contextResult.context).not.toBe(staticAnchor.contextResult.context);
-    expect(staticDiagnostic.contextResult.contextIds).not.toEqual(staticAnchor.contextResult.contextIds);
+    expect(staticDiagnostic.contextResult.contextIds).not.toEqual(
+      staticAnchor.contextResult.contextIds,
+    );
     expect(agenticDiagnostic.contextResult.context).not.toBe(agenticAnchor.contextResult.context);
-    expect(agenticDiagnostic.contextResult.contextIds).not.toEqual(agenticAnchor.contextResult.contextIds);
+    expect(agenticDiagnostic.contextResult.contextIds).not.toEqual(
+      agenticAnchor.contextResult.contextIds,
+    );
   });
 
   it('keeps caption-only artifact clues available to raw-turn diagnostics without leaking them into runtime context', async () => {
@@ -355,7 +366,10 @@ describe('oracle baselines', () => {
     };
     const baselines = createBaselineStrategies({
       ...makeConfig('heuristic'),
-      baselines: ['ledgermind_static_materialize', 'ledgermind_static_materialize_raw_turn_injection'],
+      baselines: [
+        'ledgermind_static_materialize',
+        'ledgermind_static_materialize_raw_turn_injection',
+      ],
     });
 
     const staticAnchor = await baselines.ledgermind_static_materialize.run({
@@ -478,12 +492,12 @@ describe('oracle baselines', () => {
     expect(agenticExecution.diagnostics?.toolLoop?.describedIds.length ?? 0).toBeLessThanOrEqual(
       makeConfig('heuristic').ledgermindToolLoopMaxDescribeCalls,
     );
-    expect(agenticExecution.diagnostics?.toolLoop?.exploredArtifactIds.length ?? 0).toBeLessThanOrEqual(
-      makeConfig('heuristic').ledgermindToolLoopMaxExploreArtifactCalls,
-    );
-    expect(agenticExecution.diagnostics?.toolLoop?.expandedSummaryIds.length ?? 0).toBeLessThanOrEqual(
-      makeConfig('heuristic').ledgermindToolLoopMaxExpandCalls,
-    );
+    expect(
+      agenticExecution.diagnostics?.toolLoop?.exploredArtifactIds.length ?? 0,
+    ).toBeLessThanOrEqual(makeConfig('heuristic').ledgermindToolLoopMaxExploreArtifactCalls);
+    expect(
+      agenticExecution.diagnostics?.toolLoop?.expandedSummaryIds.length ?? 0,
+    ).toBeLessThanOrEqual(makeConfig('heuristic').ledgermindToolLoopMaxExpandCalls);
     expect(agenticExecution.diagnostics?.toolLoop?.grepQueries.length ?? 0).toBeLessThanOrEqual(
       makeConfig('heuristic').ledgermindToolLoopMaxGrepCalls,
     );
@@ -495,10 +509,16 @@ describe('oracle baselines', () => {
     expect(agenticExecution.contextResult.context).not.toContain('[shared_caption ');
     expect(agenticExecution.contextResult.context).toContain('tool: [artifact:file_');
     expect(agenticExecution.contextResult.context).toContain(artifactOnlyClue);
-    expect(agenticExecution.contextResult.contextIds.some((id) => id.startsWith('artifact:file_'))).toBe(true);
-    expect((agenticExecution.diagnostics?.toolLoop?.exploredArtifactIds.length ?? 0) > 0).toBe(true);
     expect(
-      agenticExecution.diagnostics?.toolLoop?.steps.some((step) => step.tool === 'explore_artifact' && step.status === 'ok'),
+      agenticExecution.contextResult.contextIds.some((id) => id.startsWith('artifact:file_')),
+    ).toBe(true);
+    expect((agenticExecution.diagnostics?.toolLoop?.exploredArtifactIds.length ?? 0) > 0).toBe(
+      true,
+    );
+    expect(
+      agenticExecution.diagnostics?.toolLoop?.steps.some(
+        (step) => step.tool === 'explore_artifact' && step.status === 'ok',
+      ),
     ).toBe(true);
     expect(staticArtifactExecution.contextResult.context).not.toContain(artifactOnlyClue);
 
@@ -509,14 +529,18 @@ describe('oracle baselines', () => {
     expect(exploredArtifactToolLine).toContain(artifactOnlyClue);
 
     const toolLoopDiagnostics = agenticExecution.diagnostics?.toolLoop;
-    expect(toolLoopDiagnostics?.describeSignals?.length ?? 0).toBe(toolLoopDiagnostics?.describedIds.length ?? 0);
+    expect(toolLoopDiagnostics?.describeSignals?.length ?? 0).toBe(
+      toolLoopDiagnostics?.describedIds.length ?? 0,
+    );
     expect(toolLoopDiagnostics?.expandSelection).toBeDefined();
     expect(toolLoopDiagnostics?.artifactSelection).toBeDefined();
     expect(toolLoopDiagnostics?.grepSelection).toBeDefined();
 
     const firstDescribeSignal = toolLoopDiagnostics?.describeSignals?.[0];
     if (firstDescribeSignal !== undefined) {
-      expect(firstDescribeSignal.kind === 'summary' || firstDescribeSignal.kind === 'artifact').toBe(true);
+      expect(
+        firstDescribeSignal.kind === 'summary' || firstDescribeSignal.kind === 'artifact',
+      ).toBe(true);
     }
 
     const firstExpandSelection = toolLoopDiagnostics?.expandSelection?.[0];
@@ -682,12 +706,36 @@ describe('oracle baselines', () => {
       conversation: {
         session_1_date_time: '1:00 pm on 1 Jan, 2026',
         session_1: [
-          { speaker: 'Alice', dia_id: 'D1:1', text: 'Alice documented rollout anchor ZX-41 for the migration.' },
-          { speaker: 'Bob', dia_id: 'D1:2', text: 'Bob asked for a scope-limited retrieval to summary nodes only.' },
-          { speaker: 'Alice', dia_id: 'D1:3', text: 'Alice promised a status update with evidence ID D1:1.' },
-          { speaker: 'Bob', dia_id: 'D1:4', text: 'Bob confirmed checklist approval outcome for rollout prep.' },
-          { speaker: 'Alice', dia_id: 'D1:5', text: 'Alice reiterated expansion should use describe and expand steps.' },
-          { speaker: 'Bob', dia_id: 'D1:6', text: 'Bob requested grep follow-up if exact snippets are needed.' },
+          {
+            speaker: 'Alice',
+            dia_id: 'D1:1',
+            text: 'Alice documented rollout anchor ZX-41 for the migration.',
+          },
+          {
+            speaker: 'Bob',
+            dia_id: 'D1:2',
+            text: 'Bob asked for a scope-limited retrieval to summary nodes only.',
+          },
+          {
+            speaker: 'Alice',
+            dia_id: 'D1:3',
+            text: 'Alice promised a status update with evidence ID D1:1.',
+          },
+          {
+            speaker: 'Bob',
+            dia_id: 'D1:4',
+            text: 'Bob confirmed checklist approval outcome for rollout prep.',
+          },
+          {
+            speaker: 'Alice',
+            dia_id: 'D1:5',
+            text: 'Alice reiterated expansion should use describe and expand steps.',
+          },
+          {
+            speaker: 'Bob',
+            dia_id: 'D1:6',
+            text: 'Bob requested grep follow-up if exact snippets are needed.',
+          },
         ],
       },
       qa: [
@@ -760,7 +808,8 @@ describe('oracle baselines', () => {
           modelMessages: [
             {
               role: 'assistant',
-              content: 'Alice said auth token rotation ZX-41 happens tonight after the final checkpoint.',
+              content:
+                'Alice said auth token rotation ZX-41 happens tonight after the final checkpoint.',
             },
           ],
           summaryReferences: [],

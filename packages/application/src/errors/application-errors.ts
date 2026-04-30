@@ -11,11 +11,7 @@ export abstract class ApplicationError extends Error {
   }
 }
 
-export type InvalidReferenceKind =
-  | 'summary'
-  | 'artifact'
-  | 'summary_scope'
-  | 'summary_or_artifact';
+export type InvalidReferenceKind = 'summary' | 'artifact' | 'summary_scope' | 'summary_or_artifact';
 
 export type TokenizerOperation = 'countTokens' | 'estimateFromBytes';
 
@@ -38,7 +34,9 @@ export class InvalidTokenizerOutputError extends ApplicationError {
   readonly outputDescription: string;
 
   constructor(tokenizer: string, operation: TokenizerOperation, outputDescription: string) {
-    super(`Tokenizer "${tokenizer}" returned invalid output from ${operation}: ${outputDescription}`);
+    super(
+      `Tokenizer "${tokenizer}" returned invalid output from ${operation}: ${outputDescription}`,
+    );
     this.tokenizer = tokenizer;
     this.operation = operation;
     this.outputDescription = outputDescription;
@@ -78,6 +76,30 @@ export class IdempotencyConflictError extends ApplicationError {
     super('Idempotency key was reused with a different payload.');
     this.conversationId = conversationId;
     this.idempotencyKey = idempotencyKey;
+  }
+}
+
+export type ContinuityInputField = 'title' | 'content';
+
+export class ContinuityInputValidationError extends ApplicationError {
+  readonly code = 'CONTINUITY_INPUT_INVALID';
+  readonly field: ContinuityInputField;
+
+  constructor(field: ContinuityInputField, message?: string) {
+    super(message ?? `Continuity ${field} is required.`);
+    this.field = field;
+  }
+}
+
+export class ContinuityWriteFailedError extends ApplicationError {
+  readonly code = 'CONTINUITY_WRITE_FAILED';
+  readonly conversationId: ConversationId;
+  readonly recordId: string;
+
+  constructor(conversationId: ConversationId, recordId: string) {
+    super(`Continuity record write did not return a persisted event for record: ${recordId}`);
+    this.conversationId = conversationId;
+    this.recordId = recordId;
   }
 }
 

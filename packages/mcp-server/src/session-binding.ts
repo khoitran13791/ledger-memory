@@ -60,9 +60,7 @@ const createBindingConversationId = async (
 ): Promise<ConversationId> =>
   input.createConversation === undefined
     ? createConversationId(`conv_${randomUUID()}`)
-    : input.createConversation(
-        parentConversationId === undefined ? {} : { parentConversationId },
-      );
+    : input.createConversation(parentConversationId === undefined ? {} : { parentConversationId });
 
 const resolveParentConversationId = async (
   store: SessionBindingStore,
@@ -117,6 +115,19 @@ export const resolveSessionBinding = async (
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const CONVERSATION_BOUND_TOOL_NAMES = new Set([
+  'memory.recall',
+  'memory.currentState',
+  'memory.nextSteps',
+  'memory.recallForTask',
+  'memory.recordDecision',
+  'memory.recordConstraint',
+  'memory.recordProgress',
+  'memory.recordVerification',
+  'memory.createHandoff',
+  'memory.markStale',
+]);
+
 export const readSessionBindingMetadata = (
   meta: Record<string, unknown> | undefined,
 ): SessionBindingRuntimeMetadata | undefined => {
@@ -135,7 +146,12 @@ export const readSessionBindingMetadata = (
   const userScope = readOptionalString('userScope');
   const workspaceScope = readOptionalString('workspaceScope');
 
-  if (runtime === undefined || runtimeSessionId === undefined || userScope === undefined || workspaceScope === undefined) {
+  if (
+    runtime === undefined ||
+    runtimeSessionId === undefined ||
+    userScope === undefined ||
+    workspaceScope === undefined
+  ) {
     return undefined;
   }
 
@@ -161,7 +177,7 @@ export const applySessionBindingToToolArguments = (
 ): Record<string, unknown> => {
   const nextArguments = { ...(argumentsInput ?? {}) };
 
-  if (toolName === 'memory.recall' && nextArguments.conversationId === undefined) {
+  if (CONVERSATION_BOUND_TOOL_NAMES.has(toolName)) {
     nextArguments.conversationId = String(binding.conversationId);
   }
 

@@ -17,7 +17,11 @@ import type {
   OperatorRunStatus,
   StructuredGenerationPort,
 } from '@ledgermind/application';
-import { InMemoryConversationStore, SimpleTokenizerAdapter, TiktokenTokenizerAdapter } from '@ledgermind/adapters';
+import {
+  InMemoryConversationStore,
+  SimpleTokenizerAdapter,
+  TiktokenTokenizerAdapter,
+} from '@ledgermind/adapters';
 import {
   createCompactionThresholds,
   createConversation,
@@ -64,18 +68,24 @@ const createExistingConversation = (
 };
 
 const expectedEngineMethods = [
+  'agenticMap',
   'append',
-  'materializeContext',
-  'runCompaction',
   'checkIntegrity',
-  'grep',
+  'createHandoff',
   'describe',
   'expand',
-  'storeArtifact',
   'exploreArtifact',
-  'llmMap',
-  'agenticMap',
+  'getCurrentState',
+  'getNextSteps',
   'getOperatorRun',
+  'grep',
+  'llmMap',
+  'markContinuityRecord',
+  'materializeContext',
+  'recallForTask',
+  'recordContinuity',
+  'runCompaction',
+  'storeArtifact',
 ] as const;
 
 const expectStableEngineContract = (engine: Record<string, unknown>) => {
@@ -270,16 +280,16 @@ describe('createMemoryEngine initialization validation', () => {
   it.each([undefined, null, 'invalid', 123])(
     'rejects non-object top-level config (%j)',
     (config) => {
-      expect(() => createMemoryEngine(config as unknown as Parameters<typeof createMemoryEngine>[0])).toThrow(
-        'MemoryEngine config must be an object.',
-      );
+      expect(() =>
+        createMemoryEngine(config as unknown as Parameters<typeof createMemoryEngine>[0]),
+      ).toThrow('MemoryEngine config must be an object.');
     },
   );
 
   it('rejects when storage config is missing', () => {
-    expect(() => createMemoryEngine({} as unknown as Parameters<typeof createMemoryEngine>[0])).toThrow(
-      'MemoryEngine config must include a storage object.',
-    );
+    expect(() =>
+      createMemoryEngine({} as unknown as Parameters<typeof createMemoryEngine>[0]),
+    ).toThrow('MemoryEngine config must include a storage object.');
   });
 
   it('rejects unsupported storage types with actionable error', () => {
@@ -296,7 +306,9 @@ describe('createMemoryEngine initialization validation', () => {
         ...baseConfig,
         summarizer: 'deterministic' as unknown as { readonly type: 'deterministic' },
       }),
-    ).toThrow('Summarizer config must be an object when provided. Supported values: "deterministic".');
+    ).toThrow(
+      'Summarizer config must be an object when provided. Supported values: "deterministic".',
+    );
 
     expect(() =>
       createMemoryEngine({

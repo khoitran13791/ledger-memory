@@ -16,7 +16,9 @@ export const assertValidMemoryEngine: (engine: unknown) => asserts engine is Mem
   for (const method of requiredMethods) {
     const candidate = engine[method];
     if (typeof candidate !== 'function') {
-      throw new TypeError(`createCanonicalMemoryToolCatalog requires engine.${method}() to be a function.`);
+      throw new TypeError(
+        `createCanonicalMemoryToolCatalog requires engine.${method}() to be a function.`,
+      );
     }
   }
 };
@@ -46,7 +48,26 @@ export const readOptionalString = (
 
   const raw = input[field];
   if (typeof raw !== 'string' || raw.trim().length === 0) {
-    throw new TypeError(`${toolName} expects optional "${field}" to be a non-empty string when provided.`);
+    throw new TypeError(
+      `${toolName} expects optional "${field}" to be a non-empty string when provided.`,
+    );
+  }
+
+  return raw;
+};
+
+export const readOptionalBoolean = (
+  input: Record<string, unknown>,
+  field: string,
+  toolName: string,
+): boolean | undefined => {
+  if (!(field in input) || input[field] === undefined) {
+    return undefined;
+  }
+
+  const raw = input[field];
+  if (typeof raw !== 'boolean') {
+    throw new TypeError(`${toolName} expects optional "${field}" to be a boolean when provided.`);
   }
 
   return raw;
@@ -109,6 +130,48 @@ export const readRequiredObject = (
   return raw;
 };
 
+export const readOptionalObject = (
+  input: Record<string, unknown>,
+  field: string,
+  toolName: string,
+): Record<string, unknown> | undefined => {
+  if (!(field in input) || input[field] === undefined) {
+    return undefined;
+  }
+
+  const raw = input[field];
+  if (!isRecord(raw)) {
+    throw new TypeError(`${toolName} expects optional "${field}" to be an object when provided.`);
+  }
+
+  return raw;
+};
+
+export const readOptionalStringArray = (
+  input: Record<string, unknown>,
+  field: string,
+  toolName: string,
+): readonly string[] | undefined => {
+  if (!(field in input) || input[field] === undefined) {
+    return undefined;
+  }
+
+  const raw = input[field];
+  if (!Array.isArray(raw)) {
+    throw new TypeError(`${toolName} expects optional "${field}" to be an array when provided.`);
+  }
+
+  const strings = raw.map((item) => {
+    if (typeof item !== 'string' || item.trim().length === 0) {
+      throw new TypeError(`${toolName} expects "${field}" items to be non-empty strings.`);
+    }
+
+    return item;
+  });
+
+  return strings;
+};
+
 export const parseToolInput = (input: unknown, toolName: string): Record<string, unknown> => {
   if (!isRecord(input)) {
     throw new TypeError(`${toolName} requires an object input payload.`);
@@ -122,7 +185,9 @@ export const parseCallerContext = (
   toolName: string,
 ): CallerContext => {
   const callerInput = readRequiredObject(input, 'callerContext', toolName);
-  const conversationId = createConversationId(readRequiredString(callerInput, 'conversationId', toolName));
+  const conversationId = createConversationId(
+    readRequiredString(callerInput, 'conversationId', toolName),
+  );
   const isSubAgent = readRequiredBoolean(callerInput, 'isSubAgent', toolName);
   const parentConversationId = readOptionalString(callerInput, 'parentConversationId', toolName);
 

@@ -9,6 +9,8 @@ import type {
   AppendLedgerEventsInput,
   CheckIntegrityInput,
   CheckIntegrityOutput,
+  CreateHandoffInput,
+  CreateHandoffOutput,
   DescribeInput,
   DescribeOutput,
   ExpandInput,
@@ -17,6 +19,10 @@ import type {
   ExploreArtifactOutput,
   GetOperatorRunInput,
   GetOperatorRunOutput,
+  GetCurrentStateInput,
+  GetCurrentStateOutput,
+  GetNextStepsInput,
+  GetNextStepsOutput,
   GrepInput,
   GrepOutput,
   LLMMapInput,
@@ -24,12 +30,18 @@ import type {
   MaterializeContextInput,
   MaterializeContextOutput,
   MemoryEngine,
+  MarkContinuityRecordInput,
+  MarkContinuityRecordOutput,
+  RecallForTaskInput,
+  RecallForTaskOutput,
+  RecordContinuityInput,
+  RecordContinuityOutput,
   RunCompactionInput,
   RunCompactionOutput,
   StoreArtifactInput,
   StoreArtifactOutput,
 } from '@ledgermind/application';
-import { createTokenCount } from '@ledgermind/domain';
+import { createEventId, createTimestamp, createTokenCount } from '@ledgermind/domain';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { runStopCommand } from '../commands/stop';
@@ -37,6 +49,7 @@ import { runStopCommand } from '../commands/stop';
 class RecordingMemoryEngine implements MemoryEngine {
   readonly appendCalls: AppendLedgerEventsInput[] = [];
   readonly runCompactionCalls: RunCompactionInput[] = [];
+  readonly createHandoffCalls: CreateHandoffInput[] = [];
 
   async append(input: AppendLedgerEventsInput) {
     this.appendCalls.push(input);
@@ -91,6 +104,54 @@ class RecordingMemoryEngine implements MemoryEngine {
     throw new Error('Not implemented in test double.');
   }
 
+  async recordContinuity(_input: RecordContinuityInput): Promise<RecordContinuityOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async createHandoff(input: CreateHandoffInput): Promise<CreateHandoffOutput> {
+    this.createHandoffCalls.push(input);
+    return {
+      handoff: {
+        recordId: 'handoff:test',
+        conversationId: input.conversationId,
+        kind: 'handoff',
+        status: 'active',
+        title: `Continue: ${input.goal}`,
+        content: input.completed.join('\n'),
+        importance: 'normal',
+        provenance: input.provenance ?? {},
+        relatedRecordIds: [],
+        supersedesRecordIds: [],
+        createdAt: createTimestamp(new Date('2026-04-29T00:00:00.000Z')),
+        eventId: createEventId('evt_handoff_test'),
+      },
+      nextStepRecords: [],
+    };
+  }
+
+  async getCurrentState(_input: GetCurrentStateInput): Promise<GetCurrentStateOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async getNextSteps(_input: GetNextStepsInput): Promise<GetNextStepsOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async recallForTask(_input: RecallForTaskInput): Promise<RecallForTaskOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
+  async markContinuityRecord(
+    _input: MarkContinuityRecordInput,
+  ): Promise<MarkContinuityRecordOutput> {
+    void _input;
+    throw new Error('Not implemented in test double.');
+  }
+
   async llmMap(_input: LLMMapInput): Promise<LLMMapOutput> {
     void _input;
     throw new Error('Not implemented in test double.');
@@ -120,7 +181,9 @@ class MemoryWritable extends Writable {
 const tempDirectories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(tempDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe('runStopCommand', () => {
@@ -133,8 +196,13 @@ describe('runStopCommand', () => {
     await writeFile(
       join(transcriptDirectory, 'transcript.jsonl'),
       [
-        JSON.stringify({ message: { role: 'user', content: 'Please summarize the deployment risk.' } }),
-        JSON.stringify({ message: { role: 'assistant', content: 'The migration needs a rollback plan.' } }),
+        JSON.stringify({
+          message: { role: 'user', content: 'Please summarize the deployment risk.' },
+        }),
+        JSON.stringify({
+          message: { role: 'assistant', content: 'We decided to add a rollback plan.' },
+        }),
+        JSON.stringify({ message: { role: 'assistant', content: 'Next, run pnpm typecheck.' } }),
       ].join('\n'),
       'utf8',
     );
@@ -166,16 +234,16 @@ describe('runStopCommand', () => {
     expect(engine.appendCalls).toHaveLength(1);
     const [appendCall] = engine.appendCalls;
     expect(appendCall).toBeDefined();
-    expect(appendCall?.events).toHaveLength(3);
+    expect(appendCall?.events).toHaveLength(4);
     expect(appendCall?.events[0]).toMatchObject({
       role: 'user',
       content: 'Please summarize the deployment risk.',
     });
     expect(appendCall?.events[1]).toMatchObject({
       role: 'assistant',
-      content: 'The migration needs a rollback plan.',
+      content: 'We decided to add a rollback plan.',
     });
-    const stopEvent = appendCall?.events[2];
+    const stopEvent = appendCall?.events[3];
     expect(stopEvent).toBeDefined();
     expect(stopEvent).toMatchObject({
       role: 'system',
@@ -193,6 +261,23 @@ describe('runStopCommand', () => {
     expect(engine.runCompactionCalls).toEqual([
       expect.objectContaining({
         trigger: 'soft',
+      }),
+    ]);
+    expect(engine.createHandoffCalls).toEqual([
+      expect.objectContaining({
+        goal: 'Please summarize the deployment risk.',
+        decisions: ['We decided to add a rollback plan.'],
+        nextSteps: [
+          {
+            title: 'Next, run pnpm typecheck.',
+            content: 'Next, run pnpm typecheck.',
+            provenance: expect.any(Object),
+          },
+        ],
+        verification: ['Next, run pnpm typecheck.'],
+        provenance: expect.objectContaining({
+          transcriptPath: join(transcriptDirectory, 'transcript.jsonl'),
+        }),
       }),
     ]);
   });

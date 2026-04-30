@@ -1,4 +1,9 @@
-export type ClaudeHookName = 'SessionStart' | 'PreCompact' | 'Stop' | 'PostToolUse';
+export type ClaudeHookName =
+  | 'SessionStart'
+  | 'PreCompact'
+  | 'Stop'
+  | 'PostToolUse'
+  | 'UserPromptSubmit';
 
 interface ClaudeHookContextBase {
   readonly sessionId: string;
@@ -36,11 +41,17 @@ export interface PostToolUseHookContext extends ClaudeHookContextBase {
   readonly toolUseId?: string;
 }
 
+export interface UserPromptSubmitHookContext extends ClaudeHookContextBase {
+  readonly hookName: 'UserPromptSubmit';
+  readonly prompt: string;
+}
+
 export type ClaudeHookContext =
   | SessionStartHookContext
   | PreCompactHookContext
   | StopHookContext
-  | PostToolUseHookContext;
+  | PostToolUseHookContext
+  | UserPromptSubmitHookContext;
 
 const readRequiredString = (input: Record<string, unknown>, field: string): string => {
   const value = input[field];
@@ -56,7 +67,10 @@ const readOptionalString = (input: Record<string, unknown>, field: string): stri
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 };
 
-const readRequiredObject = (input: Record<string, unknown>, field: string): Record<string, unknown> => {
+const readRequiredObject = (
+  input: Record<string, unknown>,
+  field: string,
+): Record<string, unknown> => {
   const value = input[field];
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error(`Claude hook payload is missing required object field "${field}".`);
@@ -76,7 +90,7 @@ export const parseClaudeHookContext = (payload: unknown): ClaudeHookContext => {
     transcriptPath: readRequiredString(input, 'transcript_path'),
     cwd: readRequiredString(input, 'cwd'),
     workspaceRoot: readRequiredString(input, 'cwd'),
-    permissionMode: readRequiredString(input, 'permission_mode'),
+    permissionMode: readOptionalString(input, 'permission_mode') ?? 'unknown',
     hookName: readRequiredString(input, 'hook_event_name') as ClaudeHookName,
   };
 
@@ -118,6 +132,12 @@ export const parseClaudeHookContext = (payload: unknown): ClaudeHookContext => {
         ...(toolUseId === undefined ? {} : { toolUseId }),
       };
     }
+    case 'UserPromptSubmit':
+      return {
+        ...base,
+        hookName: 'UserPromptSubmit',
+        prompt: readRequiredString(input, 'prompt'),
+      };
     default:
       throw new Error(`Unsupported Claude hook event: ${String(base.hookName)}.`);
   }

@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 
 import type { StopHookContext } from '../context';
+import { extractContinuityHandoffFromTranscript } from '../continuity/transcript-continuity-extractor';
 import { buildCommandRuntime, isDirectExecution, type ClaudeCommandOptions } from '../runtime';
 import { parseTranscriptFile } from '../transcript';
 
@@ -27,7 +28,9 @@ const buildStopEventContent = (context: StopHookContext, budgetChars: number): s
   const lines = ['Session closed in Claude Code.', `Transcript path: ${context.transcriptPath}`];
 
   if (context.lastAssistantMessage !== undefined) {
-    lines.push(`Last assistant message excerpt: ${truncateForBudget(context.lastAssistantMessage, budgetChars)}`);
+    lines.push(
+      `Last assistant message excerpt: ${truncateForBudget(context.lastAssistantMessage, budgetChars)}`,
+    );
   }
 
   if (!context.stopHookActive) {
@@ -41,7 +44,10 @@ export const runStopCommand = async (options: ClaudeCommandOptions = {}): Promis
   const runtime = await buildCommandRuntime(options);
   const context = runtime.expectHookContext('Stop') as StopHookContext;
   const binding = await runtime.resolveBinding(context);
-  const checkpoint = await runtime.transcriptCheckpointStore.get(context.sessionId, context.transcriptPath);
+  const checkpoint = await runtime.transcriptCheckpointStore.get(
+    context.sessionId,
+    context.transcriptPath,
+  );
   const parseOptions = {
     ...(checkpoint?.lineCount === undefined ? {} : { startLine: checkpoint.lineCount }),
     onWarning: runtime.warn,
@@ -54,7 +60,10 @@ export const runStopCommand = async (options: ClaudeCommandOptions = {}): Promis
     },
     parseOptions,
   );
-  const stopEventContent = buildStopEventContent(context, runtime.config.injectedContextBudgetChars);
+  const stopEventContent = buildStopEventContent(
+    context,
+    runtime.config.injectedContextBudgetChars,
+  );
 
   await runtime.engine.append({
     conversationId: binding.conversationId,
@@ -79,6 +88,33 @@ export const runStopCommand = async (options: ClaudeCommandOptions = {}): Promis
     sessionId: context.sessionId,
     transcriptPath: context.transcriptPath,
     lineCount: transcript.lineCount,
+  });
+
+  const extracted = await extractContinuityHandoffFromTranscript({
+    transcriptPath: context.transcriptPath,
+    sessionId: context.sessionId,
+  });
+  const handoffProvenance = {
+    transcriptPath: context.transcriptPath,
+  };
+
+  await runtime.engine.createHandoff({
+    conversationId: binding.conversationId,
+    goal: extracted.goal,
+    completed: extracted.completed,
+    nextSteps: extracted.nextSteps.map((step) => ({
+      title: step,
+      content: step,
+      provenance: handoffProvenance,
+    })),
+    decisions: extracted.decisions,
+    constraints: extracted.constraints,
+    openQuestions: extracted.openQuestions,
+    verification: extracted.verification,
+    risks: extracted.risks,
+    changedFiles: extracted.changedFiles,
+    provenance: handoffProvenance,
+    idempotencyKey: `${createStopIdempotencyKey(context)}:handoff`,
   });
 
   await runtime.engine.runCompaction({

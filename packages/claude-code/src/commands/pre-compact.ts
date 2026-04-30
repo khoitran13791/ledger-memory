@@ -23,22 +23,30 @@ const createPreCompactIdempotencyKey = (
     )
     .digest('hex');
 
-const budgetCharsToTokens = (budgetChars: number): number => Math.max(128, Math.ceil(budgetChars / 4));
+const budgetCharsToTokens = (budgetChars: number): number =>
+  Math.max(128, Math.ceil(budgetChars / 4));
 
 export const runPreCompactCommand = async (options: ClaudeCommandOptions = {}): Promise<void> => {
   const runtime = await buildCommandRuntime(options);
   const context = runtime.expectHookContext('PreCompact') as PreCompactHookContext;
   const binding = await runtime.resolveBinding(context);
-  const checkpoint = await runtime.transcriptCheckpointStore.get(context.sessionId, context.transcriptPath);
+  const checkpoint = await runtime.transcriptCheckpointStore.get(
+    context.sessionId,
+    context.transcriptPath,
+  );
   const parseOptions = {
     ...(checkpoint?.lineCount === undefined ? {} : { startLine: checkpoint.lineCount }),
     onWarning: runtime.warn,
   };
-  const transcript = await parseTranscriptFile(context.transcriptPath, {
-    source: 'claude-code',
-    hook: context.hookName,
-    trigger: context.trigger,
-  }, parseOptions);
+  const transcript = await parseTranscriptFile(
+    context.transcriptPath,
+    {
+      source: 'claude-code',
+      hook: context.hookName,
+      trigger: context.trigger,
+    },
+    parseOptions,
+  );
 
   if (transcript.events.length > 0) {
     await runtime.engine.append({
@@ -60,10 +68,12 @@ export const runPreCompactCommand = async (options: ClaudeCommandOptions = {}): 
     targetTokens: createTokenCount(budgetCharsToTokens(runtime.config.injectedContextBudgetChars)),
   });
 
-  const summary = await runtime.engine.materializeContext({
+  const recall = await runtime.engine.recallForTask({
     conversationId: binding.conversationId,
-    budgetTokens: budgetCharsToTokens(runtime.config.injectedContextBudgetChars),
-    overheadTokens: 0,
+    task: 'Continue after Claude Code compaction',
+    budgetTokens: runtime.config.continuityRecallBudgetTokens,
+    includeHandoff: true,
+    includeEvidence: true,
   });
 
   runtime.writeJson({
@@ -72,7 +82,7 @@ export const runPreCompactCommand = async (options: ClaudeCommandOptions = {}): 
       additionalContext: [
         'LedgerMind archived the full Claude Code transcript before compaction.',
         'Use the LedgerMind MCP tools to recover detailed history when needed.',
-        `Key context summary:\n${summary.systemPreamble}`,
+        recall.contextBlock,
       ].join('\n'),
     },
   });

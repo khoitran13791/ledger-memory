@@ -50,7 +50,12 @@ import type {
   LocomoRuntimeProvenance,
   LocomoSummarizerType,
 } from './types.js';
-import { buildContextLines, extractTurns, hasArtifactLikeContent, mapSpeakersToRoles } from './conversation.js';
+import {
+  buildContextLines,
+  extractTurns,
+  hasArtifactLikeContent,
+  mapSpeakersToRoles,
+} from './conversation.js';
 
 interface RuntimeDeps {
   readonly unitOfWork: UnitOfWorkPort;
@@ -74,9 +79,12 @@ const deterministicHashPort: HashPort = {
   },
 };
 
-const sharedTokenizer = new ValidatingTokenizerAdapter(new TiktokenTokenizerAdapter({ model: 'gpt-4o-mini' }), {
-  tokenizerName: 'TiktokenTokenizerAdapter(gpt-4o-mini)',
-});
+const sharedTokenizer = new ValidatingTokenizerAdapter(
+  new TiktokenTokenizerAdapter({ model: 'gpt-4o-mini' }),
+  {
+    tokenizerName: 'TiktokenTokenizerAdapter(gpt-4o-mini)',
+  },
+);
 
 const DETERMINISTIC_SUMMARIZER_TYPE: LocomoSummarizerType = 'locomo_deterministic_head_tail_v1';
 const LLM_STRUCTURED_SUMMARIZER_TYPE: LocomoSummarizerType = 'locomo_llm_structured_v1';
@@ -184,13 +192,18 @@ const toCarryForwardSummaryFactLine = (line: string): string | undefined => {
     speaker,
     fact,
     sharedMatch?.[1] === undefined ? undefined : `[shared ${sharedMatch[1].trim()}]`,
-    sharedCaptionMatch?.[1] === undefined ? undefined : `[shared_caption ${sharedCaptionMatch[1].trim()}]`,
+    sharedCaptionMatch?.[1] === undefined
+      ? undefined
+      : `[shared_caption ${sharedCaptionMatch[1].trim()}]`,
   ].filter((part): part is string => part !== undefined && part.length > 0);
 
   return parts.join(' | ');
 };
 
-const toDeterministicSummaryLine = (message: { readonly role: string; readonly content: string }): string => {
+const toDeterministicSummaryLine = (message: {
+  readonly role: string;
+  readonly content: string;
+}): string => {
   const dateMatch = message.content.match(/DATE:\s*([^|]+)/);
   const speakerMatch = message.content.match(/\|\s*ID:[^|]*\|\s*([^:]+):/);
   const sharedMatch = message.content.match(/\[shared\s+([^\]]+)\]/);
@@ -207,7 +220,9 @@ const toDeterministicSummaryLine = (message: { readonly role: string; readonly c
     speakerMatch?.[1]?.trim(),
     firstClause,
     sharedMatch?.[1] === undefined ? undefined : `shared:${sharedMatch[1].trim()}`,
-    sharedCaptionMatch?.[1] === undefined ? undefined : `shared_caption:${sharedCaptionMatch[1].trim()}`,
+    sharedCaptionMatch?.[1] === undefined
+      ? undefined
+      : `shared_caption:${sharedCaptionMatch[1].trim()}`,
   ].filter((part): part is string => part !== undefined && part.length > 0);
 
   return parts.join(' | ');
@@ -279,7 +294,9 @@ const createDeterministicHeadTailSummarizer = (input: {
       input.traceCollector.record({
         summarizerType: DETERMINISTIC_SUMMARIZER_TYPE,
         mode: summarizationInput.mode,
-        ...(summarizationInput.targetTokens === undefined ? {} : { targetTokens: summarizationInput.targetTokens }),
+        ...(summarizationInput.targetTokens === undefined
+          ? {}
+          : { targetTokens: summarizationInput.targetTokens }),
         messageCount: summarizationInput.messages.length,
         outputContent: content,
         outputTokenCount: tokenCount.value,
@@ -404,7 +421,11 @@ const truncateSummaryField = (value: string, maxLength: number): string => {
   return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 };
 
-const toNormalizedSummaryList = (value: unknown, maxItems: number, maxLength: number): readonly string[] => {
+const toNormalizedSummaryList = (
+  value: unknown,
+  maxItems: number,
+  maxLength: number,
+): readonly string[] => {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -442,7 +463,10 @@ const toNormalizedSummaryFact = (value: unknown): StructuredSummaryFact | undefi
   };
 };
 
-const toNormalizedSummaryFacts = (value: unknown, maxItems: number): readonly StructuredSummaryFact[] => {
+const toNormalizedSummaryFacts = (
+  value: unknown,
+  maxItems: number,
+): readonly StructuredSummaryFact[] => {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -532,8 +556,9 @@ const renderStructuredSummaryContent = (input: {
       ? ['message_facts: -']
       : [
           'message_facts:',
-          ...input.payload.messageFacts.map((fact, index) =>
-            `- #${index + 1} | role:${fact.role} | date:${fact.date} | speaker:${fact.speaker} | fact:${fact.fact} | anchor:${fact.anchor}`,
+          ...input.payload.messageFacts.map(
+            (fact, index) =>
+              `- #${index + 1} | role:${fact.role} | date:${fact.date} | speaker:${fact.speaker} | fact:${fact.fact} | anchor:${fact.anchor}`,
           ),
         ];
 
@@ -706,7 +731,9 @@ const createLlmStructuredSummarizer = (input: {
       input.traceCollector.record({
         summarizerType: LLM_STRUCTURED_SUMMARIZER_TYPE,
         mode: summarizationInput.mode,
-        ...(summarizationInput.targetTokens === undefined ? {} : { targetTokens: summarizationInput.targetTokens }),
+        ...(summarizationInput.targetTokens === undefined
+          ? {}
+          : { targetTokens: summarizationInput.targetTokens }),
         messageCount: summarizationInput.messages.length,
         outputContent: content,
         outputTokenCount: tokenCount.value,
@@ -766,7 +793,6 @@ const createEngine = (input: {
   readonly deps: RuntimeDeps;
   readonly summarizer: SummarizerPort;
 }): MemoryEngine => {
-
   const { deps, summarizer } = input;
   const idService = createIdService(deterministicHashPort);
   const fixedOccurredAt = createTimestamp(new Date('2026-03-01T00:00:00.000Z'));
@@ -845,6 +871,21 @@ const createEngine = (input: {
     summaryDag: deps.summaryDag,
   });
 
+  const createUnsupportedRuntimeError = (
+    methodName:
+      | 'recordContinuity'
+      | 'createHandoff'
+      | 'getCurrentState'
+      | 'getNextSteps'
+      | 'recallForTask'
+      | 'markContinuityRecord'
+      | 'llmMap'
+      | 'agenticMap'
+      | 'getOperatorRun',
+  ): Error => {
+    return new Error(`${methodName} is not supported in the LoCoMo runtime yet.`);
+  };
+
   return {
     append: (input) => appendUseCase.execute(input),
     materializeContext: (input) => materializeUseCase.execute(input),
@@ -855,14 +896,32 @@ const createEngine = (input: {
     expand: (input) => expandUseCase.execute(input),
     storeArtifact: (input) => storeArtifactUseCase.execute(input),
     exploreArtifact: (input) => exploreArtifactUseCase.execute(input),
+    recordContinuity: async () => {
+      throw createUnsupportedRuntimeError('recordContinuity');
+    },
+    createHandoff: async () => {
+      throw createUnsupportedRuntimeError('createHandoff');
+    },
+    getCurrentState: async () => {
+      throw createUnsupportedRuntimeError('getCurrentState');
+    },
+    getNextSteps: async () => {
+      throw createUnsupportedRuntimeError('getNextSteps');
+    },
+    recallForTask: async () => {
+      throw createUnsupportedRuntimeError('recallForTask');
+    },
+    markContinuityRecord: async () => {
+      throw createUnsupportedRuntimeError('markContinuityRecord');
+    },
     llmMap: async () => {
-      throw new Error('llmMap is not supported in the LoCoMo runtime yet.');
+      throw createUnsupportedRuntimeError('llmMap');
     },
     agenticMap: async () => {
-      throw new Error('agenticMap is not supported in the LoCoMo runtime yet.');
+      throw createUnsupportedRuntimeError('agenticMap');
     },
     getOperatorRun: async () => {
-      throw new Error('getOperatorRun is not supported in the LoCoMo runtime yet.');
+      throw createUnsupportedRuntimeError('getOperatorRun');
     },
   };
 };
@@ -870,7 +929,11 @@ const createEngine = (input: {
 export interface LedgermindRuntime {
   readonly conversationId: ConversationId;
   readonly engine: MemoryEngine;
-  readonly contextLines: readonly { readonly id: string; readonly text: string; readonly tokenEstimate: number }[];
+  readonly contextLines: readonly {
+    readonly id: string;
+    readonly text: string;
+    readonly tokenEstimate: number;
+  }[];
   readonly provenance: LocomoRuntimeProvenance;
   flushSummarizationTrace(): readonly LedgermindSummarizationTraceEntry[];
   destroy(): Promise<void>;
@@ -983,7 +1046,9 @@ const createInMemoryRuntime = async (input: {
         content,
         tokenCount: sharedTokenizer.countTokens(content),
         occurredAt: fixedOccurredAt,
-        ...(input.artifactsEnabled && artifactId !== undefined ? { metadata: { artifactIds: [artifactId] } } : {}),
+        ...(input.artifactsEnabled && artifactId !== undefined
+          ? { metadata: { artifactIds: [artifactId] } }
+          : {}),
       };
     }),
   });

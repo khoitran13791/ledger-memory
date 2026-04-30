@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { describe, expect, it } from 'vitest';
 
 import { IdempotencyConflictError } from '@ledgermind/application';
@@ -32,7 +34,9 @@ const createEvent = (
     role: 'user',
     content,
     tokenCount: createTokenCount(Math.max(1, content.length)),
-    occurredAt: createTimestamp(new Date(`2026-01-01T00:00:${String(sequence).padStart(2, '0')}.000Z`)),
+    occurredAt: createTimestamp(
+      new Date(`2026-01-01T00:00:${String(sequence).padStart(2, '0')}.000Z`),
+    ),
     metadata,
   });
 };
@@ -149,6 +153,70 @@ class QueryCountingExecutor implements PgPoolClientLike {
 }
 
 describe('PgLedgerStore', () => {
+  it('creates continuity metadata indexes from the PostgreSQL migration', async () => {
+    const harness = await createPostgresTestHarness();
+
+    try {
+      const migrationSql = await readFile(
+        new URL(
+          '../../sql/postgres/migrations/0006_continuity_metadata_indexes.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      );
+      const [upSqlRaw] = migrationSql.split('-- Down Migration');
+      const upSql = upSqlRaw?.trim();
+
+      if (!upSql) {
+        throw new Error('Continuity metadata index migration is missing up migration SQL.');
+      }
+
+      await harness.withClient(async (client) => {
+        await client.query(upSql);
+      });
+
+      const indexes = await harness.withClient(async (client) => {
+        const result = await client.query<{
+          readonly indexname: string;
+          readonly indexdef: string;
+        }>(
+          `
+            SELECT indexname, indexdef
+            FROM pg_indexes
+            WHERE schemaname = current_schema()
+              AND indexname = ANY($1::text[])
+            ORDER BY indexname ASC
+          `,
+          [
+            [
+              'idx_ledger_events_continuity_kind',
+              'idx_ledger_events_continuity_record_id',
+              'idx_ledger_events_metadata_gin',
+            ],
+          ],
+        );
+
+        return result.rows;
+      });
+
+      const byName = new Map(indexes.map((row) => [row.indexname, row.indexdef]));
+
+      expect(byName.get('idx_ledger_events_continuity_kind')).toContain(
+        "metadata ->> 'continuityKind'",
+      );
+      expect(byName.get('idx_ledger_events_continuity_kind')).toContain("metadata ->> 'kind'");
+      expect(byName.get('idx_ledger_events_continuity_kind')).toContain('continuity_record');
+      expect(byName.get('idx_ledger_events_continuity_record_id')).toContain(
+        "metadata ->> 'recordId'",
+      );
+      expect(byName.get('idx_ledger_events_continuity_record_id')).toContain('continuity_record');
+      expect(byName.get('idx_ledger_events_metadata_gin')).toContain('USING gin');
+      expect(byName.get('idx_ledger_events_metadata_gin')).toContain('metadata');
+    } finally {
+      await harness.destroy();
+    }
+  });
+
   it('batches sequential appends into a single insert query when validation allows it', async () => {
     const executor = new QueryCountingExecutor();
     const ledger = new PgLedgerStore(executor);
@@ -464,13 +532,17 @@ describe('PgLedgerStore', () => {
             const ledgerB = new PgLedgerStore(createExecutorForClient(clientB));
 
             const appendFromA = async () => {
-              await ledgerA.appendEvents(conversationId, [createEvent(conversationId, 1, 'concurrent alpha')]);
+              await ledgerA.appendEvents(conversationId, [
+                createEvent(conversationId, 1, 'concurrent alpha'),
+              ]);
               await clientA.query('COMMIT');
               committedA = true;
             };
 
             const appendFromB = async () => {
-              await ledgerB.appendEvents(conversationId, [createEvent(conversationId, 2, 'concurrent beta')]);
+              await ledgerB.appendEvents(conversationId, [
+                createEvent(conversationId, 2, 'concurrent beta'),
+              ]);
               await clientB.query('COMMIT');
               committedB = true;
             };
@@ -517,7 +589,10 @@ describe('PgLedgerStore', () => {
       );
       expect(scopedSearchMatches.map((event) => event.id)).toEqual(fixture.scopedEventIds);
 
-      const unscopedSearchMatches = await harness.ledger.searchEvents(fixture.conversationId, 'alpha');
+      const unscopedSearchMatches = await harness.ledger.searchEvents(
+        fixture.conversationId,
+        'alpha',
+      );
       expect(unscopedSearchMatches.map((event) => event.id)).toEqual(fixture.allEventIds);
     } finally {
       await harness.destroy();
@@ -530,21 +605,31 @@ describe('PgLedgerStore', () => {
     try {
       const fixture = await setupScopedSearchFixture(harness);
 
-      const scopedRegexPage = await harness.ledger.regexSearchEvents(fixture.conversationId, 'alpha', {
-        scope: fixture.scopedSummaryId,
-        offset: 0,
-        limit: 25,
-      });
+      const scopedRegexPage = await harness.ledger.regexSearchEvents(
+        fixture.conversationId,
+        'alpha',
+        {
+          scope: fixture.scopedSummaryId,
+          offset: 0,
+          limit: 25,
+        },
+      );
       expect(scopedRegexPage.totalMatchCount).toBe(2);
       expect(scopedRegexPage.matches.map((match) => match.eventId)).toEqual(fixture.scopedEventIds);
-      expect(scopedRegexPage.matches.every((match) => match.coveringSummaryId === fixture.scopedSummaryId)).toBe(
-        true,
-      );
+      expect(
+        scopedRegexPage.matches.every(
+          (match) => match.coveringSummaryId === fixture.scopedSummaryId,
+        ),
+      ).toBe(true);
 
-      const unscopedRegexPage = await harness.ledger.regexSearchEvents(fixture.conversationId, 'alpha', {
-        offset: 0,
-        limit: 25,
-      });
+      const unscopedRegexPage = await harness.ledger.regexSearchEvents(
+        fixture.conversationId,
+        'alpha',
+        {
+          offset: 0,
+          limit: 25,
+        },
+      );
       expect(unscopedRegexPage.totalMatchCount).toBe(4);
       expect(unscopedRegexPage.matches.map((match) => match.eventId)).toEqual(fixture.allEventIds);
     } finally {
@@ -721,9 +806,9 @@ describe('PgLedgerStore', () => {
 
       await ledger.appendEvents(conversationId, [first]);
 
-      await expect(ledger.appendEvents(conversationId, [conflictingPayload])).rejects.toBeInstanceOf(
-        IdempotencyConflictError,
-      );
+      await expect(
+        ledger.appendEvents(conversationId, [conflictingPayload]),
+      ).rejects.toBeInstanceOf(IdempotencyConflictError);
 
       const allEvents = await ledger.getEvents(conversationId);
       expect(allEvents).toHaveLength(1);

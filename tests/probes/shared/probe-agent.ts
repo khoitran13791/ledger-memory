@@ -56,7 +56,10 @@ const inferNextPlanStep = (planLine: string, completionLine: string): string | n
   return `Step ${next.index}: ${next.content}`;
 };
 
-const findConstraintDecision = (messages: readonly ModelMessage[], question: string): string | null => {
+const findConstraintDecision = (
+  messages: readonly ModelMessage[],
+  question: string,
+): string | null => {
   const normalizedQuestion = normalizeText(question);
   const corpus = normalizeText(joinMessages(messages));
 
@@ -73,12 +76,75 @@ const findConstraintDecision = (messages: readonly ModelMessage[], question: str
   return null;
 };
 
-const findExplicitValueAnswer = (messages: readonly ModelMessage[], question: string): string | null => {
+const findContinuityDecision = (
+  messages: readonly ModelMessage[],
+  question: string,
+): string | null => {
+  const normalizedQuestion = normalizeText(question);
+  const corpus = normalizeText(joinMessages(messages));
+
+  if (
+    normalizedQuestion.includes('sqlite') &&
+    normalizedQuestion.includes('durable local memory')
+  ) {
+    if (
+      corpus.includes('defer sqlite durability claim') ||
+      corpus.includes('sqlite is not ready yet')
+    ) {
+      return 'No, SQLite durable local memory is not ready; warn that in-memory storage is ephemeral.';
+    }
+  }
+
+  return null;
+};
+
+const findHandoffNextStep = (messages: readonly ModelMessage[]): string | null => {
+  const corpus = joinMessages(messages);
+  const match = corpus.match(/- (Implement Task 15[^\n]+)/i);
+  return match?.[1]?.trim() ?? null;
+};
+
+const findVerificationEvidence = (
+  messages: readonly ModelMessage[],
+  question: string,
+): string | null => {
+  const normalizedQuestion = normalizeText(question);
+  const corpus = joinMessages(messages);
+  const normalizedCorpus = normalizeText(corpus);
+
+  if (
+    normalizedQuestion.includes('failed verification') ||
+    normalizedQuestion.includes('blocking continuation')
+  ) {
+    if (normalizedCorpus.includes('pnpm test -- tests/probes failed')) {
+      return 'Yes, pnpm test -- tests/probes failed and blocks continuation.';
+    }
+  }
+
+  if (normalizedQuestion.includes('tool evidence hook')) {
+    const command = 'pnpm --filter @ledgermind/claude-code test -- post-tool-use';
+    const file = 'packages/claude-code/src/commands/post-tool-use.ts';
+    if (corpus.includes(command) && corpus.includes(file)) {
+      return `${command} in ${file}`;
+    }
+  }
+
+  return null;
+};
+
+const findExplicitValueAnswer = (
+  messages: readonly ModelMessage[],
+  question: string,
+): string | null => {
   const normalizedQuestion = normalizeText(question);
   const corpus = normalizeText(joinMessages(messages));
 
   if (normalizedQuestion.includes('redis connection timeout')) {
-    if (corpus.includes('timeout: 30000ms') || corpus.includes('30000ms') || corpus.includes('30 seconds')) {
+    if (
+      corpus.includes('timeout: 30000ms') ||
+      corpus.includes('30000ms') ||
+      corpus.includes('30 seconds')
+    ) {
       return '30 seconds (30000ms)';
     }
   }
@@ -168,6 +234,18 @@ export const answerProbeQuestion = (input: ProbeAgentInput): string => {
     }
 
     return fallbackAnswer(fixture.question);
+  }
+
+  if (fixture.type === 'handoff') {
+    return findHandoffNextStep(messages) ?? fallbackAnswer(fixture.question);
+  }
+
+  if (fixture.type === 'staleness') {
+    return findContinuityDecision(messages, fixture.question) ?? fallbackAnswer(fixture.question);
+  }
+
+  if (fixture.type === 'verification') {
+    return findVerificationEvidence(messages, fixture.question) ?? fallbackAnswer(fixture.question);
   }
 
   if (fixture.type === 'tool_usage') {

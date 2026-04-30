@@ -73,9 +73,7 @@ const deterministicHashPort: HashPort = {
 const sharedTokenizer = new SimpleTokenizer();
 const benchmarkOccurredAt = createTimestamp(new Date('2026-03-01T00:00:00.000Z'));
 
-const createEngine = (input: {
-  readonly deps: RuntimeDeps;
-}): MemoryEngine => {
+const createEngine = (input: { readonly deps: RuntimeDeps }): MemoryEngine => {
   const { deps } = input;
   const idService = createIdService(deterministicHashPort);
   const clock = {
@@ -153,7 +151,18 @@ const createEngine = (input: {
     summaryDag: deps.summaryDag,
   });
 
-  const createUnsupportedOperatorError = (operatorName: 'llmMap' | 'agenticMap' | 'getOperatorRun'): Error => {
+  const createUnsupportedOperatorError = (
+    operatorName:
+      | 'recordContinuity'
+      | 'createHandoff'
+      | 'getCurrentState'
+      | 'getNextSteps'
+      | 'recallForTask'
+      | 'markContinuityRecord'
+      | 'llmMap'
+      | 'agenticMap'
+      | 'getOperatorRun',
+  ): Error => {
     return new Error(`LongMemEval benchmark runtime does not support ${operatorName}().`);
   };
 
@@ -167,6 +176,24 @@ const createEngine = (input: {
     expand: (expandInput) => expandUseCase.execute(expandInput),
     storeArtifact: (storeInput) => storeArtifactUseCase.execute(storeInput),
     exploreArtifact: (exploreInput) => exploreArtifactUseCase.execute(exploreInput),
+    recordContinuity: async () => {
+      throw createUnsupportedOperatorError('recordContinuity');
+    },
+    createHandoff: async () => {
+      throw createUnsupportedOperatorError('createHandoff');
+    },
+    getCurrentState: async () => {
+      throw createUnsupportedOperatorError('getCurrentState');
+    },
+    getNextSteps: async () => {
+      throw createUnsupportedOperatorError('getNextSteps');
+    },
+    recallForTask: async () => {
+      throw createUnsupportedOperatorError('recallForTask');
+    },
+    markContinuityRecord: async () => {
+      throw createUnsupportedOperatorError('markContinuityRecord');
+    },
     llmMap: async () => {
       throw createUnsupportedOperatorError('llmMap');
     },
@@ -293,10 +320,16 @@ export const createLedgermindRuntime = async (input: {
     }
   >();
   for (const event of appendOutput.appendedEvents) {
-    const sourceId = typeof event.metadata?.['sourceId'] === 'string' ? event.metadata['sourceId'] : event.id;
-    const sessionId = typeof event.metadata?.['sessionId'] === 'string' ? event.metadata['sessionId'] : 'unknown-session';
+    const sourceId =
+      typeof event.metadata?.['sourceId'] === 'string' ? event.metadata['sourceId'] : event.id;
+    const sessionId =
+      typeof event.metadata?.['sessionId'] === 'string'
+        ? event.metadata['sessionId']
+        : 'unknown-session';
     const sessionDate =
-      typeof event.metadata?.['sessionDate'] === 'string' ? event.metadata['sessionDate'] : input.example.metadata.questionDate;
+      typeof event.metadata?.['sessionDate'] === 'string'
+        ? event.metadata['sessionDate']
+        : input.example.metadata.questionDate;
     const role = typeof event.metadata?.['role'] === 'string' ? event.metadata['role'] : event.role;
     eventLookup.set(event.id, {
       eventId: event.id,
