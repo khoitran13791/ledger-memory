@@ -6,8 +6,7 @@ The continuity layer turns fragile chat history into durable operational state. 
 
 ## Current Limitations
 
-- PostgreSQL is the durable backend today. In-memory storage is useful for tests and demos but does not survive process exit.
-- SQLite local durability is intentionally deferred until an embedded adapter implements the persistence ports and passes conformance.
+- SQLite is the default local durable backend for coding-agent continuity. PostgreSQL remains the recommended backend for shared services, remote workers, and multi-process deployments.
 - Stop-time transcript extraction is bounded and redacted, but it is still heuristic. Prefer explicit `memory.createHandoff` records for important work.
 - `memory.expand` is privileged because it can reveal compressed source context. Prefer `memory.recallForTask`, `memory.currentState`, and `memory.describe` first.
 
@@ -85,12 +84,10 @@ When decisions change, use `memory.markStale` or record a new decision with `sup
 
 ## Storage Recommendations
 
-Use PostgreSQL for durable memory:
+Use SQLite for local durable memory:
 
 ```bash
-export LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind
-export DATABASE_URL=$LEDGERMIND_DB_URL
-pnpm --filter @ledgermind/infrastructure migrate:up
+export LEDGERMIND_SQLITE_PATH=.ledgermind/memory.sqlite
 ```
 
 Use a stable binding store per workspace:
@@ -99,7 +96,13 @@ Use a stable binding store per workspace:
 export LEDGERMIND_MCP_BINDING_STORE=.ledgermind/session-bindings.json
 ```
 
-Without `LEDGERMIND_DB_URL`, Claude hooks warn that continuity is in-memory and will not survive process exit.
+Use PostgreSQL for shared services, remote workers, and multi-process deployments:
+
+```bash
+export LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind
+export DATABASE_URL=$LEDGERMIND_DB_URL
+pnpm --filter @ledgermind/infrastructure migrate:up
+```
 
 ## MCP, CLI, and Claude Flows
 

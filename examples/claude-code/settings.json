@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "LEDGERMIND_CLAUDE_ENABLE_CONTINUITY_INJECTION=true pnpm --dir ../.. --filter @ledgermind/claude-code exec tsx src/commands/session-start.ts"
+            "command": "LEDGERMIND_SQLITE_PATH=../../.ledgermind/memory.sqlite LEDGERMIND_MCP_BINDING_STORE=../../.ledgermind/session-bindings.json LEDGERMIND_CLAUDE_ENABLE_CONTINUITY_INJECTION=true pnpm --dir ../.. --filter @ledgermind/claude-code exec tsx src/commands/session-start.ts"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "LEDGERMIND_CLAUDE_ENABLE_CONTINUITY_INJECTION=true pnpm --dir ../.. --filter @ledgermind/claude-code exec tsx src/commands/user-prompt-submit.ts"
+            "command": "LEDGERMIND_SQLITE_PATH=../../.ledgermind/memory.sqlite LEDGERMIND_MCP_BINDING_STORE=../../.ledgermind/session-bindings.json LEDGERMIND_CLAUDE_ENABLE_CONTINUITY_INJECTION=true pnpm --dir ../.. --filter @ledgermind/claude-code exec tsx src/commands/user-prompt-submit.ts"
           }
         ]
       }
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "LEDGERMIND_CLAUDE_ENABLE_CONTINUITY_INJECTION=true pnpm --dir ../.. --filter @ledgermind/claude-code exec tsx src/commands/pre-compact.ts"
+            "command": "LEDGERMIND_SQLITE_PATH=../../.ledgermind/memory.sqlite LEDGERMIND_MCP_BINDING_STORE=../../.ledgermind/session-bindings.json LEDGERMIND_CLAUDE_ENABLE_CONTINUITY_INJECTION=true pnpm --dir ../.. --filter @ledgermind/claude-code exec tsx src/commands/pre-compact.ts"
           }
         ]
       }
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pnpm --dir ../.. --filter @ledgermind/claude-code exec tsx src/commands/stop.ts"
+            "command": "LEDGERMIND_SQLITE_PATH=../../.ledgermind/memory.sqlite LEDGERMIND_MCP_BINDING_STORE=../../.ledgermind/session-bindings.json pnpm --dir ../.. --filter @ledgermind/claude-code exec tsx src/commands/stop.ts"
           }
         ]
       }
@@ -46,7 +46,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "LEDGERMIND_CLAUDE_ENABLE_TOOL_EVIDENCE=true LEDGERMIND_CLAUDE_ENABLE_ARTIFACT_INDEXING=true pnpm --dir ../.. --filter @ledgermind/claude-code exec tsx src/commands/post-tool-use.ts",
+            "command": "LEDGERMIND_SQLITE_PATH=../../.ledgermind/memory.sqlite LEDGERMIND_MCP_BINDING_STORE=../../.ledgermind/session-bindings.json LEDGERMIND_CLAUDE_ENABLE_TOOL_EVIDENCE=true LEDGERMIND_CLAUDE_ENABLE_ARTIFACT_INDEXING=true pnpm --dir ../.. --filter @ledgermind/claude-code exec tsx src/commands/post-tool-use.ts",
             "async": true
           }
         ]

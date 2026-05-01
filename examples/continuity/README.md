@@ -4,13 +4,11 @@ This is a copy-friendly local harness for using LedgerMind as a coding-agent con
 
 ## 1. Durable Storage
 
-LedgerMind durability currently uses PostgreSQL.
+SQLite is the default local durable backend for coding-agent continuity. PostgreSQL remains the recommended backend for shared services, remote workers, and multi-process deployments.
 
 ```bash
-export LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind
-export DATABASE_URL=$LEDGERMIND_DB_URL
+export LEDGERMIND_SQLITE_PATH=.ledgermind/memory.sqlite
 export LEDGERMIND_MCP_BINDING_STORE=.ledgermind/session-bindings.json
-pnpm --filter @ledgermind/infrastructure migrate:up
 ```
 
 ## 2. MCP
@@ -38,9 +36,9 @@ Mark stale records when decisions change.
 Use the cockpit CLI with the same binding store and database:
 
 ```bash
-LEDGERMIND_DB_URL=$LEDGERMIND_DB_URL pnpm cockpit:dev -- state
-LEDGERMIND_DB_URL=$LEDGERMIND_DB_URL pnpm cockpit:dev -- next
-LEDGERMIND_DB_URL=$LEDGERMIND_DB_URL pnpm cockpit:dev -- task "resume current work"
-LEDGERMIND_DB_URL=$LEDGERMIND_DB_URL pnpm cockpit:dev -- decision "Use Postgres durability for alpha. SQLite is deferred until conformance passes."
-LEDGERMIND_DB_URL=$LEDGERMIND_DB_URL pnpm cockpit:dev -- verify "pnpm typecheck passed"
+pnpm cockpit:dev -- state --storage sqlite --sqlite .ledgermind/memory.sqlite
+pnpm cockpit:dev -- next --storage sqlite --sqlite .ledgermind/memory.sqlite
+pnpm cockpit:dev -- task "resume current work" --storage sqlite --sqlite .ledgermind/memory.sqlite
+pnpm cockpit:dev -- decision "Use SQLite local durability." --storage sqlite --sqlite .ledgermind/memory.sqlite
+pnpm cockpit:dev -- verify "pnpm typecheck passed" --storage sqlite --sqlite .ledgermind/memory.sqlite
 ```
