@@ -132,4 +132,63 @@ export const SQLITE_SCHEMA_SQL = [
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS idx_sqlite_artifacts_conv
     ON artifacts(conversation_id)`,
+  `CREATE TABLE IF NOT EXISTS operator_runs (
+    run_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    operator_kind TEXT NOT NULL CHECK (operator_kind IN ('llmMap', 'agenticMap')),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'completed_with_failures', 'failed')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    prompt TEXT,
+    task_prompt TEXT,
+    output_schema_json TEXT NOT NULL,
+    concurrency_limit INTEGER NOT NULL CHECK (concurrency_limit > 0),
+    retry_policy_json TEXT NOT NULL,
+    delegated_scope_json TEXT,
+    kept_work_json TEXT,
+    idempotency_key TEXT,
+    normalized_input_digest TEXT,
+    input_artifact_id TEXT,
+    output_artifact_id TEXT,
+    finalization_stage TEXT NOT NULL CHECK (finalization_stage IN ('not_started', 'artifact_written', 'handle_appended', 'completed')),
+    needs_finalization_retry INTEGER NOT NULL DEFAULT 0 CHECK (needs_finalization_retry IN (0, 1)),
+    parent_handle_appended_at TEXT,
+    task_count INTEGER NOT NULL CHECK (task_count >= 0),
+    succeeded_task_count INTEGER NOT NULL DEFAULT 0 CHECK (succeeded_task_count >= 0),
+    failed_task_count INTEGER NOT NULL DEFAULT 0 CHECK (failed_task_count >= 0),
+    retryable_failure_task_count INTEGER NOT NULL DEFAULT 0 CHECK (retryable_failure_task_count >= 0),
+    running_task_count INTEGER NOT NULL DEFAULT 0 CHECK (running_task_count >= 0),
+    pending_task_count INTEGER NOT NULL DEFAULT 0 CHECK (pending_task_count >= 0),
+    terminal_failure_summary_json TEXT,
+    CHECK ((prompt IS NOT NULL) <> (task_prompt IS NOT NULL)),
+    CHECK (succeeded_task_count + failed_task_count + retryable_failure_task_count + running_task_count + pending_task_count = task_count)
+  ) STRICT`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_sqlite_operator_runs_conversation_idempotency_key_unique
+    ON operator_runs(conversation_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL`,
+  `CREATE TABLE IF NOT EXISTS operator_tasks (
+    task_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES operator_runs(run_id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    item_index INTEGER NOT NULL CHECK (item_index >= 0),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'retryable_failure', 'succeeded', 'failed')),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    next_retry_at TEXT,
+    child_conversation_id TEXT,
+    bootstrap_state TEXT NOT NULL CHECK (bootstrap_state IN ('bootstrap_not_started', 'bootstrap_in_progress', 'bootstrap_completed')),
+    result_json TEXT,
+    result_artifact_id TEXT,
+    last_error_json TEXT,
+    last_failure_at TEXT,
+    CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL)),
+    UNIQUE (run_id, item_index)
+  ) STRICT`,
+  `CREATE INDEX IF NOT EXISTS idx_sqlite_operator_tasks_claimable
+    ON operator_tasks(status, next_retry_at, lease_expires_at, run_id, item_index)`,
+  `CREATE INDEX IF NOT EXISTS idx_sqlite_operator_runs_finalization_retry
+    ON operator_runs(needs_finalization_retry, status, updated_at)
+    WHERE needs_finalization_retry = 1`,
 ] as const;
