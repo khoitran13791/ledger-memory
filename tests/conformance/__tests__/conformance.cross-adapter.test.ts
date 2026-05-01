@@ -20,6 +20,7 @@ import {
 } from '@ledgermind/adapters';
 
 import { createPostgresTestHarness } from '../../../packages/infrastructure/src/postgres/__tests__/postgres-test-harness';
+import { createSqliteAdapter } from '../sqlite-adapter';
 
 const createConversationCfg = (modelName: string) => {
   return createConversationConfig({
@@ -48,7 +49,9 @@ const createInMemoryAdapter = (): ConformanceAdapterDefinition => {
       const conversations = new InMemoryConversationStore(state);
       const operators = new InMemoryOperatorExecutionStore(state);
 
-      const conversation = await conversations.create(createConversationCfg('conformance-in-memory'));
+      const conversation = await conversations.create(
+        createConversationCfg('conformance-in-memory'),
+      );
 
       return {
         defaultConversationId: conversation.id,
@@ -62,7 +65,9 @@ const createInMemoryAdapter = (): ConformanceAdapterDefinition => {
         corruption: {
           canInjectOrphanSummaryMessageEdge: false,
           async injectOrphanSummaryMessageEdge() {
-            throw new InvariantViolationError('Orphan edge injection is not supported for in-memory adapter.');
+            throw new InvariantViolationError(
+              'Orphan edge injection is not supported for in-memory adapter.',
+            );
           },
         },
         destroy: async () => undefined,
@@ -83,7 +88,9 @@ const createPostgresAdapter = (): ConformanceAdapterDefinition => {
     createRuntime: async () => {
       const harness = await createPostgresTestHarness();
 
-      const createdConversation = await harness.conversations.create(createConversationCfg('conformance-postgres'));
+      const createdConversation = await harness.conversations.create(
+        createConversationCfg('conformance-postgres'),
+      );
 
       return {
         defaultConversationId: createdConversation.id,
@@ -127,7 +134,11 @@ const createPostgresAdapter = (): ConformanceAdapterDefinition => {
   };
 };
 
-const adapters: readonly ConformanceAdapterDefinition[] = [createInMemoryAdapter(), createPostgresAdapter()];
+const adapters: readonly ConformanceAdapterDefinition[] = [
+  createInMemoryAdapter(),
+  createPostgresAdapter(),
+  createSqliteAdapter(),
+];
 
 for (const adapter of adapters) {
   runConformance(adapter);
