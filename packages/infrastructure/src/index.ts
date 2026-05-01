@@ -39,5 +39,6 @@ export {
   SQLITE_SCHEMA_VERSION,
   SQLITE_TEXT_SEARCH_MODE,
   createSqliteUnitOfWork,
+  type SqliteDatabase,
   type OpenSqliteDatabaseOptions,
 } from './sqlite';

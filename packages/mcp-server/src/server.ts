@@ -1,6 +1,10 @@
 import type { MemoryEngine } from '@ledgermind/application';
 import { createCanonicalMemoryToolCatalog } from '@ledgermind/adapters';
-import { createInMemoryMemoryEngine, createPostgresMemoryEngine } from '@ledgermind/sdk';
+import {
+  createInMemoryMemoryEngine,
+  createPostgresMemoryEngine,
+  createSqliteMemoryEngine,
+} from '@ledgermind/sdk';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -43,24 +47,34 @@ export interface LedgermindMcpServerRuntime {
   readonly registry: readonly McpToolRegistration[];
   readonly sessionBindingStore: SessionBindingStore;
   readonly server: Server;
+  close(): Promise<void>;
 }
 
-const createEngineFromConfig = (config: McpServerConfig): MemoryEngine =>
-  config.storage.type === 'postgres'
-    ? createPostgresMemoryEngine({
-        connectionString: config.storage.connectionString,
-      })
-    : createInMemoryMemoryEngine();
+const createEngineFromConfig = (config: McpServerConfig): MemoryEngine => {
+  if (config.storage.type === 'postgres') {
+    return createPostgresMemoryEngine({
+      connectionString: config.storage.connectionString,
+    });
+  }
+
+  if (config.storage.type === 'sqlite') {
+    return createSqliteMemoryEngine({ path: config.storage.path });
+  }
+
+  return createInMemoryMemoryEngine();
+};
 
 export const createLedgermindMcpServer = ({
   config,
-  engine = createEngineFromConfig(config),
+  engine,
 }: CreateLedgermindMcpServerOptions): LedgermindMcpServerRuntime => {
+  const ownsEngine = engine === undefined;
+  const resolvedEngine = engine ?? createEngineFromConfig(config);
   const sessionBindingStore =
     config.bindingStorePath === undefined
       ? createInMemorySessionBindingStore()
       : createFileSessionBindingStore(config.bindingStorePath);
-  const catalog = createCanonicalMemoryToolCatalog(engine);
+  const catalog = createCanonicalMemoryToolCatalog(resolvedEngine);
   const catalogByName = new Map(catalog.map((definition) => [definition.name, definition]));
   const visibleCatalog = catalog.filter((definition) => canExposeMcpTool(definition, config));
   const registry = createMcpToolRegistry(visibleCatalog);
@@ -71,6 +85,20 @@ export const createLedgermindMcpServer = ({
       },
     },
   });
+  const closeServer = server.close.bind(server);
+  let closed = false;
+  const close = async (): Promise<void> => {
+    if (closed) {
+      return;
+    }
+
+    closed = true;
+    await closeServer();
+    if (ownsEngine) {
+      await resolvedEngine.close();
+    }
+  };
+  server.close = close;
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: registry.map((entry) => entry.tool),
@@ -141,10 +169,11 @@ export const createLedgermindMcpServer = ({
 
   return {
     config,
-    engine,
+    engine: resolvedEngine,
     registry,
     sessionBindingStore,
     server,
+    close,
   };
 };
 

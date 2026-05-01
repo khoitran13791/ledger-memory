@@ -42,85 +42,89 @@ const buildStopEventContent = (context: StopHookContext, budgetChars: number): s
 
 export const runStopCommand = async (options: ClaudeCommandOptions = {}): Promise<void> => {
   const runtime = await buildCommandRuntime(options);
-  const context = runtime.expectHookContext('Stop') as StopHookContext;
-  const binding = await runtime.resolveBinding(context);
-  const checkpoint = await runtime.transcriptCheckpointStore.get(
-    context.sessionId,
-    context.transcriptPath,
-  );
-  const parseOptions = {
-    ...(checkpoint?.lineCount === undefined ? {} : { startLine: checkpoint.lineCount }),
-    onWarning: runtime.warn,
-  };
-  const transcript = await parseTranscriptFile(
-    context.transcriptPath,
-    {
-      source: 'claude-code',
-      hook: context.hookName,
-    },
-    parseOptions,
-  );
-  const stopEventContent = buildStopEventContent(
-    context,
-    runtime.config.injectedContextBudgetChars,
-  );
-
-  await runtime.engine.append({
-    conversationId: binding.conversationId,
-    idempotencyKey: createStopIdempotencyKey(context),
-    events: [
-      ...transcript.events,
+  try {
+    const context = runtime.expectHookContext('Stop') as StopHookContext;
+    const binding = await runtime.resolveBinding(context);
+    const checkpoint = await runtime.transcriptCheckpointStore.get(
+      context.sessionId,
+      context.transcriptPath,
+    );
+    const parseOptions = {
+      ...(checkpoint?.lineCount === undefined ? {} : { startLine: checkpoint.lineCount }),
+      onWarning: runtime.warn,
+    };
+    const transcript = await parseTranscriptFile(
+      context.transcriptPath,
       {
-        role: 'system',
-        content: stopEventContent,
-        tokenCount: runtime.estimateTokenCount(stopEventContent),
-        metadata: {
-          source: 'claude-code',
-          hook: context.hookName,
-          transcriptPath: context.transcriptPath,
-          sessionId: context.sessionId,
-        },
+        source: 'claude-code',
+        hook: context.hookName,
       },
-    ],
-  });
+      parseOptions,
+    );
+    const stopEventContent = buildStopEventContent(
+      context,
+      runtime.config.injectedContextBudgetChars,
+    );
 
-  await runtime.transcriptCheckpointStore.save({
-    sessionId: context.sessionId,
-    transcriptPath: context.transcriptPath,
-    lineCount: transcript.lineCount,
-  });
+    await runtime.engine.append({
+      conversationId: binding.conversationId,
+      idempotencyKey: createStopIdempotencyKey(context),
+      events: [
+        ...transcript.events,
+        {
+          role: 'system',
+          content: stopEventContent,
+          tokenCount: runtime.estimateTokenCount(stopEventContent),
+          metadata: {
+            source: 'claude-code',
+            hook: context.hookName,
+            transcriptPath: context.transcriptPath,
+            sessionId: context.sessionId,
+          },
+        },
+      ],
+    });
 
-  const extracted = await extractContinuityHandoffFromTranscript({
-    transcriptPath: context.transcriptPath,
-    sessionId: context.sessionId,
-  });
-  const handoffProvenance = {
-    transcriptPath: context.transcriptPath,
-  };
+    await runtime.transcriptCheckpointStore.save({
+      sessionId: context.sessionId,
+      transcriptPath: context.transcriptPath,
+      lineCount: transcript.lineCount,
+    });
 
-  await runtime.engine.createHandoff({
-    conversationId: binding.conversationId,
-    goal: extracted.goal,
-    completed: extracted.completed,
-    nextSteps: extracted.nextSteps.map((step) => ({
-      title: step,
-      content: step,
+    const extracted = await extractContinuityHandoffFromTranscript({
+      transcriptPath: context.transcriptPath,
+      sessionId: context.sessionId,
+    });
+    const handoffProvenance = {
+      transcriptPath: context.transcriptPath,
+    };
+
+    await runtime.engine.createHandoff({
+      conversationId: binding.conversationId,
+      goal: extracted.goal,
+      completed: extracted.completed,
+      nextSteps: extracted.nextSteps.map((step) => ({
+        title: step,
+        content: step,
+        provenance: handoffProvenance,
+      })),
+      decisions: extracted.decisions,
+      constraints: extracted.constraints,
+      openQuestions: extracted.openQuestions,
+      verification: extracted.verification,
+      risks: extracted.risks,
+      changedFiles: extracted.changedFiles,
       provenance: handoffProvenance,
-    })),
-    decisions: extracted.decisions,
-    constraints: extracted.constraints,
-    openQuestions: extracted.openQuestions,
-    verification: extracted.verification,
-    risks: extracted.risks,
-    changedFiles: extracted.changedFiles,
-    provenance: handoffProvenance,
-    idempotencyKey: `${createStopIdempotencyKey(context)}:handoff`,
-  });
+      idempotencyKey: `${createStopIdempotencyKey(context)}:handoff`,
+    });
 
-  await runtime.engine.runCompaction({
-    conversationId: binding.conversationId,
-    trigger: 'soft',
-  });
+    await runtime.engine.runCompaction({
+      conversationId: binding.conversationId,
+      trigger: 'soft',
+    });
+  } finally {
+    await runtime.close();
+  }
 };
 
 if (isDirectExecution(import.meta.url)) {

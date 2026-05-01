@@ -60,14 +60,36 @@ describe('parseCockpitConfig', () => {
     });
   });
 
-  it('rejects unsupported storage', () => {
-    expect(() =>
+  it('parses sqlite storage from --storage and --sqlite relative to cwd', () => {
+    const cwd = '/tmp/ledger-workspace';
+
+    expect(
       parseCockpitConfig({
-        argv: ['--storage', 'sqlite'],
+        argv: ['state', '--storage', 'sqlite', '--sqlite', '.ledgermind/memory.sqlite'],
         env: {},
-        cwd: '/tmp/ledger-workspace',
+        cwd,
       }),
-    ).toThrow('Unsupported storage type "sqlite".');
+    ).toMatchObject({
+      storage: {
+        type: 'sqlite',
+        path: resolve(cwd, '.ledgermind/memory.sqlite'),
+      },
+    });
+  });
+
+  it('selects sqlite storage from --sqlite without requiring --storage', () => {
+    const cwd = '/tmp/ledger-workspace';
+
+    expect(
+      parseCockpitConfig({
+        argv: ['state', '--sqlite', '.ledgermind/memory.sqlite'],
+        env: {},
+        cwd,
+      }).storage,
+    ).toEqual({
+      type: 'sqlite',
+      path: resolve(cwd, '.ledgermind/memory.sqlite'),
+    });
   });
 
   it('requires a value for value options', () => {

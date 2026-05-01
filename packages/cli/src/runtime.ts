@@ -4,14 +4,24 @@ import {
   createTokenCount,
   type ConversationId,
 } from '@ledgermind/domain';
-import { asPgExecutor, createPgPool, PgConversationStore } from '@ledgermind/infrastructure';
+import {
+  asPgExecutor,
+  createPgPool,
+  openSqliteDatabaseSync,
+  PgConversationStore,
+  SqliteConversationStore,
+} from '@ledgermind/infrastructure';
 import {
   createFileSessionBindingStore,
   resolveSessionBinding,
   type SessionBindingRecord,
   type SessionBindingStore,
 } from '@ledgermind/mcp-server';
-import { createPostgresMemoryEngine, type MemoryEngine } from '@ledgermind/sdk';
+import {
+  createPostgresMemoryEngine,
+  createSqliteMemoryEngine,
+  type MemoryEngine,
+} from '@ledgermind/sdk';
 
 import type { CockpitConfig } from './config';
 
@@ -28,7 +38,9 @@ export interface CockpitRuntime {
 export interface ResolveCockpitBindingInput {
   readonly store: SessionBindingStore;
   readonly config: CockpitConfig;
-  createConversation(input: { readonly parentConversationId?: ConversationId }): Promise<ConversationId>;
+  createConversation(input: {
+    readonly parentConversationId?: ConversationId;
+  }): Promise<ConversationId>;
 }
 
 const createDefaultConversationConfig = () =>
@@ -56,28 +68,52 @@ export const resolveCockpitBinding = ({
   });
 
 export const createCockpitRuntime = (config: CockpitConfig): CockpitRuntime => {
-  if (config.storage.type !== 'postgres') {
+  if (config.storage.type === 'in-memory') {
     throw new Error(DURABLE_STORAGE_ERROR);
   }
 
-  const pool = createPgPool({ connectionString: config.storage.connectionString });
-  const executor = asPgExecutor(pool);
-  const conversations = new PgConversationStore(executor);
-  const engine = createPostgresMemoryEngine({
-    connectionString: config.storage.connectionString,
-    executor,
-  });
+  const persistence =
+    config.storage.type === 'postgres'
+      ? (() => {
+          const pool = createPgPool({ connectionString: config.storage.connectionString });
+          const executor = asPgExecutor(pool);
+          return {
+            conversations: new PgConversationStore(executor),
+            engine: createPostgresMemoryEngine({
+              connectionString: config.storage.connectionString,
+              executor,
+            }),
+            close: async () => {
+              await pool.end();
+            },
+          };
+        })()
+      : (() => {
+          const database = openSqliteDatabaseSync({ path: config.storage.path });
+          const engine = createSqliteMemoryEngine({
+            path: config.storage.path,
+            database,
+          });
+          return {
+            conversations: new SqliteConversationStore(database.db),
+            engine,
+            close: async () => {
+              await engine.close();
+              database.close();
+            },
+          };
+        })();
   const bindingStore = createFileSessionBindingStore(config.bindingStorePath);
 
   return {
-    engine,
+    engine: persistence.engine,
     bindingStore,
     resolveBinding: () =>
       resolveCockpitBinding({
         store: bindingStore,
         config,
         createConversation: async ({ parentConversationId }) => {
-          const conversation = await conversations.create(
+          const conversation = await persistence.conversations.create(
             createDefaultConversationConfig(),
             parentConversationId,
           );
@@ -85,7 +121,7 @@ export const createCockpitRuntime = (config: CockpitConfig): CockpitRuntime => {
         },
       }),
     async close() {
-      await pool.end();
+      await persistence.close();
     },
   };
 };

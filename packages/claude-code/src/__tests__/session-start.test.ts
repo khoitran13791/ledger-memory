@@ -87,8 +87,28 @@ describe('runSessionStartCommand', () => {
     expect(JSON.parse(stdout.toString()).hookSpecificOutput.additionalContext).toContain(
       'LedgerMind resumed conversation',
     );
-    expect(stderr.toString()).toContain(
-      'LedgerMind continuity is using in-memory storage; records will not survive process exit. Set LEDGERMIND_DB_URL for durable memory.',
+    expect(stderr.toString()).toBe('');
+  });
+
+  it('warns only when explicitly configured for in-memory storage', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ledgermind-session-start-memory-'));
+    tempDirectories.push(directory);
+    const stdout = new RecordingWritable();
+    const stderr = new RecordingWritable();
+    const engine = {
+      getCurrentState: async (): Promise<GetCurrentStateOutput> => emptyState(),
+    } as unknown as MemoryEngine;
+
+    await runSessionStartCommand({
+      stdin: Readable.from([payloadFor(directory)]),
+      stdout,
+      stderr,
+      env: { USER: 'agent', LEDGERMIND_CLAUDE_STORAGE: 'in-memory' },
+      engine,
+    });
+
+    expect(stderr.toString()).toBe(
+      'LedgerMind continuity is using in-memory storage; records will not survive process exit. Set LEDGERMIND_SQLITE_PATH or LEDGERMIND_DB_URL for durable memory.\n',
     );
   });
 

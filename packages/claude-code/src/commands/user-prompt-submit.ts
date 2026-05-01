@@ -6,32 +6,36 @@ export const runUserPromptSubmitCommand = async (
   options: ClaudeCommandOptions = {},
 ): Promise<void> => {
   const runtime = await buildCommandRuntime(options);
-  const context = runtime.expectHookContext('UserPromptSubmit');
+  try {
+    const context = runtime.expectHookContext('UserPromptSubmit');
 
-  if (!runtime.config.continuityInjectionEnabled) {
+    if (!runtime.config.continuityInjectionEnabled) {
+      runtime.writeJson({
+        hookSpecificOutput: {
+          hookEventName: 'UserPromptSubmit',
+        },
+      });
+      return;
+    }
+
+    const binding = await runtime.resolveBinding(context);
+    const output = await runtime.engine.recallForTask({
+      conversationId: binding.conversationId,
+      task: context.prompt,
+      budgetTokens: runtime.config.continuityRecallBudgetTokens,
+      includeHandoff: true,
+      includeEvidence: true,
+    });
+
     runtime.writeJson({
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
+        additionalContext: output.contextBlock,
       },
     });
-    return;
+  } finally {
+    await runtime.close();
   }
-
-  const binding = await runtime.resolveBinding(context);
-  const output = await runtime.engine.recallForTask({
-    conversationId: binding.conversationId,
-    task: context.prompt,
-    budgetTokens: runtime.config.continuityRecallBudgetTokens,
-    includeHandoff: true,
-    includeEvidence: true,
-  });
-
-  runtime.writeJson({
-    hookSpecificOutput: {
-      hookEventName: 'UserPromptSubmit',
-      additionalContext: output.contextBlock,
-    },
-  });
 };
 
 if (isDirectExecution(import.meta.url)) {

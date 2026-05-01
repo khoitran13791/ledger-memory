@@ -106,6 +106,7 @@ import {
   asPgExecutor,
   openSqliteDatabaseSync,
   type PgExecutor,
+  type SqliteDatabase,
 } from '@ledgermind/infrastructure';
 
 // ---------------------------------------------------------------------------
@@ -394,6 +395,7 @@ export interface MemoryEngineConfig {
     | {
         readonly type: 'sqlite';
         readonly path: string;
+        readonly database?: SqliteDatabase;
       };
 
   readonly summarizer?: {
@@ -442,15 +444,20 @@ export const createPostgresMemoryEngine = ({
 
 export type SqlitePresetConfig = Omit<MemoryEngineConfig, 'storage'> & {
   readonly path: string;
+  readonly database?: SqliteDatabase;
 };
 
-export const createSqliteMemoryEngine = ({ path, ...config }: SqlitePresetConfig): MemoryEngine => {
+export const createSqliteMemoryEngine = ({
+  path,
+  database,
+  ...config
+}: SqlitePresetConfig): MemoryEngine => {
   if (path.trim().length === 0) {
     throw new Error('SQLite path is required and cannot be empty.');
   }
 
   return createMemoryEngine({
-    storage: { type: 'sqlite', path },
+    storage: { type: 'sqlite', path, ...(database === undefined ? {} : { database }) },
     ...config,
   });
 };
@@ -500,9 +507,11 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
       fileReader: new NodeFileReader(),
     };
   } else {
-    const database = openSqliteDatabaseSync({ path: config.storage.path });
+    const database =
+      config.storage.database ?? openSqliteDatabaseSync({ path: config.storage.path });
     const db = database.db;
-    closePersistence = () => database.close();
+    closePersistence =
+      config.storage.database === undefined ? () => database.close() : () => undefined;
 
     persistenceDeps = {
       unitOfWork: createSqliteUnitOfWork(db),

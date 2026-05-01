@@ -4,37 +4,41 @@ import { buildCommandRuntime, isDirectExecution, type ClaudeCommandOptions } fro
 
 export const runSessionStartCommand = async (options: ClaudeCommandOptions = {}): Promise<void> => {
   const runtime = await buildCommandRuntime(options);
-  const context = runtime.expectHookContext('SessionStart');
-  const binding = await runtime.resolveBinding(context);
-  const resumedMessage = `LedgerMind resumed conversation ${String(binding.conversationId)} for this Claude Code session.`;
-  const currentState = await runtime.engine.getCurrentState({
-    conversationId: binding.conversationId,
-  });
+  try {
+    const context = runtime.expectHookContext('SessionStart');
+    const binding = await runtime.resolveBinding(context);
+    const resumedMessage = `LedgerMind resumed conversation ${String(binding.conversationId)} for this Claude Code session.`;
+    const currentState = await runtime.engine.getCurrentState({
+      conversationId: binding.conversationId,
+    });
 
-  if (currentState.activeRecordCount === 0) {
+    if (currentState.activeRecordCount === 0) {
+      runtime.writeJson({
+        hookSpecificOutput: {
+          hookEventName: 'SessionStart',
+          additionalContext: resumedMessage,
+        },
+      });
+      return;
+    }
+
+    const recall = await runtime.engine.recallForTask({
+      conversationId: binding.conversationId,
+      task: 'Resume this coding session',
+      budgetTokens: runtime.config.continuityRecallBudgetTokens,
+      includeHandoff: true,
+      includeEvidence: true,
+    });
+
     runtime.writeJson({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        additionalContext: resumedMessage,
+        additionalContext: `${resumedMessage}\n\n${recall.contextBlock}`,
       },
     });
-    return;
+  } finally {
+    await runtime.close();
   }
-
-  const recall = await runtime.engine.recallForTask({
-    conversationId: binding.conversationId,
-    task: 'Resume this coding session',
-    budgetTokens: runtime.config.continuityRecallBudgetTokens,
-    includeHandoff: true,
-    includeEvidence: true,
-  });
-
-  runtime.writeJson({
-    hookSpecificOutput: {
-      hookEventName: 'SessionStart',
-      additionalContext: `${resumedMessage}\n\n${recall.contextBlock}`,
-    },
-  });
 };
 
 if (isDirectExecution(import.meta.url)) {

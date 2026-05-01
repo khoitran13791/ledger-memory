@@ -49,6 +49,14 @@ Commands:
   verify <text>       Record verification evidence.
   stale <record-id>   Mark a memory record stale.
   help                Show this help text.
+
+Options:
+  --db <url>                         Use PostgreSQL durable storage.
+  --sqlite <path>                    Use SQLite durable storage at path.
+  --storage <in-memory|postgres|sqlite>
+                                      Explicitly set the storage type.
+  --binding-store <path>             Persist runtime/session bindings to a local file.
+  --json                             Emit JSON output where supported.
 `;
 
 const localModule = (specifier: string): string =>
