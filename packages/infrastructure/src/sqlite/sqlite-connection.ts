@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -10,6 +11,44 @@ export interface OpenSqliteDatabaseOptions {
   readonly path: string;
   readonly readOnly?: boolean;
 }
+
+const initializeSqliteDatabase = (db: DatabaseSync, readOnly: boolean): void => {
+  const versionRow = db.prepare('PRAGMA user_version').get() as
+    | { readonly user_version: unknown }
+    | undefined;
+  const existingVersion = parseSqliteInteger(versionRow?.user_version, 'pragma user_version');
+
+  if (existingVersion > SQLITE_SCHEMA_VERSION) {
+    throw new Error(
+      `SQLite database schema version ${existingVersion} is newer than supported version ${SQLITE_SCHEMA_VERSION}.`,
+    );
+  }
+
+  if (readOnly && existingVersion === 0) {
+    throw new Error('SQLite database schema has not been initialized.');
+  }
+
+  if (!readOnly) {
+    for (const statement of SQLITE_SCHEMA_SQL) {
+      db.exec(statement);
+    }
+
+    if (existingVersion === 0) {
+      db.exec(`PRAGMA user_version = ${SQLITE_SCHEMA_VERSION}`);
+    }
+  }
+
+  db.exec('PRAGMA foreign_keys = ON');
+  db.exec('PRAGMA busy_timeout = 5000');
+};
+
+const toSqliteDatabase = (path: string, db: DatabaseSync): SqliteDatabase => ({
+  path,
+  db,
+  close() {
+    db.close();
+  },
+});
 
 export const openSqliteDatabase = async ({
   path,
@@ -30,43 +69,39 @@ export const openSqliteDatabase = async ({
   });
 
   try {
-    const versionRow = db.prepare('PRAGMA user_version').get() as
-      | { readonly user_version: unknown }
-      | undefined;
-    const existingVersion = parseSqliteInteger(versionRow?.user_version, 'pragma user_version');
-
-    if (existingVersion > SQLITE_SCHEMA_VERSION) {
-      throw new Error(
-        `SQLite database schema version ${existingVersion} is newer than supported version ${SQLITE_SCHEMA_VERSION}.`,
-      );
-    }
-
-    if (readOnly && existingVersion === 0) {
-      throw new Error('SQLite database schema has not been initialized.');
-    }
-
-    if (!readOnly) {
-      for (const statement of SQLITE_SCHEMA_SQL) {
-        db.exec(statement);
-      }
-
-      if (existingVersion === 0) {
-        db.exec(`PRAGMA user_version = ${SQLITE_SCHEMA_VERSION}`);
-      }
-    }
-
-    db.exec('PRAGMA foreign_keys = ON');
-    db.exec('PRAGMA busy_timeout = 5000');
+    initializeSqliteDatabase(db, readOnly);
   } catch (error) {
     db.close();
     throw error;
   }
 
-  return {
-    path,
-    db,
-    close() {
-      db.close();
-    },
-  };
+  return toSqliteDatabase(path, db);
+};
+
+export const openSqliteDatabaseSync = ({
+  path,
+  readOnly = false,
+}: OpenSqliteDatabaseOptions): SqliteDatabase => {
+  if (path.trim().length === 0) {
+    throw new Error('SQLite path is required and cannot be empty.');
+  }
+
+  if (!readOnly && path !== ':memory:') {
+    mkdirSync(dirname(path), { recursive: true });
+  }
+
+  const db = new DatabaseSync(path, {
+    readOnly,
+    enableForeignKeyConstraints: true,
+    timeout: 5000,
+  });
+
+  try {
+    initializeSqliteDatabase(db, readOnly);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+
+  return toSqliteDatabase(path, db);
 };

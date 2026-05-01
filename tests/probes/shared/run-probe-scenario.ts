@@ -222,6 +222,7 @@ const createEngine = (input: CreateUseCasesInput): MemoryEngine => {
     getOperatorRun: async () => {
       throw createUnsupportedProbeError('getOperatorRun');
     },
+    close: async () => undefined,
   };
 };
 
@@ -260,7 +261,7 @@ const createInMemoryRuntime = async (fixture: ProbeFixture): Promise<ProbeRuntim
   return {
     conversationId: conversation.id,
     engine,
-    destroy: async () => undefined,
+    destroy: () => engine.close(),
   };
 };
 

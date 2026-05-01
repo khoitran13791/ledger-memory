@@ -4,7 +4,11 @@ LedgerMind makes coding-agent work resumable, inspectable, and evidence-backed a
 
 ## Current status
 
-LedgerMind is now a working alpha, not just a scaffold. The core engine packages, SDK, MCP server, PostgreSQL backend, operator worker, Claude Code integration, and benchmark harnesses are all present in this repo and covered by the monorepo build/test pipeline.
+LedgerMind is now a working alpha, not just a scaffold. The core engine packages, SDK, MCP server, SQLite and PostgreSQL backends, operator worker, Claude Code integration, and benchmark harnesses are all present in this repo and covered by the monorepo build/test pipeline.
+
+SQLite is the default local durable backend for coding-agent continuity. PostgreSQL remains the recommended backend for shared services, remote workers, and multi-process deployments.
+
+The SQLite adapter uses Node's built-in `node:sqlite` module. On supported Node 22 runtimes this may emit `ExperimentalWarning`; the adapter is isolated behind LedgerMind's persistence ports so the public engine API stays backend-neutral.
 
 Implemented today:
 
@@ -12,8 +16,8 @@ Implemented today:
 - hierarchical summary DAG, deterministic compaction, and materialized context retrieval
 - artifact storage plus type-aware exploration hooks
 - continuity records for decisions, constraints, progress, verification, failures, next steps, and handoffs
-- in-memory and PostgreSQL persistence paths
-- SDK factories for in-memory, PostgreSQL, and generic engine creation
+- in-memory, SQLite, and PostgreSQL persistence paths
+- SDK factories for in-memory, SQLite, PostgreSQL, and generic engine creation
 - durable operator APIs via `llmMap()`, `agenticMap()`, and `getOperatorRun()`
 - MCP server, operator worker app, and Claude Code integration package
 - offline LOCOMO and LongMemEval benchmark harnesses
@@ -38,7 +42,7 @@ Still evolving:
 - `packages/domain` — entities, value objects, domain services, events, errors
 - `packages/application` — use cases and port interfaces
 - `packages/adapters` — in-memory adapters, explorers, tokenizer, auth, jobs, tools
-- `packages/infrastructure` — PostgreSQL + filesystem implementations
+- `packages/infrastructure` — SQLite, PostgreSQL, and filesystem implementations
 - `packages/sdk` — composition root and public engine factory APIs
 - `packages/mcp-server` — stdio MCP server exposing LedgerMind tools
 - `packages/claude-code` — Claude Code hooks and integration helpers
@@ -71,10 +75,10 @@ When run through `pnpm cockpit:dev`, the CLI scopes the default workspace and bi
 
 ```bash
 pnpm cockpit:dev -- doctor
-LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- status
-LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- remember "Persist the current design decision."
-LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- recall "design decision"
-LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- timeline
+pnpm cockpit:dev -- status --storage sqlite --sqlite .ledgermind/memory.sqlite
+pnpm cockpit:dev -- remember "Persist the current design decision." --storage sqlite --sqlite .ledgermind/memory.sqlite
+pnpm cockpit:dev -- recall "design decision" --storage sqlite --sqlite .ledgermind/memory.sqlite
+pnpm cockpit:dev -- timeline --storage sqlite --sqlite .ledgermind/memory.sqlite
 ```
 
 Add `--json` to any command for agent-readable output.
@@ -86,9 +90,14 @@ import {
   createInMemoryMemoryEngine,
   createMemoryEngine,
   createPostgresMemoryEngine,
+  createSqliteMemoryEngine,
 } from '@ledgermind/sdk';
 
 const memory = createInMemoryMemoryEngine();
+
+const sqliteMemory = createSqliteMemoryEngine({
+  path: '.ledgermind/memory.sqlite',
+});
 
 const postgresMemory = createPostgresMemoryEngine({
   connectionString: process.env.DATABASE_URL!,

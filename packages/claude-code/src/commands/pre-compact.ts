@@ -28,64 +28,70 @@ const budgetCharsToTokens = (budgetChars: number): number =>
 
 export const runPreCompactCommand = async (options: ClaudeCommandOptions = {}): Promise<void> => {
   const runtime = await buildCommandRuntime(options);
-  const context = runtime.expectHookContext('PreCompact') as PreCompactHookContext;
-  const binding = await runtime.resolveBinding(context);
-  const checkpoint = await runtime.transcriptCheckpointStore.get(
-    context.sessionId,
-    context.transcriptPath,
-  );
-  const parseOptions = {
-    ...(checkpoint?.lineCount === undefined ? {} : { startLine: checkpoint.lineCount }),
-    onWarning: runtime.warn,
-  };
-  const transcript = await parseTranscriptFile(
-    context.transcriptPath,
-    {
-      source: 'claude-code',
-      hook: context.hookName,
-      trigger: context.trigger,
-    },
-    parseOptions,
-  );
+  try {
+    const context = runtime.expectHookContext('PreCompact') as PreCompactHookContext;
+    const binding = await runtime.resolveBinding(context);
+    const checkpoint = await runtime.transcriptCheckpointStore.get(
+      context.sessionId,
+      context.transcriptPath,
+    );
+    const parseOptions = {
+      ...(checkpoint?.lineCount === undefined ? {} : { startLine: checkpoint.lineCount }),
+      onWarning: runtime.warn,
+    };
+    const transcript = await parseTranscriptFile(
+      context.transcriptPath,
+      {
+        source: 'claude-code',
+        hook: context.hookName,
+        trigger: context.trigger,
+      },
+      parseOptions,
+    );
 
-  if (transcript.events.length > 0) {
-    await runtime.engine.append({
-      conversationId: binding.conversationId,
-      events: transcript.events,
-      idempotencyKey: createPreCompactIdempotencyKey(context, transcript.digest),
+    if (transcript.events.length > 0) {
+      await runtime.engine.append({
+        conversationId: binding.conversationId,
+        events: transcript.events,
+        idempotencyKey: createPreCompactIdempotencyKey(context, transcript.digest),
+      });
+    }
+
+    await runtime.transcriptCheckpointStore.save({
+      sessionId: context.sessionId,
+      transcriptPath: context.transcriptPath,
+      lineCount: transcript.lineCount,
     });
+
+    await runtime.engine.runCompaction({
+      conversationId: binding.conversationId,
+      trigger: 'soft',
+      targetTokens: createTokenCount(
+        budgetCharsToTokens(runtime.config.injectedContextBudgetChars),
+      ),
+    });
+
+    const recall = await runtime.engine.recallForTask({
+      conversationId: binding.conversationId,
+      task: 'Continue after Claude Code compaction',
+      budgetTokens: runtime.config.continuityRecallBudgetTokens,
+      includeHandoff: true,
+      includeEvidence: true,
+    });
+
+    runtime.writeJson({
+      hookSpecificOutput: {
+        hookEventName: 'PreCompact',
+        additionalContext: [
+          'LedgerMind archived the full Claude Code transcript before compaction.',
+          'Use the LedgerMind MCP tools to recover detailed history when needed.',
+          recall.contextBlock,
+        ].join('\n'),
+      },
+    });
+  } finally {
+    await runtime.close();
   }
-
-  await runtime.transcriptCheckpointStore.save({
-    sessionId: context.sessionId,
-    transcriptPath: context.transcriptPath,
-    lineCount: transcript.lineCount,
-  });
-
-  await runtime.engine.runCompaction({
-    conversationId: binding.conversationId,
-    trigger: 'soft',
-    targetTokens: createTokenCount(budgetCharsToTokens(runtime.config.injectedContextBudgetChars)),
-  });
-
-  const recall = await runtime.engine.recallForTask({
-    conversationId: binding.conversationId,
-    task: 'Continue after Claude Code compaction',
-    budgetTokens: runtime.config.continuityRecallBudgetTokens,
-    includeHandoff: true,
-    includeEvidence: true,
-  });
-
-  runtime.writeJson({
-    hookSpecificOutput: {
-      hookEventName: 'PreCompact',
-      additionalContext: [
-        'LedgerMind archived the full Claude Code transcript before compaction.',
-        'Use the LedgerMind MCP tools to recover detailed history when needed.',
-        recall.contextBlock,
-      ].join('\n'),
-    },
-  });
 };
 
 if (isDirectExecution(import.meta.url)) {

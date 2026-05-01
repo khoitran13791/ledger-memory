@@ -187,6 +187,10 @@ class RecordingMemoryEngine implements MemoryEngine {
     void _input;
     throw new Error('Not implemented in test double.');
   }
+
+  async close(): Promise<void> {
+    return;
+  }
 }
 
 class MemoryWritable extends Writable {

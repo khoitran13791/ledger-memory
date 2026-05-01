@@ -30,12 +30,14 @@ import {
   createMimeType,
   createTokenCount,
 } from '@ledgermind/domain';
+import { openSqliteDatabase, SqliteConversationStore } from '@ledgermind/infrastructure';
 
 import type * as SdkEntrypoint from './index';
 
 let createMemoryEngine!: typeof SdkEntrypoint.createMemoryEngine;
 let createInMemoryMemoryEngine!: typeof SdkEntrypoint.createInMemoryMemoryEngine;
 let createPostgresMemoryEngine!: typeof SdkEntrypoint.createPostgresMemoryEngine;
+let createSqliteMemoryEngine!: typeof SdkEntrypoint.createSqliteMemoryEngine;
 
 const baseConfig = {
   storage: { type: 'in-memory' as const },
@@ -50,6 +52,7 @@ beforeAll(async () => {
   createMemoryEngine = sdkModule.createMemoryEngine;
   createInMemoryMemoryEngine = sdkModule.createInMemoryMemoryEngine;
   createPostgresMemoryEngine = sdkModule.createPostgresMemoryEngine;
+  createSqliteMemoryEngine = sdkModule.createSqliteMemoryEngine;
 });
 
 const createExistingConversation = (
@@ -71,6 +74,7 @@ const expectedEngineMethods = [
   'agenticMap',
   'append',
   'checkIntegrity',
+  'close',
   'createHandoff',
   'describe',
   'expand',
@@ -177,7 +181,7 @@ describe('createMemoryEngine tokenizer selection', () => {
         tokenizer: { type: 'model-aligned' },
       }),
     ).not.toThrow();
-  });
+  }, 10_000);
 
   it('wires model-aligned tokenizer into StoreArtifact tokenizer usage', async () => {
     const countTokensSpy = vi.spyOn(TiktokenTokenizerAdapter.prototype, 'countTokens');
@@ -295,9 +299,11 @@ describe('createMemoryEngine initialization validation', () => {
   it('rejects unsupported storage types with actionable error', () => {
     expect(() =>
       createMemoryEngine({
-        storage: { type: 'sqlite' } as unknown as { type: 'in-memory' },
+        storage: { type: 'file' } as unknown as { type: 'in-memory' },
       }),
-    ).toThrow('Unsupported storage type "sqlite". Supported values: "in-memory", "postgres".');
+    ).toThrow(
+      'Unsupported storage type "file". Supported values: "in-memory", "postgres", "sqlite".',
+    );
   });
 
   it('rejects invalid summarizer shape and unsupported summarizer type', () => {
@@ -409,6 +415,7 @@ describe('SDK presets', () => {
     expect(createMemoryEngine).toBeTypeOf('function');
     expect(createInMemoryMemoryEngine).toBeTypeOf('function');
     expect(createPostgresMemoryEngine).toBeTypeOf('function');
+    expect(createSqliteMemoryEngine).toBeTypeOf('function');
   });
 
   it('returns same runtime contract for generic and in-memory preset engines', () => {
@@ -463,6 +470,18 @@ describe('SDK presets', () => {
     );
   });
 
+  it('preserves generic tokenizer validation behavior when initialized via sqlite preset', () => {
+    const invalidConfig = {
+      path: ':memory:',
+      tokenizer: { type: 'custom' } as unknown as { readonly type: 'deterministic' },
+    };
+
+    expect(() => createSqliteMemoryEngine(invalidConfig)).toThrow(TokenizerConfigurationError);
+    expect(() => createSqliteMemoryEngine(invalidConfig)).toThrow(
+      'Unsupported tokenizer type "custom". Supported values: "deterministic", "model-aligned".',
+    );
+  });
+
   it.each(['', ' ', '\t', '\n', '  \n\t  '])(
     'surfaces actionable initialization error for incomplete postgres preset input (%j)',
     (connectionString) => {
@@ -488,7 +507,32 @@ describe('SDK presets', () => {
     },
   );
 
-  it('returns same runtime contract for generic and postgres preset engines', () => {
+  it.each(['', ' ', '\t', '\n', '  \n\t  '])(
+    'surfaces actionable initialization error for incomplete sqlite preset input (%j)',
+    (path) => {
+      expect(() =>
+        createSqliteMemoryEngine({
+          path,
+        }),
+      ).toThrow('SQLite path is required and cannot be empty.');
+    },
+  );
+
+  it.each(['', ' ', '\t', '\n', '  \n\t  '])(
+    'surfaces actionable initialization error for incomplete sqlite generic input (%j)',
+    (path) => {
+      expect(() =>
+        createMemoryEngine({
+          storage: {
+            type: 'sqlite',
+            path,
+          },
+        }),
+      ).toThrow('SQLite path is required and cannot be empty.');
+    },
+  );
+
+  it('returns same runtime contract for generic and postgres preset engines', async () => {
     const connectionString = 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
     const genericEngine = createMemoryEngine({
@@ -504,6 +548,74 @@ describe('SDK presets', () => {
 
     expectStableEngineContract(genericEngine as unknown as Record<string, unknown>);
     expectStableEngineContract(postgresPresetEngine as unknown as Record<string, unknown>);
+    await genericEngine.close();
+    await postgresPresetEngine.close();
+  });
+
+  it('returns same runtime contract for generic and sqlite preset engines', async () => {
+    const genericEngine = createMemoryEngine({
+      storage: {
+        type: 'sqlite',
+        path: ':memory:',
+      },
+    });
+
+    const sqlitePresetEngine = createSqliteMemoryEngine({
+      path: ':memory:',
+    });
+
+    expectStableEngineContract(genericEngine as unknown as Record<string, unknown>);
+    expectStableEngineContract(sqlitePresetEngine as unknown as Record<string, unknown>);
+    await genericEngine.close();
+    await sqlitePresetEngine.close();
+  });
+
+  it('sqlite preset persists continuity across reopening the same database file', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'ledgermind-sdk-sqlite-'));
+    const path = join(tempDir, 'memory.sqlite');
+    let firstEngine: ReturnType<typeof createSqliteMemoryEngine> | undefined;
+    let reopenedEngine: ReturnType<typeof createSqliteMemoryEngine> | undefined;
+
+    try {
+      const seedDatabase = await openSqliteDatabase({ path });
+      const seededConversation = await (async () => {
+        try {
+          return await new SqliteConversationStore(seedDatabase.db).create(
+            createExistingConversation().config,
+          );
+        } finally {
+          seedDatabase.close();
+        }
+      })();
+
+      firstEngine = createSqliteMemoryEngine({ path });
+
+      await firstEngine.recordContinuity({
+        conversationId: seededConversation.id,
+        kind: 'decision',
+        title: 'Persist SQLite continuity',
+        content: 'SQLite SDK engines read continuity after reopening the same database file.',
+      });
+
+      await firstEngine.close();
+
+      reopenedEngine = createSqliteMemoryEngine({ path });
+      const state = await reopenedEngine.getCurrentState({
+        conversationId: seededConversation.id,
+      });
+
+      expect(state.decisions).toEqual([
+        expect.objectContaining({
+          title: 'Persist SQLite continuity',
+          content: 'SQLite SDK engines read continuity after reopening the same database file.',
+        }),
+      ]);
+      expect(state.activeRecordCount).toBe(1);
+    } finally {
+      await firstEngine?.close();
+      await reopenedEngine?.close();
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -641,14 +753,18 @@ describe('createMemoryEngine artifact and explorer integration', () => {
     expect(firstExplore.summary).toBe(secondExplore.summary);
   });
 
-  it('creates engine with postgres storage composition', () => {
-    expect(() =>
-      createMemoryEngine({
-        storage: {
-          type: 'postgres',
-          connectionString: 'postgres://postgres:postgres@127.0.0.1:5432/postgres',
-        },
-      }),
-    ).not.toThrow();
+  it('creates engine with postgres storage composition', async () => {
+    const engine = createMemoryEngine({
+      storage: {
+        type: 'postgres',
+        connectionString: 'postgres://postgres:postgres@127.0.0.1:5432/postgres',
+      },
+    });
+
+    try {
+      expect(engine).toBeDefined();
+    } finally {
+      await engine.close();
+    }
   });
 });

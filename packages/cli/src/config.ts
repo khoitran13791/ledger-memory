@@ -11,7 +11,15 @@ export interface PostgresStorageConfig {
   readonly connectionString: string;
 }
 
-export type CockpitStorageConfig = InMemoryStorageConfig | PostgresStorageConfig;
+export interface SqliteStorageConfig {
+  readonly type: 'sqlite';
+  readonly path: string;
+}
+
+export type CockpitStorageConfig =
+  | InMemoryStorageConfig
+  | PostgresStorageConfig
+  | SqliteStorageConfig;
 
 export interface CockpitConfig {
   readonly storage: CockpitStorageConfig;
@@ -42,6 +50,7 @@ const OPTIONS_WITH_VALUES = new Set([
   '--db',
   '--parent-runtime-session',
   '--runtime-session',
+  '--sqlite',
   '--storage',
   '--workspace',
 ]);
@@ -89,6 +98,8 @@ export const parseCockpitConfig = ({
   cwd,
 }: ParseCockpitConfigOptions): CockpitConfig => {
   let connectionString = env.LEDGERMIND_DB_URL;
+  let sqlitePath =
+    env.LEDGERMIND_SQLITE_PATH === undefined ? undefined : resolve(cwd, env.LEDGERMIND_SQLITE_PATH);
   let storageType: string | undefined;
   let bindingStorePath =
     env.LEDGERMIND_MCP_BINDING_STORE ?? resolve(cwd, '.ledgermind/session-bindings.json');
@@ -152,6 +163,10 @@ export const parseCockpitConfig = ({
       case '--runtime-session':
         runtimeSessionId = value;
         break;
+      case '--sqlite':
+        sqlitePath = resolve(cwd, value);
+        storageType = 'sqlite';
+        break;
       case '--parent-runtime-session':
         parentRuntimeSessionId = value;
         break;
@@ -164,7 +179,7 @@ export const parseCockpitConfig = ({
     }
   }
 
-  const storage = createStorageConfig(storageType, connectionString);
+  const storage = createStorageConfig(storageType, connectionString, sqlitePath);
 
   return {
     storage,
@@ -181,15 +196,28 @@ export const parseCockpitConfig = ({
 const createStorageConfig = (
   storageType: string | undefined,
   connectionString: string | undefined,
+  sqlitePath: string | undefined,
 ): CockpitStorageConfig => {
   if (storageType === undefined) {
-    return connectionString === undefined || connectionString.trim().length === 0
+    if (connectionString !== undefined && connectionString.trim().length > 0) {
+      return { type: 'postgres', connectionString };
+    }
+
+    return sqlitePath === undefined || sqlitePath.trim().length === 0
       ? { type: 'in-memory' }
-      : { type: 'postgres', connectionString };
+      : { type: 'sqlite', path: sqlitePath };
   }
 
   if (storageType === 'in-memory') {
     return { type: 'in-memory' };
+  }
+
+  if (storageType === 'sqlite') {
+    if (sqlitePath === undefined || sqlitePath.trim().length === 0) {
+      throw new Error('SQLite storage requires --sqlite.');
+    }
+
+    return { type: 'sqlite', path: sqlitePath };
   }
 
   if (storageType !== 'postgres') {

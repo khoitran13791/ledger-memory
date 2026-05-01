@@ -29,6 +29,41 @@ describe('parseMcpServerConfig', () => {
     expect(config.bindingStorePath).toBe('.ledgermind/session-bindings.json');
   });
 
+  it('parses sqlite storage and keeps the host-provided path', () => {
+    const config = parseMcpServerConfig({
+      argv: ['--storage', 'sqlite', '--sqlite', '.ledgermind/memory.sqlite'],
+      env: {},
+    });
+
+    expect(config.storage).toEqual({
+      type: 'sqlite',
+      path: '.ledgermind/memory.sqlite',
+    });
+  });
+
+  it('selects sqlite storage from --sqlite without requiring --storage', () => {
+    const config = parseMcpServerConfig({
+      argv: ['--sqlite', '.ledgermind/memory.sqlite'],
+      env: {},
+    });
+
+    expect(config.storage).toEqual({
+      type: 'sqlite',
+      path: '.ledgermind/memory.sqlite',
+    });
+  });
+
+  it('lets explicit in-memory storage override sqlite path env', () => {
+    const config = parseMcpServerConfig({
+      argv: ['--storage', 'in-memory'],
+      env: {
+        LEDGERMIND_SQLITE_PATH: '.ledgermind/memory.sqlite',
+      },
+    });
+
+    expect(config.storage).toEqual({ type: 'in-memory' });
+  });
+
   it('keeps write tools disabled unless explicitly enabled', () => {
     const config = parseMcpServerConfig({
       argv: ['--enable-write-tools'],

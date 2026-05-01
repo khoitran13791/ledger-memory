@@ -50,8 +50,10 @@ LedgerMind now ships an MCP-first Claude Code foundation with two runtime-facing
 
 | Variable                                        | Purpose                                                            |
 | ----------------------------------------------- | ------------------------------------------------------------------ |
-| `LEDGERMIND_DB_URL`                             | Use PostgreSQL instead of the in-memory engine preset              |
+| `LEDGERMIND_SQLITE_PATH`                        | SQLite database path for local durable continuity                  |
+| `LEDGERMIND_DB_URL`                             | Use PostgreSQL instead of the local SQLite engine preset           |
 | `LEDGERMIND_MCP_BINDING_STORE`                  | Shared file path for runtime/session bindings                      |
+| `LEDGERMIND_CLAUDE_STORAGE`                     | Set to `in-memory` only for explicit non-durable test runs         |
 | `LEDGERMIND_CLAUDE_CONTEXT_BUDGET_CHARS`        | Character budget used for bounded summaries and stop-time excerpts |
 | `LEDGERMIND_CLAUDE_ENABLE_ARTIFACT_INDEXING`    | Enables `PostToolUse` artifact storage                             |
 | `LEDGERMIND_CLAUDE_ENABLE_CONTINUITY_INJECTION` | Enables prompt-time continuity injection                           |
@@ -66,8 +68,8 @@ LedgerMind now ships an MCP-first Claude Code foundation with two runtime-facing
 ## Local Setup
 
 1. Install dependencies with `pnpm install`.
-2. Configure durable storage: `export LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind && export DATABASE_URL=$LEDGERMIND_DB_URL`.
-3. Run migrations: `pnpm --filter @ledgermind/infrastructure migrate:up`.
+2. Configure local durable storage: `export LEDGERMIND_SQLITE_PATH=.ledgermind/memory.sqlite`.
+3. Use PostgreSQL migrations only for shared service deployments: `pnpm --filter @ledgermind/infrastructure migrate:up`.
 4. Build the local packages before using bin-based example configs: `pnpm --filter @ledgermind/mcp-server build && pnpm --filter @ledgermind/claude-code build`.
 5. Register the MCP server using [`examples/claude-code/.mcp.json`](../examples/claude-code/.mcp.json), or point your local config directly at the package source scripts while developing.
 6. Add Claude hook commands using [`examples/claude-code/settings.json`](../examples/claude-code/settings.json) or the package templates in `packages/claude-code/src/templates/`.
@@ -88,16 +90,17 @@ When launched through `pnpm cockpit:dev`, the default workspace is the shell dir
 
 ```bash
 pnpm cockpit:dev -- doctor
-LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- status
-LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- state
-LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- next
-LEDGERMIND_DB_URL=postgres://user:pass@localhost:5432/ledgermind pnpm cockpit:dev -- task "recent decision"
+pnpm cockpit:dev -- status --storage sqlite --sqlite .ledgermind/memory.sqlite
+pnpm cockpit:dev -- state --storage sqlite --sqlite .ledgermind/memory.sqlite
+pnpm cockpit:dev -- next --storage sqlite --sqlite .ledgermind/memory.sqlite
+pnpm cockpit:dev -- task "recent decision" --storage sqlite --sqlite .ledgermind/memory.sqlite
 ```
 
 Pass the same `--binding-store <path>` or `LEDGERMIND_MCP_BINDING_STORE` value that Claude Code uses when debugging a specific session.
 
 ## Current Limits
 
-1. Durable memory currently requires PostgreSQL. Without `LEDGERMIND_DB_URL`, hooks use in-memory storage and warn that records will not survive process exit.
-2. Some MCP hosts may still require explicit `conversationId` arguments if they do not pass LedgerMind session metadata.
-3. `memory.expand` remains privileged and sub-agent scoped.
+1. SQLite is the default local durable backend for coding-agent continuity. PostgreSQL remains the recommended backend for shared services, remote workers, and multi-process deployments.
+2. SQLite uses Node's built-in `node:sqlite` module and may emit `ExperimentalWarning` on supported Node 22 runtimes.
+3. Some MCP hosts may still require explicit `conversationId` arguments if they do not pass LedgerMind session metadata.
+4. `memory.expand` remains privileged and sub-agent scoped.

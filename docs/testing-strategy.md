@@ -68,7 +68,7 @@ summaries. Good summaries can mask structural bugs.
                        ┌┴─────────┴┐
                        │   E2E     │  SDK → DB → Compaction → Tools (5-10 tests)
                       ┌┴───────────┴┐
-                      │ Conformance │  Same suite runs against PG + InMemory; SQLite when implemented
+                      │ Conformance │  In-memory, PostgreSQL, and SQLite adapter parity
                      ┌┴─────────────┴┐
                      │  Application   │  Use cases with in-memory fake ports
                     ┌┴───────────────┴┐
@@ -120,7 +120,7 @@ summaries. Good summaries can mask structural bugs.
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **Schema constraints**    | `UNIQUE(conversation_id, seq)` rejects duplicates; `CHECK(token_count >= 0)` enforced                                       |
 | **Round-trip fidelity**   | Insert event → read back → content identical; summary node → edges → `expandToMessages` returns correct recursive expansion |
-| **Full-text search**      | PG tsvector / SQLite FTS5 return expected matches                                                                           |
+| **Text search**           | PostgreSQL full-text search and SQLite mirror-table search return expected matches                                          |
 | **Regex search**          | `regexSearchEvents` returns correct matches with grouping                                                                   |
 | **Context versioning**    | Stale version on `replaceContextItems` throws `StaleContextError`                                                           |
 | **Migration idempotency** | Running migrations twice doesn't error                                                                                      |
@@ -214,13 +214,12 @@ export const basicCompactionFixture = {
 
 ### Cross-Adapter Execution
 
-The **same golden vectors** run against all adapter implementations:
+The **same golden vectors** currently run against the in-memory and PostgreSQL golden adapters. SQLite parity is covered by the conformance suite and local durability smoke until the golden runner adds a SQLite adapter:
 
 ```typescript
 describe.each([
   ['in-memory', () => createInMemoryAdapter()],
   ['postgres', () => createPostgresAdapter(testDbUrl)],
-  ['sqlite', () => createSqliteAdapter(':memory:')],
 ])('golden tests (%s)', (name, createAdapter) => {
   it.each(goldenFixtures)('$name', async (fixture) => {
     const adapter = await createAdapter();
@@ -265,7 +264,7 @@ Ship a deterministic, replay-stable golden suite that runs real Phase 1 use case
 
 - **Required PR gate:** in-memory golden scenarios
 - **Parity subset:** same fixtures against PostgreSQL
-- **Out of scope for now:** SQLite parity, LLM-judge scoring, probe evaluation
+- **Out of scope for now:** LLM-judge scoring, probe evaluation
 
 #### Harness Design
 
@@ -498,6 +497,8 @@ it('returned objects are not internal references (no mutation leaks)', () => {
 Ensure PostgreSQL and SQLite (and in-memory) adapters are interchangeable,
 following the Liskov Substitution Principle.
 
+Conformance runs against in-memory, PostgreSQL, and SQLite. SQLite is the release gate for the local coding-agent harness.
+
 ### Conformance Suite Structure
 
 ```
@@ -517,10 +518,10 @@ tests/conformance/
 
 ```typescript
 interface AdapterCapabilities {
-  fullTextSearch: boolean; // PG: yes, SQLite FTS5: yes, InMemory: basic
+  fullTextSearch: boolean; // PG: yes, SQLite mirror-table: no, InMemory: basic
   regexSearch: boolean; // PG: yes (~ operator), SQLite: limited
   recursiveCTE: boolean; // PG: yes, SQLite: yes (slower at scale)
-  concurrentWrites: boolean; // PG: yes, SQLite: WAL mode
+  concurrentWrites: boolean; // PG: yes, SQLite: single-writer local mode
 }
 
 function runConformance(factory: AdapterFactory, capabilities: AdapterCapabilities) {
@@ -851,7 +852,7 @@ jobs:
       - pnpm --filter @ledgermind/application test # Use case tests with in-memory fakes
       - pnpm vitest run tests/golden # Golden vector suite (deterministic)
       - pnpm vitest run tests/regression # Regression/property-style invariants
-      - pnpm vitest run tests/conformance # Conformance against in-memory adapter
+      - pnpm vitest run tests/conformance # Conformance against in-memory and SQLite adapters
 
   postgres:
     services:
@@ -978,4 +979,4 @@ Run the probe suite with:
 pnpm vitest run tests/probes
 ```
 
-Continuity probes must pass for in-memory and PostgreSQL adapters. SQLite should join the same gate once an embedded backend exists.
+Continuity probes currently run against in-memory and PostgreSQL adapters. SQLite local continuity is covered by conformance and restart-smoke release gates.

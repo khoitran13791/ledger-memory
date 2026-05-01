@@ -323,4 +323,5 @@ export interface MemoryEngine {
   llmMap(input: LLMMapInput): Promise<LLMMapOutput>;
   agenticMap(input: AgenticMapInput): Promise<AgenticMapOutput>;
   getOperatorRun(input: GetOperatorRunInput): Promise<GetOperatorRunOutput>;
+  close(): Promise<void>;
 }

@@ -150,6 +150,7 @@ const createRuntimeStub = (input: {
     llmMap: createUnusedEngineMethod,
     agenticMap: createUnusedEngineMethod,
     getOperatorRun: createUnusedEngineMethod,
+    close: async () => undefined,
   };
 
   return {

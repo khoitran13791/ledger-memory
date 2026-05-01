@@ -27,6 +27,8 @@ describe('runCli', () => {
     expect(stdout.toString()).toContain('remember <text>');
     expect(stdout.toString()).toContain('state');
     expect(stdout.toString()).toContain('task <prompt>');
+    expect(stdout.toString()).toContain('--sqlite <path>');
+    expect(stdout.toString()).toContain('--storage <in-memory|postgres|sqlite>');
   });
 
   it('prints help when requested explicitly', async () => {

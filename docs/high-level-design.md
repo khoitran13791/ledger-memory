@@ -313,6 +313,7 @@ The following invariants are mandatory:
 **Responsibility:** Concrete implementations of all ports. Platform-specific code.
 
 **Contains:**
+- SQLite adapter for workspace-local durable continuity
 - PostgreSQL adapter (SQL, migrations, connection pooling)
 - Filesystem bindings
 - Runtime executor bindings for operator workers
@@ -1283,8 +1284,27 @@ default fake/embedded runtime used by tests and the in-memory SDK preset.
 - `UNIQUE (conversation_id, seq)` enforces monotonic ordering
 - `CHECK` constraint on `context_items` ensures exactly one ref type
 
-**Current scope note:** SQLite is not implemented in the current repo. The
-active persistence backends are in-memory and PostgreSQL.
+#### SQLite Adapter (Local Durable)
+
+SQLite is the default local durable backend for coding-agent continuity. It
+implements the same persistence ports as the PostgreSQL adapter for
+workspace-local use and runs behind the SDK, CLI, MCP server, and Claude Code
+hook configuration paths.
+
+| Port | Implementation Notes |
+|------|---------------------|
+| `LedgerAppendPort` | `INSERT` into `ledger_events` with idempotency constraints and mirror-table text search |
+| `LedgerReadPort` | LIKE/mirror-table search and recursive expansion helpers; no FTS5 dependency |
+| `ContextProjectionPort` | `context_items` + `context_versions` with optimistic version checks |
+| `SummaryDagPort` | `summary_nodes` plus message and parent edge tables |
+| `ArtifactStorePort` | `artifacts` table with path, inline text, and inline binary variants |
+| `OperatorExecutionPort` | Local durable operator run/task tables |
+| `UnitOfWorkPort` | `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` around port operations |
+
+The implementation uses Node's built-in `node:sqlite` module, which may emit
+`ExperimentalWarning` on supported Node 22 runtimes. PostgreSQL remains the
+recommended backend for shared services, remote workers, and multi-process
+deployments.
 
 ### 9.2 LLM Provider Adapters
 
@@ -1468,6 +1488,15 @@ packages/
 │       │   ├── pg-conversation-store.ts
 │       │   ├── pg-operator-execution-store.ts
 │       │   ├── pg-unit-of-work.ts
+│       │   └── __tests__/
+│       ├── sqlite/
+│       │   ├── sqlite-ledger-store.ts
+│       │   ├── sqlite-context-projection.ts
+│       │   ├── sqlite-summary-dag.ts
+│       │   ├── sqlite-artifact-store.ts
+│       │   ├── sqlite-conversation-store.ts
+│       │   ├── sqlite-operator-execution-store.ts
+│       │   ├── sqlite-unit-of-work.ts
 │       │   └── __tests__/
 │       ├── config/
 │       │   └── create-pg-pool.ts
@@ -1875,7 +1904,7 @@ interface ExplorerConformanceTest {
                     ┌───────┐
                     │  E2E  │  Golden transcript → deterministic DAG
                    ┌┴───────┴┐
-                   │ Contract │  Same suite runs against PG + in-memory
+                   │ Contract │  Same suite runs against PG + SQLite + in-memory
                   ┌┴─────────┴┐
                   │ Application│  Use cases with in-memory fake ports
                  ┌┴───────────┴┐
@@ -1904,8 +1933,8 @@ interface ExplorerConformanceTest {
 
 ### 16.4 Adapter / Contract Tests
 
-- **Storage contract tests:** Same test suite runs against PostgreSQL and in-memory adapters
-  - Verify: append-only invariant, FTS behavior, recursive CTE expansion, idempotency
+- **Storage contract tests:** Same test suite runs against PostgreSQL, SQLite, and in-memory adapters
+  - Verify: append-only invariant, backend-appropriate text search behavior, recursive expansion, idempotency
 - **Explorer conformance tests:** Golden inputs → expected output structure for each explorer
 - **Summarizer adapter tests:** Verify retry behavior, token counting, artifact ID preservation
 

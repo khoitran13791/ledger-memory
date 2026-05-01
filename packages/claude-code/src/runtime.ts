@@ -10,7 +10,11 @@ import {
   type SessionBindingRecord,
   type SessionBindingStore,
 } from '@ledgermind/mcp-server';
-import { createInMemoryMemoryEngine, createPostgresMemoryEngine } from '@ledgermind/sdk';
+import {
+  createInMemoryMemoryEngine,
+  createPostgresMemoryEngine,
+  createSqliteMemoryEngine,
+} from '@ledgermind/sdk';
 
 import { parseClaudeCodeConfig, type ClaudeCodeConfig } from './config';
 import { parseClaudeHookContext, type ClaudeHookContext, type ClaudeHookName } from './context';
@@ -43,20 +47,30 @@ export interface ClaudeCommandRuntime {
   estimateTokenCount(content: string): ReturnType<typeof createTokenCount>;
   warn(message: string): void;
   writeJson(value: unknown): void;
+  close(): Promise<void>;
 }
 
-const createEngine = (config: ClaudeCodeConfig): MemoryEngine =>
-  config.storage === 'postgres'
-    ? createPostgresMemoryEngine({
-        connectionString: config.connectionString ?? '',
-      })
-    : createInMemoryMemoryEngine();
+const createEngine = (config: ClaudeCodeConfig): MemoryEngine => {
+  if (config.storage === 'postgres') {
+    return createPostgresMemoryEngine({
+      connectionString: config.connectionString ?? '',
+    });
+  }
+
+  if (config.storage === 'sqlite') {
+    return createSqliteMemoryEngine({
+      path: config.sqlitePath ?? '',
+    });
+  }
+
+  return createInMemoryMemoryEngine();
+};
 
 const deriveWorkspaceStatePath = (workspaceRoot: string, fileName: string): string =>
   join(workspaceRoot, '.ledgermind', fileName);
 
 const IN_MEMORY_DURABILITY_WARNING =
-  'LedgerMind continuity is using in-memory storage; records will not survive process exit. Set LEDGERMIND_DB_URL for durable memory.';
+  'LedgerMind continuity is using in-memory storage; records will not survive process exit. Set LEDGERMIND_SQLITE_PATH or LEDGERMIND_DB_URL for durable memory.';
 
 const readStreamToString = async (stream: NodeJS.ReadableStream): Promise<string> => {
   const chunks: string[] = [];
@@ -91,9 +105,9 @@ export const buildCommandRuntime = async (
   options: ClaudeCommandOptions = {},
 ): Promise<ClaudeCommandRuntime> => {
   const env = options.env ?? process.env;
-  const baseConfig = parseClaudeCodeConfig(env);
   const payload = await readPayload(options.stdin ?? process.stdin, env);
   const context = parseClaudeHookContext(payload);
+  const baseConfig = parseClaudeCodeConfig(env, context.workspaceRoot);
   const resolvedBindingStorePath =
     baseConfig.bindingStorePath ??
     deriveWorkspaceStatePath(context.workspaceRoot, 'session-bindings.json');
@@ -102,10 +116,11 @@ export const buildCommandRuntime = async (
     bindingStorePath: resolvedBindingStorePath,
   };
   const engine = options.engine ?? createEngine(config);
+  const ownsEngine = options.engine === undefined;
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   if (config.storage === 'in-memory') {
-    stderr.write(`LedgerMind Claude hook warning: ${IN_MEMORY_DURABILITY_WARNING}\n`);
+    stderr.write(`${IN_MEMORY_DURABILITY_WARNING}\n`);
   }
   const sessionBindingStore =
     options.sessionBindingStore ??
@@ -151,6 +166,11 @@ export const buildCommandRuntime = async (
     },
     writeJson(value) {
       stdout.write(`${JSON.stringify(value)}\n`);
+    },
+    async close() {
+      if (ownsEngine) {
+        await engine.close();
+      }
     },
   };
 };

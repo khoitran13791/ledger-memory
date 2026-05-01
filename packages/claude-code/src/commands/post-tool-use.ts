@@ -121,113 +121,117 @@ const normalizeWorkspacePath = (
 
 export const runPostToolUseCommand = async (options: ClaudeCommandOptions = {}): Promise<void> => {
   const runtime = await buildCommandRuntime(options);
-  const context = runtime.expectHookContext('PostToolUse') as PostToolUseHookContext;
-  const candidatePaths = [...new Set(collectCandidatePaths(context.toolInput))];
-  const normalizedArtifactPaths = candidatePaths
-    .map((candidatePath) => normalizeWorkspacePath(context.workspaceRoot, candidatePath))
-    .filter((candidatePath): candidatePath is string => candidatePath !== undefined);
+  try {
+    const context = runtime.expectHookContext('PostToolUse') as PostToolUseHookContext;
+    const candidatePaths = [...new Set(collectCandidatePaths(context.toolInput))];
+    const normalizedArtifactPaths = candidatePaths
+      .map((candidatePath) => normalizeWorkspacePath(context.workspaceRoot, candidatePath))
+      .filter((candidatePath): candidatePath is string => candidatePath !== undefined);
 
-  if (runtime.config.toolEvidenceEnabled) {
-    const binding = await runtime.resolveBinding(context);
-    const redactedCommand =
-      typeof context.toolInput.command === 'string'
-        ? redactSecrets(context.toolInput.command)
-        : undefined;
-    const provenance = {
-      ...(context.toolUseId === undefined ? {} : { toolUseId: context.toolUseId }),
-      ...(redactedCommand === undefined ? {} : { command: redactedCommand }),
-    };
-    const outputSummary = summarizeToolResponse(
-      context.toolResponse,
-      runtime.config.toolOutputBudgetChars,
-    );
-    const evidenceKeySuffix =
-      context.toolUseId ??
-      stableEvidenceKeyPart({
-        toolName: context.toolName,
-        command: redactedCommand,
-        paths: normalizedArtifactPaths.map((artifactPath) =>
+    if (runtime.config.toolEvidenceEnabled) {
+      const binding = await runtime.resolveBinding(context);
+      const redactedCommand =
+        typeof context.toolInput.command === 'string'
+          ? redactSecrets(context.toolInput.command)
+          : undefined;
+      const provenance = {
+        ...(context.toolUseId === undefined ? {} : { toolUseId: context.toolUseId }),
+        ...(redactedCommand === undefined ? {} : { command: redactedCommand }),
+      };
+      const outputSummary = summarizeToolResponse(
+        context.toolResponse,
+        runtime.config.toolOutputBudgetChars,
+      );
+      const evidenceKeySuffix =
+        context.toolUseId ??
+        stableEvidenceKeyPart({
+          toolName: context.toolName,
+          command: redactedCommand,
+          paths: normalizedArtifactPaths.map((artifactPath) =>
+            relative(resolve(context.workspaceRoot), artifactPath),
+          ),
+          response: outputSummary,
+        });
+
+      if (isFailedToolResponse(context.toolResponse)) {
+        await runtime.engine.recordContinuity({
+          conversationId: binding.conversationId,
+          kind: 'failure',
+          title: `${context.toolName} failed`,
+          content: outputSummary.length === 0 ? `${context.toolName} failed.` : outputSummary,
+          provenance,
+          idempotencyKey: `claude-tool-evidence:${context.sessionId}:${evidenceKeySuffix}:failure`,
+        });
+        return;
+      }
+
+      if (
+        context.toolName === 'Bash' &&
+        typeof context.toolInput.command === 'string' &&
+        VERIFICATION_COMMAND_PATTERN.test(context.toolInput.command)
+      ) {
+        await runtime.engine.recordContinuity({
+          conversationId: binding.conversationId,
+          kind: 'verification',
+          title: `Bash verification: ${redactedCommand ?? context.toolName}`,
+          content:
+            outputSummary.length === 0
+              ? `Command completed: ${redactedCommand ?? context.toolName}`
+              : outputSummary,
+          provenance,
+          idempotencyKey: `claude-tool-evidence:${context.sessionId}:${evidenceKeySuffix}:verification`,
+        });
+      }
+
+      if (EDITING_TOOL_NAMES.has(context.toolName) && normalizedArtifactPaths.length > 0) {
+        const relativePaths = normalizedArtifactPaths.map((artifactPath) =>
           relative(resolve(context.workspaceRoot), artifactPath),
-        ),
-        response: outputSummary,
-      });
+        );
+        await runtime.engine.recordContinuity({
+          conversationId: binding.conversationId,
+          kind: 'artifact_change',
+          title: `${context.toolName} changed ${relativePaths.length} workspace ${relativePaths.length === 1 ? 'file' : 'files'}`,
+          content: ['Changed files:', ...relativePaths.map((path) => `- ${path}`)].join('\n'),
+          provenance,
+          idempotencyKey: `claude-tool-evidence:${context.sessionId}:${evidenceKeySuffix}:artifact-change`,
+        });
+      }
 
-    if (isFailedToolResponse(context.toolResponse)) {
-      await runtime.engine.recordContinuity({
-        conversationId: binding.conversationId,
-        kind: 'failure',
-        title: `${context.toolName} failed`,
-        content: outputSummary.length === 0 ? `${context.toolName} failed.` : outputSummary,
-        provenance,
-        idempotencyKey: `claude-tool-evidence:${context.sessionId}:${evidenceKeySuffix}:failure`,
-      });
+      if (
+        READ_SEARCH_TOOL_NAMES.has(context.toolName) ||
+        DELEGATION_TOOL_NAMES.has(context.toolName)
+      ) {
+        // These tool classes are intentionally classified for failure evidence above.
+      }
+    }
+
+    if (!runtime.config.artifactIndexingEnabled || !EDITING_TOOL_NAMES.has(context.toolName)) {
       return;
     }
 
-    if (
-      context.toolName === 'Bash' &&
-      typeof context.toolInput.command === 'string' &&
-      VERIFICATION_COMMAND_PATTERN.test(context.toolInput.command)
-    ) {
-      await runtime.engine.recordContinuity({
-        conversationId: binding.conversationId,
-        kind: 'verification',
-        title: `Bash verification: ${redactedCommand ?? context.toolName}`,
-        content:
-          outputSummary.length === 0
-            ? `Command completed: ${redactedCommand ?? context.toolName}`
-            : outputSummary,
-        provenance,
-        idempotencyKey: `claude-tool-evidence:${context.sessionId}:${evidenceKeySuffix}:verification`,
-      });
+    const artifactPaths = normalizedArtifactPaths;
+
+    if (artifactPaths.length === 0) {
+      return;
     }
 
-    if (EDITING_TOOL_NAMES.has(context.toolName) && normalizedArtifactPaths.length > 0) {
-      const relativePaths = normalizedArtifactPaths.map((artifactPath) =>
-        relative(resolve(context.workspaceRoot), artifactPath),
-      );
-      await runtime.engine.recordContinuity({
-        conversationId: binding.conversationId,
-        kind: 'artifact_change',
-        title: `${context.toolName} changed ${relativePaths.length} workspace ${relativePaths.length === 1 ? 'file' : 'files'}`,
-        content: ['Changed files:', ...relativePaths.map((path) => `- ${path}`)].join('\n'),
-        provenance,
-        idempotencyKey: `claude-tool-evidence:${context.sessionId}:${evidenceKeySuffix}:artifact-change`,
-      });
+    const binding = await runtime.resolveBinding(context);
+    for (const artifactPath of artifactPaths) {
+      try {
+        await access(artifactPath);
+        await runtime.engine.storeArtifact({
+          conversationId: binding.conversationId,
+          source: {
+            kind: 'path',
+            path: artifactPath,
+          },
+        });
+      } catch {
+        runtime.warn(`Skipped artifact indexing for missing or unreadable path: ${artifactPath}`);
+      }
     }
-
-    if (
-      READ_SEARCH_TOOL_NAMES.has(context.toolName) ||
-      DELEGATION_TOOL_NAMES.has(context.toolName)
-    ) {
-      // These tool classes are intentionally classified for failure evidence above.
-    }
-  }
-
-  if (!runtime.config.artifactIndexingEnabled || !EDITING_TOOL_NAMES.has(context.toolName)) {
-    return;
-  }
-
-  const artifactPaths = normalizedArtifactPaths;
-
-  if (artifactPaths.length === 0) {
-    return;
-  }
-
-  const binding = await runtime.resolveBinding(context);
-  for (const artifactPath of artifactPaths) {
-    try {
-      await access(artifactPath);
-      await runtime.engine.storeArtifact({
-        conversationId: binding.conversationId,
-        source: {
-          kind: 'path',
-          path: artifactPath,
-        },
-      });
-    } catch {
-      runtime.warn(`Skipped artifact indexing for missing or unreadable path: ${artifactPath}`);
-    }
+  } finally {
+    await runtime.close();
   }
 };
 
