@@ -28,7 +28,16 @@ export {
 
 export {
   openSqliteDatabase,
+  openSqliteDatabaseSync,
+  SqliteArtifactStore,
+  SqliteContextProjection,
+  SqliteConversationStore,
+  SqliteLedgerStore,
+  SqliteOperatorExecutionStore,
+  SqliteSummaryDag,
+  SqliteUnitOfWork,
   SQLITE_SCHEMA_VERSION,
   SQLITE_TEXT_SEARCH_MODE,
+  createSqliteUnitOfWork,
   type OpenSqliteDatabaseOptions,
 } from './sqlite';

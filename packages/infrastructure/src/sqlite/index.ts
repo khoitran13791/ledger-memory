@@ -1,4 +1,8 @@
-export { openSqliteDatabase, type OpenSqliteDatabaseOptions } from './sqlite-connection';
+export {
+  openSqliteDatabase,
+  openSqliteDatabaseSync,
+  type OpenSqliteDatabaseOptions,
+} from './sqlite-connection';
 export { SqliteArtifactStore } from './sqlite-artifact-store';
 export { SqliteConversationStore } from './sqlite-conversation-store';
 export { SqliteContextProjection } from './sqlite-context-projection';

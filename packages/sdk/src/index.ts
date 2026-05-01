@@ -89,6 +89,7 @@ import {
 import {
   createPgPool,
   createPgUnitOfWork,
+  createSqliteUnitOfWork,
   NodeFileReader,
   PgArtifactStore,
   PgContextProjection,
@@ -96,7 +97,14 @@ import {
   PgLedgerStore,
   PgOperatorExecutionStore,
   PgSummaryDag,
+  SqliteArtifactStore,
+  SqliteContextProjection,
+  SqliteConversationStore,
+  SqliteLedgerStore,
+  SqliteOperatorExecutionStore,
+  SqliteSummaryDag,
   asPgExecutor,
+  openSqliteDatabaseSync,
   type PgExecutor,
 } from '@ledgermind/infrastructure';
 
@@ -201,7 +209,7 @@ class WallClock implements ClockPort {
 }
 
 const SUPPORTED_TOKENIZER_TYPES = '"deterministic", "model-aligned"';
-const SUPPORTED_STORAGE_TYPES = '"in-memory", "postgres"';
+const SUPPORTED_STORAGE_TYPES = '"in-memory", "postgres", "sqlite"';
 const SUPPORTED_SUMMARIZER_TYPES = '"deterministic"';
 const DEFAULT_MODEL_FAMILY = 'gpt-4o-mini' as const;
 
@@ -236,6 +244,8 @@ const validateMemoryEngineConfig = (config: unknown): void => {
 
   if (storageType === 'postgres') {
     readRequiredNonEmptyString(storage, 'connectionString', 'Postgres connectionString');
+  } else if (storageType === 'sqlite') {
+    readRequiredNonEmptyString(storage, 'path', 'SQLite path');
   } else if (storageType === 'in-memory') {
     // no-op
   } else if (storageType === undefined) {
@@ -282,6 +292,21 @@ interface MemoryEnginePersistenceDeps {
   readonly operatorExecution: OperatorExecutionPort;
   readonly fileReader: FileReaderPort;
 }
+
+const createIdempotentClose = (
+  closePersistence: () => Promise<void> | void,
+): (() => Promise<void>) => {
+  let closed = false;
+
+  return async () => {
+    if (closed) {
+      return;
+    }
+
+    closed = true;
+    await closePersistence();
+  };
+};
 
 const resolveTokenizer = (tokenizerConfig: unknown): TokenizerPort => {
   if (tokenizerConfig === undefined) {
@@ -365,6 +390,10 @@ export interface MemoryEngineConfig {
         readonly type: 'postgres';
         readonly connectionString: string;
         readonly executor?: PgExecutor;
+      }
+    | {
+        readonly type: 'sqlite';
+        readonly path: string;
       };
 
   readonly summarizer?: {
@@ -411,6 +440,21 @@ export const createPostgresMemoryEngine = ({
   });
 };
 
+export type SqlitePresetConfig = Omit<MemoryEngineConfig, 'storage'> & {
+  readonly path: string;
+};
+
+export const createSqliteMemoryEngine = ({ path, ...config }: SqlitePresetConfig): MemoryEngine => {
+  if (path.trim().length === 0) {
+    throw new Error('SQLite path is required and cannot be empty.');
+  }
+
+  return createMemoryEngine({
+    storage: { type: 'sqlite', path },
+    ...config,
+  });
+};
+
 // ---------------------------------------------------------------------------
 // createMemoryEngine — composition root
 // ---------------------------------------------------------------------------
@@ -420,38 +464,57 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
 
   const tokenizer = resolveTokenizer(config.tokenizer);
 
-  const persistenceDeps: MemoryEnginePersistenceDeps =
-    config.storage.type === 'in-memory'
-      ? (() => {
-          const state = createInMemoryPersistenceState();
+  let persistenceDeps: MemoryEnginePersistenceDeps;
+  let closePersistence: () => Promise<void> | void = () => undefined;
 
-          return {
-            unitOfWork: new InMemoryUnitOfWork(state),
-            ledgerRead: new InMemoryLedgerStore(state),
-            contextProjection: new InMemoryContextProjection(state),
-            summaryDag: new InMemorySummaryDag(state),
-            artifactStore: new InMemoryArtifactStore(state),
-            conversations: new InMemoryConversationStore(state),
-            operatorExecution: new InMemoryOperatorExecutionStore(state),
-            fileReader: new NodeFileReader(),
-          };
-        })()
-      : (() => {
-          const executor =
-            config.storage.executor ??
-            asPgExecutor(createPgPool({ connectionString: config.storage.connectionString }));
+  if (config.storage.type === 'in-memory') {
+    const state = createInMemoryPersistenceState();
 
-          return {
-            unitOfWork: createPgUnitOfWork(executor),
-            ledgerRead: new PgLedgerStore(executor),
-            contextProjection: new PgContextProjection(executor),
-            summaryDag: new PgSummaryDag(executor),
-            artifactStore: new PgArtifactStore(executor),
-            conversations: new PgConversationStore(executor),
-            operatorExecution: new PgOperatorExecutionStore(executor),
-            fileReader: new NodeFileReader(),
-          };
-        })();
+    persistenceDeps = {
+      unitOfWork: new InMemoryUnitOfWork(state),
+      ledgerRead: new InMemoryLedgerStore(state),
+      contextProjection: new InMemoryContextProjection(state),
+      summaryDag: new InMemorySummaryDag(state),
+      artifactStore: new InMemoryArtifactStore(state),
+      conversations: new InMemoryConversationStore(state),
+      operatorExecution: new InMemoryOperatorExecutionStore(state),
+      fileReader: new NodeFileReader(),
+    };
+  } else if (config.storage.type === 'postgres') {
+    const executor =
+      config.storage.executor ??
+      (() => {
+        const pool = createPgPool({ connectionString: config.storage.connectionString });
+        closePersistence = () => pool.end();
+        return asPgExecutor(pool);
+      })();
+
+    persistenceDeps = {
+      unitOfWork: createPgUnitOfWork(executor),
+      ledgerRead: new PgLedgerStore(executor),
+      contextProjection: new PgContextProjection(executor),
+      summaryDag: new PgSummaryDag(executor),
+      artifactStore: new PgArtifactStore(executor),
+      conversations: new PgConversationStore(executor),
+      operatorExecution: new PgOperatorExecutionStore(executor),
+      fileReader: new NodeFileReader(),
+    };
+  } else {
+    const database = openSqliteDatabaseSync({ path: config.storage.path });
+    const db = database.db;
+    closePersistence = () => database.close();
+
+    persistenceDeps = {
+      unitOfWork: createSqliteUnitOfWork(db),
+      ledgerRead: new SqliteLedgerStore(db),
+      contextProjection: new SqliteContextProjection(db),
+      summaryDag: new SqliteSummaryDag(db),
+      artifactStore: new SqliteArtifactStore(db),
+      conversations: new SqliteConversationStore(db),
+      operatorExecution: new SqliteOperatorExecutionStore(db),
+      fileReader: new NodeFileReader(),
+    };
+  }
 
   const summarizer = new DeterministicSummarizerAdapter(tokenizer);
   const authorization = new SubAgentAuthorizationAdapter();
@@ -460,6 +523,7 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
   const hashPort = new NodeCryptoHashPort();
   const idService: IdService = createIdService(hashPort);
   const clock = new WallClock();
+  const close = createIdempotentClose(closePersistence);
 
   const runCompactionUseCase = new RunCompactionUseCase({
     unitOfWork: persistenceDeps.unitOfWork,
@@ -684,6 +748,7 @@ export function createMemoryEngine(config: MemoryEngineConfig): MemoryEngine {
       }));
     },
     getOperatorRun: (input: GetOperatorRunInput) => getOperatorRunUseCase.execute(input),
+    close,
   };
 
   return engine;

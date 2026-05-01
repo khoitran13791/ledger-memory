@@ -923,6 +923,7 @@ const createEngine = (input: {
     getOperatorRun: async () => {
       throw createUnsupportedRuntimeError('getOperatorRun');
     },
+    close: async () => undefined,
   };
 };
 
@@ -1088,7 +1089,7 @@ const createInMemoryRuntime = async (input: {
       summarizationTraceEntries.length = 0;
       return snapshot;
     },
-    destroy: async () => undefined,
+    destroy: () => engine.close(),
   };
 };
 

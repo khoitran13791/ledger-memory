@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { openSqliteDatabase } from '../sqlite-connection';
+import { openSqliteDatabase, openSqliteDatabaseSync } from '../sqlite-connection';
 import { SQLITE_SCHEMA_VERSION, SQLITE_TEXT_SEARCH_MODE } from '../sqlite-schema';
 
 const tempDirs: string[] = [];
@@ -107,6 +107,60 @@ describe('openSqliteDatabase', () => {
     db.close();
 
     await expect(openSqliteDatabase({ path })).rejects.toThrow();
+
+    const reopened = new DatabaseSync(path);
+    try {
+      reopened.exec('PRAGMA user_version');
+    } finally {
+      reopened.close();
+    }
+  });
+});
+
+describe('openSqliteDatabaseSync', () => {
+  it('creates parent directories, applies schema, and enables foreign keys', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ledgermind-sqlite-sync-'));
+    tempDirs.push(dir);
+    const path = join(dir, 'nested', 'memory.sqlite');
+
+    const database = openSqliteDatabaseSync({ path });
+
+    try {
+      expect(database.path).toBe(path);
+      expect(database.db.prepare('PRAGMA user_version').get()).toEqual({
+        user_version: SQLITE_SCHEMA_VERSION,
+      });
+      expect(database.db.prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });
+      expect(
+        database.db
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ledger_events'")
+          .get(),
+      ).toEqual({
+        name: 'ledger_events',
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('rejects empty paths with the shared validation message', () => {
+    expect(() => openSqliteDatabaseSync({ path: '' })).toThrow(
+      'SQLite path is required and cannot be empty.',
+    );
+  });
+
+  it('closes the database handle when schema setup fails', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ledgermind-sqlite-sync-schema-fail-'));
+    tempDirs.push(dir);
+    const path = join(dir, 'memory.sqlite');
+    const db = new DatabaseSync(path);
+    db.exec(`
+      PRAGMA user_version = ${SQLITE_SCHEMA_VERSION};
+      CREATE TABLE ledger_events (id TEXT PRIMARY KEY) STRICT;
+    `);
+    db.close();
+
+    expect(() => openSqliteDatabaseSync({ path })).toThrow();
 
     const reopened = new DatabaseSync(path);
     try {

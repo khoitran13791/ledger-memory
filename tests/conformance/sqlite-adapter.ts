@@ -45,15 +45,16 @@ export const createSqliteAdapter = (): ConformanceAdapterDefinition => {
       let database: Awaited<ReturnType<typeof openSqliteDatabase>> | undefined;
 
       try {
-        database = await openSqliteDatabase({ path: join(dir, 'memory.sqlite') });
+        const openedDatabase = await openSqliteDatabase({ path: join(dir, 'memory.sqlite') });
+        database = openedDatabase;
 
-        const unitOfWork = createSqliteUnitOfWork(database.db);
-        const ledger = new SqliteLedgerStore(database.db);
-        const context = new SqliteContextProjection(database.db);
-        const dag = new SqliteSummaryDag(database.db);
-        const artifacts = new SqliteArtifactStore(database.db);
-        const conversations = new SqliteConversationStore(database.db);
-        const operators = new SqliteOperatorExecutionStore(database.db);
+        const unitOfWork = createSqliteUnitOfWork(openedDatabase.db);
+        const ledger = new SqliteLedgerStore(openedDatabase.db);
+        const context = new SqliteContextProjection(openedDatabase.db);
+        const dag = new SqliteSummaryDag(openedDatabase.db);
+        const artifacts = new SqliteArtifactStore(openedDatabase.db);
+        const conversations = new SqliteConversationStore(openedDatabase.db);
+        const operators = new SqliteOperatorExecutionStore(openedDatabase.db);
 
         const conversation = await conversations.create(
           createConversationCfg('conformance-sqlite'),
@@ -74,10 +75,10 @@ export const createSqliteAdapter = (): ConformanceAdapterDefinition => {
               readonly summaryId: SummaryNodeId;
               readonly missingMessageId: EventId;
             }): Promise<void> {
-              database.db.exec('PRAGMA foreign_keys = OFF');
+              openedDatabase.db.exec('PRAGMA foreign_keys = OFF');
 
               try {
-                database.db
+                openedDatabase.db
                   .prepare(
                     `INSERT INTO summary_message_edges (summary_id, message_id, ord)
                      VALUES (?, ?, (
@@ -88,13 +89,13 @@ export const createSqliteAdapter = (): ConformanceAdapterDefinition => {
                   )
                   .run(input.summaryId, input.missingMessageId, input.summaryId);
               } finally {
-                database.db.exec('PRAGMA foreign_keys = ON');
+                openedDatabase.db.exec('PRAGMA foreign_keys = ON');
               }
             },
           },
           destroy: async () => {
             try {
-              database.close();
+              openedDatabase.close();
             } finally {
               await rm(dir, { recursive: true, force: true });
             }

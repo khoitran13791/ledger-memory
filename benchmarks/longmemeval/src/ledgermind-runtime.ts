@@ -203,6 +203,7 @@ const createEngine = (input: { readonly deps: RuntimeDeps }): MemoryEngine => {
     getOperatorRun: async () => {
       throw createUnsupportedOperatorError('getOperatorRun');
     },
+    close: async () => undefined,
   };
 };
 
@@ -354,7 +355,7 @@ export const createLedgermindRuntime = async (input: {
     engine,
     eventLookup,
     runtimeMode: input.runtimeMode,
-    destroy: async () => undefined,
+    destroy: () => engine.close(),
   };
 };
 
