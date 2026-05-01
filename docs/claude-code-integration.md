@@ -101,5 +101,6 @@ Pass the same `--binding-store <path>` or `LEDGERMIND_MCP_BINDING_STORE` value t
 ## Current Limits
 
 1. SQLite is the default local durable backend for coding-agent continuity. PostgreSQL remains the recommended backend for shared services, remote workers, and multi-process deployments.
-2. Some MCP hosts may still require explicit `conversationId` arguments if they do not pass LedgerMind session metadata.
-3. `memory.expand` remains privileged and sub-agent scoped.
+2. SQLite uses Node's built-in `node:sqlite` module and may emit `ExperimentalWarning` on supported Node 22 runtimes.
+3. Some MCP hosts may still require explicit `conversationId` arguments if they do not pass LedgerMind session metadata.
+4. `memory.expand` remains privileged and sub-agent scoped.

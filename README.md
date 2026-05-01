@@ -8,6 +8,8 @@ LedgerMind is now a working alpha, not just a scaffold. The core engine packages
 
 SQLite is the default local durable backend for coding-agent continuity. PostgreSQL remains the recommended backend for shared services, remote workers, and multi-process deployments.
 
+The SQLite adapter uses Node's built-in `node:sqlite` module. On supported Node 22 runtimes this may emit `ExperimentalWarning`; the adapter is isolated behind LedgerMind's persistence ports so the public engine API stays backend-neutral.
+
 Implemented today:
 
 - append-only ledger storage and context projection

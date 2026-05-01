@@ -6,6 +6,8 @@ This is a copy-friendly local harness for using LedgerMind as a coding-agent con
 
 SQLite is the default local durable backend for coding-agent continuity. PostgreSQL remains the recommended backend for shared services, remote workers, and multi-process deployments.
 
+SQLite uses Node's built-in `node:sqlite` module and may emit `ExperimentalWarning` on supported Node 22 runtimes.
+
 ```bash
 export LEDGERMIND_SQLITE_PATH=.ledgermind/memory.sqlite
 export LEDGERMIND_MCP_BINDING_STORE=.ledgermind/session-bindings.json

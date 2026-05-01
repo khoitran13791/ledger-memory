@@ -7,6 +7,7 @@ The continuity layer turns fragile chat history into durable operational state. 
 ## Current Limitations
 
 - SQLite is the default local durable backend for coding-agent continuity. PostgreSQL remains the recommended backend for shared services, remote workers, and multi-process deployments.
+- SQLite uses Node's built-in `node:sqlite` module and may emit `ExperimentalWarning` on supported Node 22 runtimes.
 - Stop-time transcript extraction is bounded and redacted, but it is still heuristic. Prefer explicit `memory.createHandoff` records for important work.
 - `memory.expand` is privileged because it can reveal compressed source context. Prefer `memory.recallForTask`, `memory.currentState`, and `memory.describe` first.
 

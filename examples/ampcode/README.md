@@ -15,6 +15,8 @@ Use `memory.recallForTask` at task start, write continuity through the enabled M
 
 SQLite is the default local durable backend for coding-agent continuity. PostgreSQL remains the recommended backend for shared services, remote workers, and multi-process deployments.
 
+SQLite uses Node's built-in `node:sqlite` module and may emit `ExperimentalWarning` on supported Node 22 runtimes.
+
 ## Current Limitation
 
 This example covers MCP tools only. The repository does not currently ship verified Amp lifecycle hooks for transcript archival or post-tool indexing.
